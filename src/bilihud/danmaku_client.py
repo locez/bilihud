@@ -21,6 +21,7 @@ class DanmakuClient:
         self.on_danmaku_received: Optional[Callable[[web_models.DanmakuMessage], None]] = None
         self.on_gift_received: Optional[Callable[[web_models.GiftMessage], None]] = None
         self.on_interact_received: Optional[Callable[[web_models.InteractWordV2Message], None]] = None
+        self.on_login_failed: Optional[Callable[[str], None]] = None # callback(message)
 
     def set_danmaku_callback(self, callback: Callable[[web_models.DanmakuMessage], None]):
         """设置弹幕接收回调函数"""
@@ -34,18 +35,42 @@ class DanmakuClient:
         """设置互动接收回调函数 (进房/关注)"""
         self.on_interact_received = callback
 
+    def set_login_failed_callback(self, callback: Callable[[str], None]):
+        """设置登录失效回调"""
+        self.on_login_failed = callback
+
     async def start(self):
         """在事件循环中启动弹幕客户端"""
         # 初始化session
         cookies = http.cookies.SimpleCookie()
         
-        # 尝试从浏览器加载Cookies
-        browser_cookies = load_bilibili_cookies()
-        if browser_cookies:
-            # print("Successfully loaded cookies from browser")
-            # 将http.cookiejar.CookieJar转换为SimpleCookie或简单dict
-            for cookie in browser_cookies:
-                cookies[cookie.name] = cookie.value
+        # 尝试优先从Keyring加载Cookies
+        from .auth import AuthManager
+        auth_manager = AuthManager()
+        saved_cookies = auth_manager.load_cookies()
+        
+        loaded_from_keyring = False
+        if saved_cookies:
+            # 验证Cookie有效性
+            is_valid = await auth_manager.validate_session(saved_cookies)
+            if is_valid:
+                for k, v in saved_cookies.items():
+                    cookies[k] = v
+                print("Successfully loaded validated cookies from Keyring")
+                loaded_from_keyring = True
+            else:
+                print("Keyring cookies expired")
+                if self.on_login_failed:
+                    self.on_login_failed("本地保存的登录信息已失效，请重新登录")
+
+        # 如果没有有效的Keyring Cookies，尝试从浏览器加载
+        if not loaded_from_keyring:
+            browser_cookies = load_bilibili_cookies()
+            if browser_cookies:
+                # print("Successfully loaded cookies from browser")
+                # 将http.cookiejar.CookieJar转换为SimpleCookie或简单dict
+                for cookie in browser_cookies:
+                    cookies[cookie.name] = cookie.value
         
         if self.sessdata:
             cookies['SESSDATA'] = self.sessdata

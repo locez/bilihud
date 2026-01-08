@@ -24,6 +24,8 @@ from PyQt6.QtCore import (
 import blivedm.models.web as web_models
 from .danmaku_client import DanmakuClient
 from .utils import load_config, save_config
+from .qr_login_dialog import QRLoginDialog
+from .auth import AuthManager
 
 class ModernInputWidget(QWidget):
     """
@@ -663,6 +665,12 @@ class DanmakuWidget(QWidget):
         self.tray_gaming_action.triggered.connect(self.toggle_gaming_mode_from_tray)
         tray_menu.addAction(self.tray_gaming_action)
         
+        tray_menu.addSeparator()
+
+        self.tray_login_action = QAction("扫码登录", self)
+        self.tray_login_action.triggered.connect(self.open_qr_login)
+        tray_menu.addAction(self.tray_login_action)
+        
         quit_action = QAction("退出程序", self)
         quit_action.triggered.connect(self.quit_app)
         tray_menu.addAction(quit_action)
@@ -686,7 +694,7 @@ class DanmakuWidget(QWidget):
                 self.is_system_info = (level == "info")
         
         msg_obj = SystemMessage(message, level)
-        self.add_danmaku(msg_obj)
+        self.add_message(msg_obj)
 
     async def _send_danmaku_task(self, text: str):
         """实际执行发送弹幕的Task"""
@@ -797,8 +805,7 @@ class DanmakuWidget(QWidget):
             self.input_area.show()
             self.danmaku_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self.danmaku_list.setStyleSheet("background: transparent; border: none;")
-            
-            # 3. 属性设置
+
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
         
@@ -864,6 +871,7 @@ class DanmakuWidget(QWidget):
                 self.danmaku_client.set_danmaku_callback(self.on_danmaku_received)
                 self.danmaku_client.set_gift_callback(self.on_gift_received)
                 self.danmaku_client.set_interact_callback(self.on_interact_received)
+                self.danmaku_client.set_login_failed_callback(self.on_login_failed)
                 
                 # 保存房间号
                 save_config({'room_id': self.room_id})
@@ -947,6 +955,37 @@ class DanmakuWidget(QWidget):
 
         if self.danmaku_list.count() > 500:
             self.danmaku_list.takeItem(0)
+
+    def open_qr_login(self):
+        """打开扫码登录窗口"""
+        dialog = QRLoginDialog(self)
+        dialog.login_success.connect(self.on_login_success)
+        dialog.exec()
+
+    def on_login_success(self):
+        """登录成功，提醒用户重连"""
+        self.tray_icon.showMessage(
+            "登录成功", 
+            "B站账号已登录，将在下次连接时生效。", 
+            QSystemTrayIcon.MessageIcon.Information, 
+            2000
+        )
+        self.add_system_message("登录成功！请断开并重新连接以应用新的登录信息。")
+        
+        # 自动重连逻辑 (如果已连接)
+        if self.danmaku_client and self.danmaku_client.session:
+            # 简单处理：提示用户
+            pass
+
+    def on_login_failed(self, msg: str):
+        """登录失效回调"""
+        self.tray_icon.showMessage(
+            "登录失效", 
+            msg, 
+            QSystemTrayIcon.MessageIcon.Warning, 
+            5000
+        )
+        self.add_system_message(msg, "error")
 
     @qasync.asyncClose
     async def closeEvent(self, event: QCloseEvent):
