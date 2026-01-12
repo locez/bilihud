@@ -6,6 +6,7 @@ import qasync
 import ctypes
 from ctypes import c_void_p, c_int, c_ulong
 from typing import Optional
+import PyQt6.sip as sip
 
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -15,7 +16,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import (
     QCloseEvent, QFont, QColor, QPalette, QIcon, QCursor, 
-    QLinearGradient, QBrush, QPainter, QAction
+    QLinearGradient, QBrush, QPainter, QAction, QGuiApplication
 )
 from PyQt6.QtCore import (
     QTimer, Qt, pyqtSignal, QSize, QPoint, QRect
@@ -370,7 +371,13 @@ class DanmakuWidget(QWidget):
         self.sessdata = sessdata
         self.danmaku_client: Optional[DanmakuClient] = None
         self.is_gaming_mode = False
+        self.layer_shell_lib = None
+        # Track Layer Shell position manually because Qt frameGeometry() is unreliable (returns 0,0)
+        self.layer_pos = QPoint(0, 0)
         
+        # Load Layer Shell Library
+        self.load_layer_shell_lib()
+
         self.setup_window_properties()
         self.init_ui()
         self.setup_tray_icon()
@@ -383,24 +390,78 @@ class DanmakuWidget(QWidget):
         
         # 初始化房间号
         self.room_id_input.setText(str(self.room_id))
+        
+        # Try to activate Layer Shell initially
+        QTimer.singleShot(100, self.activate_layer_shell)
+
+    def load_layer_shell_lib(self):
+        try:
+            lib_path = os.path.join(os.path.dirname(__file__), "libbili-layer.so")
+            if os.path.exists(lib_path):
+                self.layer_shell_lib = ctypes.CDLL(lib_path)
+                
+                # Define argument types for safety
+                self.layer_shell_lib.make_overlay.argtypes = [ctypes.c_void_p]
+                self.layer_shell_lib.set_passthrough.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+                self.layer_shell_lib.set_anchor_position.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+                
+                # Check if new function exists (for backward compatibility during dev)
+                if hasattr(self.layer_shell_lib, 'set_keyboard_interactivity'):
+                    self.layer_shell_lib.set_keyboard_interactivity.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+            else:
+                print(f"Layer Shell library not found at: {lib_path}")
+        except Exception as e:
+            print(f"Failed to load Layer Shell library: {e}")
+
+    def activate_layer_shell(self):
+        """Invoke C++ bridge to promote window to Layer Shell Overlay"""
+        if self.layer_shell_lib:
+            try:
+                self.winId() # Ensure handle created
+                handle = self.windowHandle()
+                if handle:
+                    cpp_ptr = sip.unwrapinstance(handle)
+                    self.layer_shell_lib.make_overlay(ctypes.c_void_p(cpp_ptr))
+                    
+                    # Ensure interactivity is enabled by default (for Normal Mode)
+                    if hasattr(self.layer_shell_lib, 'set_keyboard_interactivity'):
+                        self.layer_shell_lib.set_keyboard_interactivity(ctypes.c_void_p(cpp_ptr), True)
+
+
+                    # [Fix] Sync initial position to bridge immediately
+                    # Because setAnchor(Top|Left) defaults to 0,0 margins if we don't set them
+                    if hasattr(self.layer_shell_lib, 'set_anchor_position'):
+                        # Important: layer_pos is relative to the screen we are on.
+                        # We assume initial setup put us on primary screen consistent with layer_pos
+                        self.layer_shell_lib.set_anchor_position(ctypes.c_void_p(cpp_ptr), self.layer_pos.x(), self.layer_pos.y())
+                    
+
+            except Exception as e:
+                print(f"Error activating Layer Shell: {e}")
 
     def setup_window_properties(self):
         """设置基本的窗口属性"""
         self.resize(300, 450)
         # 居中屏幕
         screen_geo = QApplication.primaryScreen().geometry()
+        
+        # Initialize position relative to primary screen top-left
+        initial_x = screen_geo.width() - 330
+        initial_y = 100
+        
+        # Qt move expects global coordinates
         self.move(
-            screen_geo.width() - 330, # 默认靠右一些
-            100
+            screen_geo.x() + initial_x, 
+            screen_geo.y() + initial_y
         )
+        self.layer_pos = QPoint(initial_x, initial_y)
         self.setWindowTitle("Danmaku Overlay")
         
         # 基础无边框和置顶设置
-        # REMOVED: Qt.X11BypassWindowManagerHint to fix input focus
         flags = (
             Qt.WindowType.FramelessWindowHint | 
             Qt.WindowType.WindowStaysOnTopHint | 
-            Qt.WindowType.Window # Using Window instead of Tool
+            Qt.WindowType.Window 
         )
             
         self.setWindowFlags(flags)
@@ -759,16 +820,28 @@ class DanmakuWidget(QWidget):
         # [Critical Fix] 重新构建Flags
         flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Window
 
+        # Check if we are using Layer Shell
+        has_layer_shell = (self.layer_shell_lib is not None)
+
         if enabled:
             # --- 开启穿透模式 (Gaming Mode) ---
             
             # 1. 穿透模式核心Flags
             # X11BypassWindowManagerHint: 绕过WM，确保能在全屏游戏之上显示
-            flags |= Qt.WindowType.X11BypassWindowManagerHint
+            # ONLY use this if NOT using Layer Shell (i.e. on X11)
+            # AND strictly ensure we are NOT on Wayland (setting this on Wayland causes crash)
+            is_wayland = QGuiApplication.platformName().startswith('wayland')
+            if not has_layer_shell and not is_wayland:
+                flags |= Qt.WindowType.X11BypassWindowManagerHint
+            
             # WindowTransparentForInput: 输入事件穿透 (配合XShape)
+            # On Wayland with LayerShell, we use the bridge to set mask.
+            # On X11, we use XShape. 
             flags |= Qt.WindowType.WindowTransparentForInput
             # WindowDoesNotAcceptFocus: 拒绝焦点，防止抢占游戏输入
             flags |= Qt.WindowType.WindowDoesNotAcceptFocus
+            
+            # For Layer Shell, we rely on setLayer(Overlay) which is done in activate_layer_shell
 
             # 2. UI调整
             self.header_widget.hide()
@@ -809,45 +882,132 @@ class DanmakuWidget(QWidget):
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
         
-        # 1. 先进行销毁操作 (Hide & Set Flags)
-        self.hide()
-        self.setWindowFlags(flags)
-        
-        # 2. [Defer Fix] 延迟执行显示操作
-        # 切换 BypassWindowManagerHint 会导致 Native Window 销毁重建
-        # 如果同步执行 show()，可能导致 X11 状态未同步而无法映射窗口
-        def restore_window_state():
-            # 恢复位置 (在窗口重建后应用)
-            self.setGeometry(current_geo)
+        if has_layer_shell:
+            # --- Wayland Layer Shell Mode ---
+            # Do NOT call setWindowFlags or hide() as it recreates the window surface
+            # and breaks the Layer Shell integration.
             
-            # 显示并置顶
-            self.show()
-            self.raise_()
-            
-            if not enabled:
-                self.activateWindow()
-                
-            # XShape 穿透
+            # Apply native input region changes
             try:
-                wid = int(self.winId())
-                if wid > 0:
-                    X11Helper.set_click_through(wid, enabled)
-            except Exception as e:
-                print(f"Failed to set X11 settings: {e}")
+                cpp_ptr = sip.unwrapinstance(self.windowHandle())
+                self.layer_shell_lib.set_passthrough(ctypes.c_void_p(cpp_ptr), enabled)
+                
+                # Toggle keyboard interactivity
+                # Enabled (Gaming Mode) -> No keyboard
+                # Disabled (Normal Mode) -> OnDemand keyboard
+                if hasattr(self.layer_shell_lib, 'set_keyboard_interactivity'):
+                   self.layer_shell_lib.set_keyboard_interactivity(ctypes.c_void_p(cpp_ptr), not enabled)
 
-        # 使用 50ms 延时确保事件循环处理完窗口销毁
-        QTimer.singleShot(50, restore_window_state)
+                # Force visual update since we skipped setWindowFlags/hide/show
+                # This ensures the dashed border stylesheet and layout changes (hidden header) are applied immediately
+                self.layout().activate()
+                self.danmaku_list.update()
+                self.update()
+                QApplication.processEvents()
+                
+            except Exception as e:
+                print(f"Failed to set Wayland passthrough: {e}")
+                
+        else:
+            # --- X11 / Standard Mode ---
+            # Recreate window to apply flags (necessary for X11Bypass etc on XCB)
+            self.hide()
+            self.setWindowFlags(flags)
+            
+            # 延迟执行显示操作
+            # 切换 BypassWindowManagerHint 会导致 Native Window 销毁重建
+            # 如果同步执行 show()，可能导致 X11 状态未同步而无法映射窗口
+            def restore_window_state():
+                # 恢复位置 (在窗口重建后应用)
+                self.setGeometry(current_geo)
+                
+                # 显示并置顶
+                self.show()
+                self.raise_()
+                
+                if not enabled:
+                    self.activateWindow()
+
+                # 平台相关穿透逻辑 (X11)
+                try:
+                    if QGuiApplication.platformName() == 'xcb':
+                        wid = int(self.winId())
+                        if wid > 0:
+                            X11Helper.set_click_through(wid, enabled)
+                except Exception as e:
+                    print(f"Failed to set platform settings: {e}")
+
+            # 这里的延时是必须的
+            QTimer.singleShot(50, restore_window_state)
 
     # --- 鼠标拖拽移动窗口逻辑 ---
     def mousePressEvent(self, event):
         if not self.is_gaming_mode and event.button() == Qt.MouseButton.LeftButton:
             self._dragging = True
-            self._drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            
+            # Track drag offset relative to the window's top-left in LOCAL coordinates.
+            # We use manual position tracking (self.layer_pos) instead of Qt's geometry 
+            # because Qt's frameGeometry() can be unreliable on Layer Shell.
+            self._drag_local_pos = event.position().toPoint()
             event.accept()
 
     def mouseMoveEvent(self, event):
         if self._dragging:
-            self.move(event.globalPosition().toPoint() - self._drag_position)
+            has_layer_shell = (self.layer_shell_lib is not None)
+            
+            if has_layer_shell:
+                try:
+                    cpp_ptr = sip.unwrapinstance(self.windowHandle())
+
+                    # Calculate TRUE Global Mouse Position manually.
+                    # Qt's event.globalPosition() can be stale if we don't call self.move(),
+                    # preventing the window from 'ghosting' by letting the compositor handle placement.
+                    # Formula: TGM = Trusted Window Pos + Trusted Local Mouse Event
+                    
+                    current_screen = self.windowHandle().screen()
+                    if not current_screen: return
+                    
+                    screen_origin = current_screen.geometry().topLeft()
+                    
+                    # Global Window Top-Left relative to screen origin
+                    win_global_pos = screen_origin + self.layer_pos
+                    
+                    # Calculate true global mouse coordinate
+                    true_global_mouse = win_global_pos + event.position().toPoint()
+                    
+                    # Determine new global window position
+                    new_global_top_left = true_global_mouse - self._drag_local_pos
+                    
+                    # Screen Switching Logic
+                    target_screen = QApplication.screenAt(true_global_mouse)
+                    
+                    if target_screen and target_screen != current_screen:
+                        self.windowHandle().setScreen(target_screen)
+                        
+                        # Recalculate margins relative to new screen
+                        new_screen_origin = target_screen.geometry().topLeft()
+                        local_pos = new_global_top_left - new_screen_origin
+                        
+                        self.layer_shell_lib.set_anchor_position(ctypes.c_void_p(cpp_ptr), local_pos.x(), local_pos.y())
+                        self.layer_pos = local_pos
+                    else:
+                        local_x = new_global_top_left.x() - screen_origin.x()
+                        local_y = new_global_top_left.y() - screen_origin.y()
+                        
+                        self.layer_shell_lib.set_anchor_position(ctypes.c_void_p(cpp_ptr), local_x, local_y)
+                        self.layer_pos = QPoint(local_x, local_y)
+
+                    # Required to commit Layer Shell margin changes to the compositor
+                    self.update()
+                    
+                except Exception as e:
+                    print(f"Wayland drag error: {e}")
+            else:
+                # Fallback for X11/Standard
+                # Standard logic: New Global = Event Global - Drag Local
+                new_pos = event.globalPosition().toPoint() - self._drag_local_pos
+                self.move(new_pos)
+            
             event.accept()
 
     def mouseReleaseEvent(self, event):

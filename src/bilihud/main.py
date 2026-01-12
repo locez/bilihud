@@ -1,39 +1,38 @@
 # -*- coding: utf-8 -*-
 import sys
 import os
-import sys
-
-# Force X11 backend (xcb) on Linux to support XShape click-through
-# This must be set before QApplication is instantiated.
-if sys.platform == "linux":
-    os.environ["QT_QPA_PLATFORM"] = "xcb"
-
-from PyQt6.QtWidgets import QApplication
-import qasync
+import signal
 import asyncio
+import qasync
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt
+
 from .danmaku_widget import DanmakuWidget
 
-
-async def main(app, room_id: int = 7450109):
+async def main(app, room_id: int):
     app_close_event = asyncio.Event()
     app.aboutToQuit.connect(app_close_event.set)
 
-    # 创建弹幕窗口
+    # Create Danmaku Widget directly as top-level
     danmaku_widget = DanmakuWidget(room_id)
+    
+    # Try to activate Layer Shell BEFORE showing
+    # This ensures the window is mapped as a Layer Shell surface from the start
+    danmaku_widget.activate_layer_shell()
 
-    # 显示窗口
+    # Show window
     danmaku_widget.show()
 
     await app_close_event.wait()
 
 def entry_point():
     import argparse
-    from PyQt6.QtCore import Qt
 
-    parser = argparse.ArgumentParser(description="B站弹幕阅读器")
-    parser.add_argument("--room-id", "-r", type=int, default=7450109, help="直播间ID")
+    parser = argparse.ArgumentParser(description="B station Danmaku Reader")
+    parser.add_argument("--room-id", "-r", type=int, default=7450109, help="Room ID")
     args = parser.parse_args()
 
+    # High DPI scaling settings
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "0"
     os.environ["QT_SCALE_FACTOR"] = "1"
 
@@ -42,7 +41,11 @@ def entry_point():
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
         )
     
+    # Handle SIGINT
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
     app = QApplication(sys.argv)
+    app.setApplicationName("bilihud")
     
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)

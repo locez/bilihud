@@ -18,12 +18,16 @@ depends=(
     'python-qrcode'
     'python-keyring'
     'python-pillow'
+    'qt6-base'
+    'qt6-wayland'
+    'layer-shell-qt'
 )
 makedepends=(
     'git'
     'python-build'
     'python-installer'
     'python-hatchling'
+    'python-hatch-build-scripts' # Needed for custom build hook
     'python-wheel'
 )
 provides=("$_pkgname")

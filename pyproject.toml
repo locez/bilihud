@@ -1,13 +1,22 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-build-scripts"]
 build-backend = "hatchling.build"
+
 [tool.hatch.build.targets.wheel.force-include]
 "vendor/blivedm/blivedm" = "src/bilihud/vendor/blivedm"
+"src/bilihud/libbili-layer.so" = "bilihud/libbili-layer.so"
+
+[tool.hatch.build.hooks.build-scripts]
+[[tool.hatch.build.hooks.build-scripts.scripts]]
+commands = [
+    "bash src/bilihud/build_bridge.sh"
+]
+artifacts = ["src/bilihud/libbili-layer.so"]
 
 
 [project]
 name = "bilihud"
-version = "0.2.0"
+version = "0.3.0"
 description = "B站弹幕阅读器 - 一个可以在游戏全屏时显示弹幕的Qt应用程序"
 readme = "README.md"
 authors = [

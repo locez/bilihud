@@ -25,7 +25,7 @@
 * 显示用户名、舰长/VIP标识
 * 支持发送弹幕
 * 支持扫码登录
-* **注意：** 仅支持 **X11** 环境(包括 XWayland)（推荐 KDE X11）。由于 Wayland 的安全机制，无法实现完美的鼠标穿透（Pass-through）模式，因此暂不支持纯 Wayland 环境。
+* **注意：** 使用 layer-shell-qt 支持 wayland 环境
 
 ## 极速上手
 
