@@ -410,6 +410,22 @@ class DanmakuWidget(QWidget):
                     self.layer_shell_lib.set_keyboard_interactivity.argtypes = [ctypes.c_void_p, ctypes.c_bool]
             else:
                 print(f"Layer Shell library not found at: {lib_path}")
+        except OSError as e:
+            err_msg = str(e)
+            if "version" in err_msg and "Qt" in err_msg and "not found" in err_msg:
+                print("\n" + "="*60)
+                print("CRITICAL ERROR: Qt Version Mismatch Detected!")
+                print(f"Error details: {e}")
+                print("-" * 60)
+                print("It seems you are using a pip-installed PyQt6 which conflicts with the system LayerShellQt library.")
+                print("Solution: Please use the system's PyQt6 package instead.")
+                print("  Fedora: sudo dnf install python3-pyqt6")
+                print("  Ubuntu/Debian: sudo apt install python3-pyqt6")
+                print("  Arch: sudo pacman -S python-pyqt6")
+                print("Then recreate your venv with: python3 -m venv --system-site-packages .venv")
+                print("="*60 + "\n")
+            else:
+                print(f"Failed to load Layer Shell library: {e}")
         except Exception as e:
             print(f"Failed to load Layer Shell library: {e}")
 

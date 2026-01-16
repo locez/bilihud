@@ -1,0 +1,55 @@
+
+name: Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  rpm:
+    runs-on: ubuntu-latest
+    container: fedora:43
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: dnf install -y rpm-build python3-devel gcc-c++ qt6-qtbase-devel layer-shell-qt-devel wayland-devel python3-hatchling python3-hatch-build-scripts git tar
+
+      - name: Prepare Source
+        run: |
+          mkdir -p ~/rpmbuild/SOURCES
+          # Create matching folder structure for the tarball
+          # The spec expects bilihud-0.3.0.tar.gz
+          tar --transform 's|^\.|bilihud-0.3.0|' --exclude='.git' -czf ~/rpmbuild/SOURCES/bilihud-0.3.0.tar.gz .
+
+      - name: Build RPM
+        run: rpmbuild -bb packaging/fedora/bilihud.spec
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bilihud-rpm
+          path: /github/home/rpmbuild/RPMS/**/*.rpm
+
+  deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y devscripts debhelper dh-python python3-all python3-hatchling python3-pyqt6 liblayershellqtinterface-dev build-essential
+
+      - name: Prepare Build
+        run: |
+          # Debian tools expect the debian/ directory in the root
+          cp -r packaging/debian .
+          chmod +x debian/rules
+
+      - name: Build Deb
+        run: debuild -us -uc -b
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bilihud-deb
+          path: ../bilihud_*.deb
