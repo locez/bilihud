@@ -1,9 +1,8 @@
-
 Source: bilihud
 Section: utils
 Priority: optional
 Maintainer: Locez <locez@locez.com>
-Build-Depends: debhelper-compat (= 13), dh-python, python3-all, python3-hatchling, python3-pyqt6, liblayershellqtinterface-dev, build-essential
+Build-Depends: debhelper-compat (= 13), dh-python, pybuild-plugin-pyproject, python3-all, python3-hatchling, python3-pyqt6, liblayershellqtinterface-dev, build-essential
 Standards-Version: 4.6.2
 Homepage: https://github.com/locez/bilihud
 

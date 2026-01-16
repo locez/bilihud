@@ -1,4 +1,3 @@
-
 name: Package
 
 on:
@@ -12,17 +11,50 @@ jobs:
     runs-on: ubuntu-latest
     container: fedora:43
     steps:
+      - name: Pre-install git
+        run: dnf install -y git
+
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Install dependencies
-        run: dnf install -y rpm-build python3-devel gcc-c++ qt6-qtbase-devel layer-shell-qt-devel wayland-devel python3-hatchling python3-hatch-build-scripts git tar
+        run: |
+          dnf install -y rpm-build python3-devel gcc-c++ libstdc++-static qt6-qtbase-devel qt6-qtbase-private-devel layer-shell-qt-devel wayland-devel python3-hatchling git tar python3-pip
+          pip install hatch-build-scripts
+
+      - name: Get Version
+        id: get_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+          else
+             # Fallback: Read from pyproject.toml
+             VER=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+             echo "VERSION=${VER}" >> $GITHUB_ENV
+          fi
+
+      - name: Update Spec Version
+        run: |
+          sed -i "s/^Version:.*/Version:        ${{ env.VERSION }}/" packaging/fedora/bilihud.spec
 
       - name: Prepare Source
         run: |
           mkdir -p ~/rpmbuild/SOURCES
+          # Bundle missing dependencies into src/bilihud/vendor
+          mkdir -p src/bilihud/vendor
+          pip install --target src/bilihud/vendor browser-cookie3 qasync brotli pure-protobuf
+          
+          # HACK: Remove bundled dependencies from pyproject.toml ONLY for RPM build
+          # This prevents RPM from auto-generating requirement that system cannot fulfill
+          sed -i '/"qasync"/d' pyproject.toml
+          sed -i '/"browser-cookie3"/d' pyproject.toml
+          sed -i '/"brotli"/d' pyproject.toml
+          sed -i '/"pure_protobuf"/d' pyproject.toml
+
           # Create matching folder structure for the tarball
-          # The spec expects bilihud-0.3.0.tar.gz
-          tar --transform 's|^\.|bilihud-0.3.0|' --exclude='.git' -czf ~/rpmbuild/SOURCES/bilihud-0.3.0.tar.gz .
+          # The spec expects bilihud-<version>.tar.gz
+          tar --transform "s|^\.|bilihud-${{ env.VERSION }}|" --exclude='.git' -czf ~/rpmbuild/SOURCES/bilihud-${{ env.VERSION }}.tar.gz .
 
       - name: Build RPM
         run: rpmbuild -bb packaging/fedora/bilihud.spec
@@ -36,20 +68,62 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y devscripts debhelper dh-python python3-all python3-hatchling python3-pyqt6 liblayershellqtinterface-dev build-essential
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y devscripts debhelper dh-python pybuild-plugin-pyproject python3-all python3-hatchling python3-pyqt6 liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev pkg-config libwayland-dev build-essential python3-pip
+          # Force install non-deb build requirement system-wide
+          sudo pip install hatch-build-scripts --break-system-packages
+
+      - name: Get Version
+        id: get_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+          else
+             # Fallback: Read from pyproject.toml
+             VER=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+             echo "VERSION=${VER}" >> $GITHUB_ENV
+          fi
 
       - name: Prepare Build
         run: |
           # Debian tools expect the debian/ directory in the root
           cp -r packaging/debian .
           chmod +x debian/rules
+          
+          # Update changelog with new version
+          export DEBEMAIL="actions@github.com"
+          export DEBFULLNAME="GitHub Actions"
+          dch -v "${{ env.VERSION }}-1" -D unstable --force-distribution "Automated release build"
 
       - name: Build Deb
-        run: debuild -us -uc -b
+        run: |
+          debuild -us -uc -b
+          # Move artifacts from parent dir to current dir for upload
+          mv ../bilihud_*.deb .
 
       - uses: actions/upload-artifact@v4
         with:
           name: bilihud-deb
-          path: ../bilihud_*.deb
+          path: bilihud_*.deb
+
+  release:
+    needs: [rpm, deb]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            bilihud-rpm/**/*.rpm
+            bilihud-deb/*.deb
+          generate_release_notes: true

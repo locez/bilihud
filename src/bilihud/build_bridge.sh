@@ -45,7 +45,15 @@ QT_PRIVATE_HEADERS="$QT_INSTALL_HEADERS/QtGui/$QT_VERSION/QtGui"
 if [ ! -d "$QT_PRIVATE_HEADERS" ]; then
     echo "Warning: Private header directory $QT_PRIVATE_HEADERS does not exist."
     echo "Please ensure you have qt6-base-private-dev (Debian/Ubuntu) or qt6-base (Arch) installed."
-    # Attempt to continue, though it likely won't work if this path is wrong for the specific distro layout
+    echo "Please ensure you have qt6-base-private-dev (Debian/Ubuntu) or qt6-base (Arch) installed."
+    
+    # Fallback: try to find the directory if the exact version match failed
+    # This handles cases where qmake reports 6.10.1 but the dir is 6.10.0
+    FOUND_HEADERS=$(find "$QT_INSTALL_HEADERS/QtGui" -maxdepth 2 -name "QtGui" 2>/dev/null | grep "/[0-9]\.[0-9]\+\.[0-9]\+/QtGui$" | head -n 1)
+    if [ -n "$FOUND_HEADERS" ]; then
+        echo "Found fallback private headers at: $FOUND_HEADERS"
+        QT_PRIVATE_HEADERS="$FOUND_HEADERS"
+    fi
 fi
 
 # Find LayerShellQt
@@ -80,8 +88,15 @@ fi
 
 echo "Compiling libbili-layer.so..."
 
+# Check if we should use system libs (dynamic) instead of static
+LINK_FLAGS="-static-libstdc++ -static-libgcc"
+if [ "$USE_SYSTEM_LIBS" == "1" ]; then
+    echo "Using system libraries (dynamic linking)"
+    LINK_FLAGS=""
+fi
+
 g++ -fPIC -shared -o "$OUTPUT_FILE" "$SOURCE_FILE" \
-    -static-libstdc++ -static-libgcc \
+    $LINK_FLAGS \
     $(pkg-config --cflags --libs Qt6Gui Qt6Core wayland-client) \
     $LAYERSHELL_CFLAGS $LAYERSHELL_LIBS \
     -I"$QT_PRIVATE_HEADERS"
