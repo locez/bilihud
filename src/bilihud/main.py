@@ -1,6 +1,13 @@
 # -*- coding: utf-8 -*-
 import sys
 import os
+
+# [Security] Prevent accidental loading of PyQt5 which causes conflicts
+sys.modules["PyQt5"] = None
+
+# [Environment] Force Qt6
+os.environ["QT_API"] = "pyqt6"
+
 import signal
 import asyncio
 import qasync
