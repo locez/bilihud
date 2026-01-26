@@ -12,11 +12,12 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QLineEdit, QPushButton, QFrame,
     QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu,
-    QDialog, QSizePolicy, QAbstractItemView, QSizeGrip
+    QDialog, QSizePolicy, QAbstractItemView
 )
 from PyQt6.QtGui import (
     QCloseEvent, QFont, QColor, QPalette, QIcon, QCursor, 
-    QLinearGradient, QBrush, QPainter, QAction, QGuiApplication
+    QLinearGradient, QBrush, QPainter, QAction, QGuiApplication,
+    QTextDocument
 )
 from PyQt6.QtCore import (
     QTimer, Qt, pyqtSignal, QSize, QPoint, QRect
@@ -240,8 +241,9 @@ class DanmakuItemWidget(QFrame):
 
         # 主布局
         main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(5, 2, 5, 2)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(5, 1, 5, 1) # 减小垂直边距
+        main_layout.setSpacing(0) # 单一标签不需要间距
+        main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # 文字阴影效果
         def create_shadow_effect(color=QColor(0, 0, 0, 200)):
@@ -250,47 +252,38 @@ class DanmakuItemWidget(QFrame):
             shadow.setOffset(1, 1)
             shadow.setColor(color)
             return shadow
-
-        # 用户名标签
-        username_label = QLabel(danmaku_msg.uname)
-        username_label.setGraphicsEffect(create_shadow_effect())
-        username_label.setStyleSheet(f"""
-            QLabel {{
-                color: {self.get_user_color(danmaku_msg)};
-                font-weight: bold;
-                font-size: 12px;
-                font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
-            }}
-        """)
-
-        # 冒号标签
-        colon_label = QLabel(":")
-        colon_label.setGraphicsEffect(create_shadow_effect())
-        colon_label.setStyleSheet("""
-            QLabel {
-                color: white;
-                font-size: 12px;
-                font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
-            }
-        """)
-
-        # 弹幕内容标签
-        content_label = QLabel(danmaku_msg.msg)
-        content_label.setGraphicsEffect(create_shadow_effect())
-        content_label.setStyleSheet("""
-            QLabel {
-                color: white;
-                font-size: 13px;
-                font-weight: 500;
-                font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
-            }
-        """)
-        content_label.setWordWrap(True)
+            
+        # [Refactor] 使用单一 QLabel + HTML 实现
+        # 这样能保证 用户名 和 内容 作为一个整体进行流式换行，避免“挤压”或对齐问题
+        
+        user_color = self.get_user_color(danmaku_msg)
+        # HTML 构造
+        # 注意：Qt Rich Text 支持有限的 CSS
+        # 增加 line-height 控制行高不要太大
+        html_content = f"""
+        <style>
+            .user {{ color: {user_color}; font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
+            .colon {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
+            .content {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 13px; font-weight: 500; }}
+            body, p {{ line-height: 120%; margin: 0; padding: 0; }} 
+        </style>
+        <p><span class="user">{danmaku_msg.uname}</span><span class="colon"> : </span><span class="content">{danmaku_msg.msg.strip()}</span></p>
+        """
+        
+        text_label = QLabel()
+        text_label.setTextFormat(Qt.TextFormat.RichText)
+        text_label.setText(html_content)
+        text_label.setWordWrap(True)
+        text_label.setGraphicsEffect(create_shadow_effect())
+        
+        # 允许水平伸缩
+        text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        
+        # 保存 label 引用以便计算高度
+        self.text_label = text_label
 
         # 添加控件到布局
-        main_layout.addWidget(username_label)
-        main_layout.addWidget(colon_label)
-        main_layout.addWidget(content_label, 1) # content stretches
+        main_layout.addWidget(text_label, 1, Qt.AlignmentFlag.AlignTop)
 
         self.setLayout(main_layout)
 
@@ -313,49 +306,146 @@ class DanmakuItemWidget(QFrame):
         """设置礼物消息样式"""
         self.setStyleSheet("background-color: transparent;")
         main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(5, 2, 5, 2)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(5, 1, 5, 1)
+        main_layout.setSpacing(0)
+        main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(2); shadow.setOffset(1, 1); shadow.setColor(QColor(0,0,0,200))
 
-        # 用户名
-        user_label = QLabel(gift_msg.uname)
-        user_label.setGraphicsEffect(shadow)
-        user_label.setStyleSheet("color: #FFD700; font-weight: bold; font-size: 12px; font-family: 'Microsoft YaHei';")
+        # HTML 构造
+        html_content = f"""
+        <style>
+            .user {{ color: #FFD700; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 12px; }}
+            .action {{ color: #FF66CC; font-family: 'Microsoft YaHei'; font-size: 12px; }}
+            .gift {{ color: #FF66CC; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 12px; }}
+            body, p {{ line-height: 120%; margin: 0; padding: 0; }}
+        </style>
+        <p><span class="user">{gift_msg.uname}</span>
+        <span class="action"> {gift_msg.action} </span>
+        <span class="gift">{gift_msg.gift_name} x{gift_msg.num}</span></p>
+        """
+
+        text_label = QLabel()
+        text_label.setTextFormat(Qt.TextFormat.RichText)
+        text_label.setText(html_content)
+        text_label.setWordWrap(True)
+        text_label.setGraphicsEffect(shadow)
+        text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         
-        # 动作
-        action_label = QLabel(f" {gift_msg.action} ")
-        action_label.setStyleSheet("color: #FF66CC; font-size: 12px;")
+        # 保存 label 引用以便计算高度
+        self.text_label = text_label
         
-        # 礼物名
-        gift_label = QLabel(f"{gift_msg.gift_name} x{gift_msg.num}")
-        gift_label.setStyleSheet("color: #FF66CC; font-weight: bold; font-size: 12px;")
-        
-        main_layout.addWidget(user_label)
-        main_layout.addWidget(action_label)
-        main_layout.addWidget(gift_label)
-        main_layout.addStretch()
+        main_layout.addWidget(text_label, 1, Qt.AlignmentFlag.AlignTop)
+        self.setLayout(main_layout)
 
     def setup_interact_ui(self, interact_msg: web_models.InteractWordV2Message):
         """设置互动消息样式 (进房/关注)"""
         self.setStyleSheet("background-color: transparent;")
         main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(5, 2, 5, 2)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(5, 1, 5, 1)
+        main_layout.setSpacing(0)
+        main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         
-        user_label = QLabel(interact_msg.username)
-        user_label.setStyleSheet("color: #AAAAAA; font-size: 11px; font-weight: bold;")
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(2); shadow.setOffset(1, 1); shadow.setColor(QColor(0,0,0,200))
         
         msg_type_map = {1: '进入直播间', 2: '关注了主播', 3: '分享了直播间'}
         action_text = msg_type_map.get(interact_msg.msg_type, '进入直播间')
+
+        # HTML 构造
+        html_content = f"""
+        <style>
+            .user {{ color: #AAAAAA; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 11px; }}
+            .info {{ color: #AAAAAA; font-family: 'Microsoft YaHei'; font-size: 11px; }}
+            body, p {{ line-height: 120%; margin: 0; padding: 0; }}
+        </style>
+        <p><span class="user">{interact_msg.username}</span>
+        <span class="info"> {action_text}</span></p>
+        """
         
-        info_label = QLabel(f" {action_text}")
-        info_label.setStyleSheet("color: #AAAAAA; font-size: 11px;")
+        text_label = QLabel()
+        text_label.setTextFormat(Qt.TextFormat.RichText)
+        text_label.setText(html_content)
+        text_label.setWordWrap(True)
+        text_label.setGraphicsEffect(shadow)
+        text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         
-        main_layout.addWidget(user_label)
-        main_layout.addWidget(info_label)
-        main_layout.addStretch()
+        # 保存 label 引用以便计算高度
+        self.text_label = text_label
+
+        main_layout.addWidget(text_label, 1, Qt.AlignmentFlag.AlignTop)
+        self.setLayout(main_layout)
+
+    def get_real_height(self, width):
+        """
+        通过 QTextDocument 精确计算所需高度，避免 QLabel sizeHint 的误差
+        """
+        if not hasattr(self, 'text_label'):
+            return self.sizeHint().height()
+            
+        # 使用临时 Document 来计算高度
+        doc = QTextDocument()
+        # 设置默认字体与 Label 一致，确保计算准确
+        doc.setDefaultFont(self.text_label.font())
+        doc.setHtml(self.text_label.text())
+        doc.setTextWidth(width)
+        
+        # 强制 Layout
+        height = doc.size().height()
+        
+        # 加上 margin (虽然我们设了 1px margin)
+        return int(height + 2) # Top(1) + Bottom(1)
+
+
+class CustomSizeGrip(QWidget):
+    """
+    自定义大小调整手柄，解决 LayerShell 模式下 QSizeGrip 失效的问题
+    通过手动计算鼠标位移并调用 resize() 来实现窗口调整
+    """
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setFixedSize(16, 16)
+        self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        self.setStyleSheet("""
+            background-color: transparent;
+        """)
+        self._resizing = False
+        self._start_mouse_pos = None
+        self._start_size = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._resizing = True
+            self._start_mouse_pos = event.globalPosition().toPoint()
+            self._start_size = self.parent().size()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._resizing:
+            delta = event.globalPosition().toPoint() - self._start_mouse_pos
+            new_width = max(self.parent().minimumWidth(), self._start_size.width() + delta.x())
+            new_height = max(self.parent().minimumHeight(), self._start_size.height() + delta.y())
+            
+            self.parent().resize(new_width, new_height)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._resizing = False
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # 绘制 resize grip 的外观 (例如右下角的小三角点)
+        painter.setPen(Qt.PenStyle.NoPen)
+        color = QColor(255, 255, 255, 100)
+        painter.setBrush(QBrush(color))
+        
+        # 绘制几个小点
+        painter.drawEllipse(10, 10, 3, 3)
+        painter.drawEllipse(6, 10, 3, 3)
+        painter.drawEllipse(10, 6, 3, 3)
 
 
 class DanmakuWidget(QWidget):
@@ -652,7 +742,7 @@ class DanmakuWidget(QWidget):
         self._drag_position = QPoint()
         
         # 大小调整手柄
-        self.size_grip = QSizeGrip(self)
+        self.size_grip = CustomSizeGrip(self)
         self.size_grip.setStyleSheet("""
             QSizeGrip {
                 background-color: transparent;
@@ -672,13 +762,21 @@ class DanmakuWidget(QWidget):
         )
         
         # 2. 在非穿透模式下，根据宽度动态调整列表项高度以支持换行
+        # 使用 event.size() 计算新的预期宽度，而不是依赖可能滞后的 viewport().width()
         if not self.is_gaming_mode:
-            self.adjust_list_items_height()
+            # 减去左右 Margin (5+5=10) 和 垂直滚动条预留宽度 (4) + 少量余量 (6) = 20
+            # 使用精准的宽度计算，不再使用过大的缓冲，避免空行
+            target_width = event.size().width() - 20
+            self.adjust_list_items_height(target_width)
 
-    def adjust_list_items_height(self):
+    def adjust_list_items_height(self, target_width: int = None):
         """重新计算所有列表项的高度"""
-        # 获取列表视口宽度（减去滚动条可能的宽度，虽然我们隐藏了滚动条）
-        width = self.danmaku_list.viewport().width()
+        # 如果未指定宽度，则尝试获取视口宽度
+        if target_width is None:
+            width = self.danmaku_list.viewport().width()
+        else:
+            width = target_width
+
         if width <= 0: return
 
         count = self.danmaku_list.count()
@@ -693,8 +791,13 @@ class DanmakuWidget(QWidget):
                 widget.setMinimumWidth(0)
                 widget.setMaximumWidth(16777215) 
                 
+                # [Fix] 使用精确高度计算
+                # 减去 10px 边距
+                real_height = widget.get_real_height(width - 10)
+                
                 # 如果高度变化了，更新Item
-                if item.sizeHint().height() != size_hint.height():
+                if item.sizeHint().height() != real_height:
+                    size_hint.setHeight(real_height)
                     item.setSizeHint(size_hint)
 
 
@@ -1115,13 +1218,19 @@ class DanmakuWidget(QWidget):
         # Pre-calculate height based on current viewport width
         width = self.danmaku_list.viewport().width()
         if width > 0:
-            item_widget.setFixedWidth(width)
-            size = item_widget.sizeHint()
+            # 使用 get_real_height 替代 sizeHint，精确计算高度
+            # 减去左右边距 10px (main_layout margin) 得到实际文本可用宽度
+            text_width = width - 10 
+            item_widget.setFixedWidth(width) # Set fixed width for layout
+            
+            real_height = item_widget.get_real_height(text_width)
+            size = QSize(width, real_height)
+            
             item_widget.setMinimumWidth(0)
             item_widget.setMaximumWidth(16777215)
         else:
             size = item_widget.sizeHint()
-
+        
         item = QListWidgetItem()
         item.setSizeHint(size)
         
