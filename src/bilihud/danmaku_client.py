@@ -44,33 +44,62 @@ class DanmakuClient:
         # 初始化session
         cookies = http.cookies.SimpleCookie()
         
-        # 尝试优先从Keyring加载Cookies
-        from .auth import AuthManager
-        auth_manager = AuthManager()
-        saved_cookies = auth_manager.load_cookies()
+        # 在Executor中运行Cookie加载，避免阻塞主线程和可能的线程冲突
+        loop = asyncio.get_running_loop()
         
-        loaded_from_keyring = False
-        if saved_cookies:
-            # 验证Cookie有效性
-            is_valid = await auth_manager.validate_session(saved_cookies)
-            if is_valid:
+        def load_cookies_sync():
+            _cookies = {}
+            _msg = None
+            
+            # 尝试优先从Keyring加载Cookies
+            from .auth import AuthManager
+            auth_manager = AuthManager()
+            saved_cookies = auth_manager.load_cookies()
+            
+            loaded_from_keyring = False
+            if saved_cookies:
+                # 验证Cookie有效性 (这里为了速度先不验证，或者需要异步转同步，太麻烦，
+                # 其实直接信任keyring里的，因为expire了也会在连接时失败)
+                # 暂时仅仅加载
                 for k, v in saved_cookies.items():
-                    cookies[k] = v
+                    _cookies[k] = v
                 print("Successfully loaded validated cookies from Keyring")
                 loaded_from_keyring = True
-            else:
-                print("Keyring cookies expired")
-                if self.on_login_failed:
-                    self.on_login_failed("本地保存的登录信息已失效，请重新登录")
+            
+            # 如果没有有效的Keyring Cookies，尝试从浏览器加载
+            if not loaded_from_keyring:
+                try:
+                    browser_cookies = load_bilibili_cookies()
+                    if browser_cookies:
+                        # print("Successfully loaded cookies from browser")
+                        for cookie in browser_cookies:
+                            _cookies[cookie.name] = cookie.value
+                except Exception as e:
+                    print(f"Browser cookie load failed: {e}")
+            
+            return _cookies, saved_cookies is not None
 
-        # 如果没有有效的Keyring Cookies，尝试从浏览器加载
-        if not loaded_from_keyring:
-            browser_cookies = load_bilibili_cookies()
-            if browser_cookies:
-                # print("Successfully loaded cookies from browser")
-                # 将http.cookiejar.CookieJar转换为SimpleCookie或简单dict
-                for cookie in browser_cookies:
-                    cookies[cookie.name] = cookie.value
+        try:
+            loaded_cookies, is_keyring = await loop.run_in_executor(None, load_cookies_sync)
+            
+            # 如果是从keyring加载的，我们还需要验证一下有效性
+            # 但为了简化，我们先直接用。如果验证逻辑包含网络请求，放在executor里比较麻烦因为要用requests
+            # 或者我们在这里异步验证
+            if is_keyring:
+                 from .auth import AuthManager
+                 auth_manager = AuthManager()
+                 if not await auth_manager.validate_session(loaded_cookies):
+                     print("Keyring cookies expired")
+                     if self.on_login_failed:
+                         self.on_login_failed("本地保存的登录信息已失效，请重新登录")
+                     # 失效了就清空，但不要回退到浏览器，因为用户意图是使用keyring
+                     loaded_cookies = {} 
+
+            for k, v in loaded_cookies.items():
+                cookies[k] = v
+                
+        except Exception as e:
+            print(f"Error loading cookies: {e}")
         
         if self.sessdata:
             cookies['SESSDATA'] = self.sessdata

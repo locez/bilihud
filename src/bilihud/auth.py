@@ -2,7 +2,7 @@
 import asyncio
 import aiohttp
 import qrcode
-import keyring
+import qrcode
 import json
 import logging
 import time
@@ -117,6 +117,7 @@ class AuthManager:
         Save cookies securely using keyring
         """
         try:
+            import keyring
             cookie_json = json.dumps(cookies)
             keyring.set_password(SERVICE_ID, USERNAME_KEY, cookie_json)
             return True
@@ -129,6 +130,7 @@ class AuthManager:
         Load cookies from keyring
         """
         try:
+            import keyring
             cookie_json = keyring.get_password(SERVICE_ID, USERNAME_KEY)
             if cookie_json:
                 return json.loads(cookie_json)
@@ -140,6 +142,7 @@ class AuthManager:
     def clear_cookies(self):
         """Clear stored cookies"""
         try:
+            import keyring
             keyring.delete_password(SERVICE_ID, USERNAME_KEY)
         except Exception as e:
             logger.error(f"Failed to delete cookies: {e}")
