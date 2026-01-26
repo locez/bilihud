@@ -31,6 +31,32 @@
 
 ### 1. 安装
 
+#### 系统依赖 (System Dependencies)
+
+由于引入了 `layer-shell-qt`，如果您从源码运行，请先根据您的发行版安装必要的依赖：
+
+**Ubuntu / Debian:**
+```bash
+sudo apt install liblayershellqtinterface-dev build-essential libwayland-dev qt6-base-dev libqt6waylandclient6
+```
+
+**Fedora:**
+```bash
+sudo dnf install gcc-c++ qt6-qtbase-devel layer-shell-qt-devel wayland-devel
+```
+
+**Arch Linux:**
+```bash
+sudo pacman -S qt6-base qt6-wayland layer-shell-qt
+```
+
+**Gentoo Linux:**
+```bash
+sudo emerge -a kde-plasma/layer-shell-qt dev-qt/qtwayland
+```
+
+#### 通用步骤
+
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/locez/bilihud.git
