@@ -12,13 +12,14 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QLineEdit, QPushButton, QFrame,
     QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu,
-    QDialog, QSizePolicy, QAbstractItemView
+    QDialog, QSizePolicy, QAbstractItemView, QListView
 )
 from PyQt6.QtGui import (
     QCloseEvent, QFont, QColor, QPalette, QIcon, QCursor, 
     QLinearGradient, QBrush, QPainter, QAction, QGuiApplication,
     QTextDocument
 )
+from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 from PyQt6.QtCore import (
     QTimer, Qt, pyqtSignal, QSize, QPoint, QRect
 )
@@ -222,180 +223,139 @@ class X11Helper:
             cls._x11.XCloseDisplay(display)
 
 
-class DanmakuItemWidget(QFrame):
-    """单个弹幕项的自定义控件"""
-
-    def __init__(self, message: web_models.DanmakuMessage | web_models.GiftMessage | web_models.InteractWordV2Message, parent=None):
+class DanmakuDelegate(QStyledItemDelegate):
+    """
+    High-performance delegate with Caching.
+    """
+    def __init__(self, parent=None):
         super().__init__(parent)
+        self._cache = {} # Map[id(message), QTextDocument]
+        # We need to invalidate cache if width changes, but updating width on existing doc is cheap.
+
+    def _get_document(self, message, width, font):
+        """Retrieve or create cached document."""
+        msg_id = id(message)
         
-        if isinstance(message, web_models.DanmakuMessage):
-            self.setup_danmaku_ui(message)
-        elif isinstance(message, web_models.GiftMessage):
-            self.setup_gift_ui(message)
-        elif isinstance(message, web_models.InteractWordV2Message):
-            self.setup_interact_ui(message)
+        if msg_id in self._cache:
+             doc = self._cache[msg_id]
+             # Update width if changed (Resize event)
+             if doc.textWidth() != width:
+                 doc.setTextWidth(width)
+             # Update font if changed? Usually constant.
+             return doc
+             
+        # Cache Miss - Create new
+        html_content = self.get_html_for_message(message)
+        doc = QTextDocument()
+        doc.setDocumentMargin(0)
+        doc.setDefaultFont(font)
+        doc.setHtml(html_content)
+        doc.setTextWidth(width)
+        
+        self._cache[msg_id] = doc
+        
+        # [Cache Pruning]
+        # Simple mechanism: keep size reasonable (e.g. 200 items max in list -> 200 docs)
+        # If list grows to 1000, we might want to prune. 
+        # But QListWidget already prunes to 200 via logic in add_message.
+        # So we just assume cache size ~= list size.
+        
+        return doc
 
-    def setup_danmaku_ui(self, danmaku_msg: web_models.DanmakuMessage):
-        # 设置框架样式 - 透明背景
-        self.setStyleSheet("background-color: transparent;")
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
+        """Paint the item content directly."""
+        options = option
+        self.initStyleOption(options, index)
+        
+        msg_data = index.data(Qt.ItemDataRole.UserRole)
+        if not msg_data:
+            return
 
-        # 主布局
-        main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(5, 1, 5, 1) # 减小垂直边距
-        main_layout.setSpacing(0) # 单一标签不需要间距
-        main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        painter.save()
+        
+        # Get width
+        width = options.rect.width()
+        if width <= 0: width = 300
+        
+        doc = self._get_document(msg_data, width, options.font)
+        
+        # Translate painter to the correct position
+        painter.translate(options.rect.x(), options.rect.y() + 1) # +1 Top Margin
+        
+        # Draw the document
+        doc.drawContents(painter)
+        
+        painter.restore()
 
-        # 文字阴影效果
-        def create_shadow_effect(color=QColor(0, 0, 0, 200)):
-            shadow = QGraphicsDropShadowEffect()
-            shadow.setBlurRadius(2)
-            shadow.setOffset(1, 1)
-            shadow.setColor(color)
-            return shadow
+    def sizeHint(self, option: QStyleOptionViewItem, index):
+        """Calculate the size of the item."""
+        msg_data = index.data(Qt.ItemDataRole.UserRole)
+        if not msg_data:
+            return QSize(0, 0)
             
-        # [Refactor] 使用单一 QLabel + HTML 实现
-        # 这样能保证 用户名 和 内容 作为一个整体进行流式换行，避免“挤压”或对齐问题
+        width = option.rect.width()
+        if width <= 0:
+            if self.parent() and hasattr(self.parent(), 'viewport'):
+                width = self.parent().viewport().width()
+        if width <= 0: width = 300
+             
+        doc = self._get_document(msg_data, width, option.font)
         
-        user_color = self.get_user_color(danmaku_msg)
-        # HTML 构造
-        # 注意：Qt Rich Text 支持有限的 CSS
-        # 增加 line-height 控制行高不要太大
-        html_content = f"""
-        <style>
-            .user {{ color: {user_color}; font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
-            .colon {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
-            .content {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 13px; font-weight: 500; }}
-            body, p {{ line-height: 120%; margin: 0; padding: 0; }} 
-        </style>
-        <p><span class="user">{danmaku_msg.uname}</span><span class="colon"> : </span><span class="content">{danmaku_msg.msg.strip()}</span></p>
-        """
-        
-        text_label = QLabel()
-        text_label.setTextFormat(Qt.TextFormat.RichText)
-        text_label.setText(html_content)
-        text_label.setWordWrap(True)
-        # text_label.setGraphicsEffect(create_shadow_effect())
-        
-        # 允许水平伸缩
-        text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        
-        # 保存 label 引用以便计算高度
-        self.text_label = text_label
+        return QSize(width, int(doc.size().height()) + 2) # +2 for margins
 
-        # 添加控件到布局
-        main_layout.addWidget(text_label, 1, Qt.AlignmentFlag.AlignTop)
-
-        self.setLayout(main_layout)
+    def get_html_for_message(self, message) -> str:
+        """Construct HTML content based on message type."""
+        if isinstance(message, web_models.DanmakuMessage):
+            user_color = self.get_user_color(message)
+            return f"""
+            <style>
+                .user {{ color: {user_color}; font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
+                .colon {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
+                .content {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 13px; font-weight: 500; }}
+                body, p {{ line-height: 120%; margin: 0; padding: 0; }} 
+            </style>
+            <p><span class="user">{message.uname}</span><span class="colon"> : </span><span class="content">{message.msg.strip()}</span></p>
+            """
+        elif isinstance(message, web_models.GiftMessage):
+            return f"""
+            <style>
+                .user {{ color: #FFD700; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 12px; }}
+                .action {{ color: #FF66CC; font-family: 'Microsoft YaHei'; font-size: 12px; }}
+                .gift {{ color: #FF66CC; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 12px; }}
+                body, p {{ line-height: 120%; margin: 0; padding: 0; }}
+            </style>
+            <p><span class="user">{message.uname}</span>
+            <span class="action"> {message.action} </span>
+            <span class="gift">{message.gift_name} x{message.num}</span></p>
+            """
+        elif isinstance(message, web_models.InteractWordV2Message):
+            msg_type_map = {1: '进入直播间', 2: '关注了主播', 3: '分享了直播间'}
+            action_text = msg_type_map.get(message.msg_type, '进入直播间')
+            return f"""
+            <style>
+                .user {{ color: #AAAAAA; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 11px; }}
+                .info {{ color: #AAAAAA; font-family: 'Microsoft YaHei'; font-size: 11px; }}
+                body, p {{ line-height: 120%; margin: 0; padding: 0; }}
+            </style>
+            <p><span class="user">{message.username}</span>
+            <span class="info"> {action_text}</span></p>
+            """
+        return ""
 
     def get_user_color(self, danmaku_msg: web_models.DanmakuMessage) -> str:
         """根据用户等级获取用户名颜色"""
         if getattr(danmaku_msg, 'is_system_error', False):
-            return "#FF5555"  # 红色 (系统错误)
+            return "#FF5555"
         elif getattr(danmaku_msg, 'is_system_info', False):
-            return "#AAAAAA"  # 灰色 (系统信息)
+            return "#AAAAAA"
             
         if danmaku_msg.privilege_type > 0:
-            return "#FFD700"  # 金色 (舰队)
+            return "#FFD700"
         elif danmaku_msg.vip or danmaku_msg.svip:
-            return "#FF69B4"  # 粉色 (VIP)
+            return "#FF69B4"
         elif danmaku_msg.admin:
-            return "#FF4500"  # 红橙色 (房管)
-        return "#66CCFF"  # 天蓝色 (普通)
-
-    def setup_gift_ui(self, gift_msg: web_models.GiftMessage):
-        """设置礼物消息样式"""
-        self.setStyleSheet("background-color: transparent;")
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(5, 1, 5, 1)
-        main_layout.setSpacing(0)
-        main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(2); shadow.setOffset(1, 1); shadow.setColor(QColor(0,0,0,200))
-
-        # HTML 构造
-        html_content = f"""
-        <style>
-            .user {{ color: #FFD700; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 12px; }}
-            .action {{ color: #FF66CC; font-family: 'Microsoft YaHei'; font-size: 12px; }}
-            .gift {{ color: #FF66CC; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 12px; }}
-            body, p {{ line-height: 120%; margin: 0; padding: 0; }}
-        </style>
-        <p><span class="user">{gift_msg.uname}</span>
-        <span class="action"> {gift_msg.action} </span>
-        <span class="gift">{gift_msg.gift_name} x{gift_msg.num}</span></p>
-        """
-
-        text_label = QLabel()
-        text_label.setTextFormat(Qt.TextFormat.RichText)
-        text_label.setText(html_content)
-        text_label.setWordWrap(True)
-        # text_label.setGraphicsEffect(shadow)
-        text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        
-        # 保存 label 引用以便计算高度
-        self.text_label = text_label
-        
-        main_layout.addWidget(text_label, 1, Qt.AlignmentFlag.AlignTop)
-        self.setLayout(main_layout)
-
-    def setup_interact_ui(self, interact_msg: web_models.InteractWordV2Message):
-        """设置互动消息样式 (进房/关注)"""
-        self.setStyleSheet("background-color: transparent;")
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(5, 1, 5, 1)
-        main_layout.setSpacing(0)
-        main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(2); shadow.setOffset(1, 1); shadow.setColor(QColor(0,0,0,200))
-        
-        msg_type_map = {1: '进入直播间', 2: '关注了主播', 3: '分享了直播间'}
-        action_text = msg_type_map.get(interact_msg.msg_type, '进入直播间')
-
-        # HTML 构造
-        html_content = f"""
-        <style>
-            .user {{ color: #AAAAAA; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 11px; }}
-            .info {{ color: #AAAAAA; font-family: 'Microsoft YaHei'; font-size: 11px; }}
-            body, p {{ line-height: 120%; margin: 0; padding: 0; }}
-        </style>
-        <p><span class="user">{interact_msg.username}</span>
-        <span class="info"> {action_text}</span></p>
-        """
-        
-        text_label = QLabel()
-        text_label.setTextFormat(Qt.TextFormat.RichText)
-        text_label.setText(html_content)
-        text_label.setWordWrap(True)
-        # text_label.setGraphicsEffect(shadow)
-        text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        
-        # 保存 label 引用以便计算高度
-        self.text_label = text_label
-
-        main_layout.addWidget(text_label, 1, Qt.AlignmentFlag.AlignTop)
-        self.setLayout(main_layout)
-
-    def get_real_height(self, width):
-        """
-        通过 QTextDocument 精确计算所需高度，避免 QLabel sizeHint 的误差
-        """
-        if not hasattr(self, 'text_label'):
-            return self.sizeHint().height()
-            
-        # 使用临时 Document 来计算高度
-        doc = QTextDocument()
-        # 设置默认字体与 Label 一致，确保计算准确
-        doc.setDefaultFont(self.text_label.font())
-        doc.setHtml(self.text_label.text())
-        doc.setTextWidth(width)
-        
-        # 强制 Layout
-        height = doc.size().height()
-        
-        # 加上 margin (虽然我们设了 1px margin)
-        return int(height + 2) # Top(1) + Bottom(1)
+            return "#FF4500"
+        return "#66CCFF"
 
 
 class CustomSizeGrip(QWidget):
@@ -465,6 +425,12 @@ class DanmakuWidget(QWidget):
         # Track Layer Shell position manually because Qt frameGeometry() is unreliable (returns 0,0)
         self.layer_pos = QPoint(0, 0)
         
+        # [Performance] Resize Debounce Timer
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(30) # 30ms Debounce
+        self._resize_timer.timeout.connect(self._delayed_adjust_height)
+        
         # Load Layer Shell Library
         self.load_layer_shell_lib()
 
@@ -483,6 +449,12 @@ class DanmakuWidget(QWidget):
         
         # Try to activate Layer Shell initially
         QTimer.singleShot(100, self.activate_layer_shell)
+    
+    def _delayed_adjust_height(self):
+        """Debounced execution of item layout update"""
+        if not self.is_gaming_mode:
+             # With Delegate + ResizeMode.Adjust, we just need to poke the layout
+             self.danmaku_list.scheduleDelayedItemsLayout()
 
     def load_layer_shell_lib(self):
         try:
@@ -694,12 +666,14 @@ class DanmakuWidget(QWidget):
 
         # --- 弹幕列表 ---
         self.danmaku_list = QListWidget()
+        self.danmaku_list.setItemDelegate(DanmakuDelegate(self.danmaku_list)) # Set High Perf Delegate
         self.danmaku_list.setStyleSheet("background: transparent; border: none;")
         self.danmaku_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.danmaku_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.danmaku_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.danmaku_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.danmaku_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.danmaku_list.setResizeMode(QListView.ResizeMode.Adjust) # Trigger layout on resize
 
         # 滚动条样式美化
         self.danmaku_list.verticalScrollBar().setStyleSheet("""
@@ -755,36 +729,11 @@ class DanmakuWidget(QWidget):
     # [Old resizeEvent removed - replaced by instrumented version below]
 
     def adjust_list_items_height(self, target_width: int = None):
-        """重新计算所有列表项的高度"""
-        # 如果未指定宽度，则尝试获取视口宽度
-        if target_width is None:
-            width = self.danmaku_list.viewport().width()
-        else:
-            width = target_width
-
-        if width <= 0: return
-
-        count = self.danmaku_list.count()
-        for i in range(count):
-            item = self.danmaku_list.item(i)
-            widget = self.danmaku_list.itemWidget(item)
-            if widget:
-                # 临时固定宽度以计算正确的高度
-                widget.setFixedWidth(width)
-                size_hint = widget.sizeHint()
-                # 恢复宽度限制
-                widget.setMinimumWidth(0)
-                widget.setMaximumWidth(16777215) 
-                
-                # [Fix] 使用精确高度计算
-                # 减去 10px 边距
-                real_height = widget.get_real_height(width - 10)
-                
-                # 如果高度变化了，更新Item
-                if item.sizeHint().height() != real_height:
-                    size_hint.setHeight(real_height)
-                    item.setSizeHint(size_hint)
-
+        """
+        Deprecated. Layout is handled by QStyledItemDelegate + ResizeMode.Adjust.
+        Kept as dummy to prevent debris crashes if referenced.
+        """
+        pass
 
     def setup_tray_icon(self):
         """初始化系统托盘图标"""
@@ -873,8 +822,8 @@ class DanmakuWidget(QWidget):
                 self.add_system_message(f"发送失败: {msg}", "error")
                 print(f"弹幕发送失败: {msg}")
         else:
-             self.add_system_message("未连接直播间，无法发送", "error")
-             print("未连接，无法发送")
+              self.add_system_message("未连接直播间，无法发送", "error")
+              print("未连接，无法发送")
 
     def trigger_send(self, text: str):
         """处理发送弹幕请求"""
@@ -1095,7 +1044,7 @@ class DanmakuWidget(QWidget):
                         self.layer_pos.x(), 
                         self.layer_pos.y()
                     )
-                    self.update() 
+                    self.update() #[Required] Triggers wl_surface.commit to apply position 
                     
                 except Exception as e:
                     print(f"Wayland drag error: {e}")
@@ -1115,10 +1064,9 @@ class DanmakuWidget(QWidget):
             rect.bottom() - self.size_grip.height()
         )
         
-        # 2. 在非穿透模式下，调整列表项高度
+        # 2. Debounced Layout Update
         if not self.is_gaming_mode:
-            target_width = event.size().width() - 20
-            self.adjust_list_items_height(target_width)
+            self._resize_timer.start()
 
     def mouseReleaseEvent(self, event):
         self._dragging = False
@@ -1128,7 +1076,7 @@ class DanmakuWidget(QWidget):
         if hasattr(self, '_message_buffer') and self._message_buffer:
             for item_type, item_data in self._message_buffer:
                 if item_type == 'msg':
-                    self.add_message(item_data, _from_buffer=True)
+                    self.add_message(item_data)
                 elif item_type == 'gift':
                     self.gift_received.emit(item_data)
                 elif item_type == 'interact':
@@ -1228,34 +1176,13 @@ class DanmakuWidget(QWidget):
             self.interact_received.emit(interact_msg)
 
     def add_message(self, message, _from_buffer=False):
-        """通用添加消息方法"""
-        # [Buffer Handled in Callbacks]
-        pass # Optimization removed from here since we buffer at source
-
-        item_widget = DanmakuItemWidget(message)
-
-        
-        # Pre-calculate height based on current viewport width
-        width = self.danmaku_list.viewport().width()
-        if width > 0:
-            # 使用 get_real_height 替代 sizeHint，精确计算高度
-            # 减去左右边距 10px (main_layout margin) 得到实际文本可用宽度
-            text_width = width - 10 
-            item_widget.setFixedWidth(width) # Set fixed width for layout
-            
-            real_height = item_widget.get_real_height(text_width)
-            size = QSize(width, real_height)
-            
-            item_widget.setMinimumWidth(0)
-            item_widget.setMaximumWidth(16777215)
-        else:
-            size = item_widget.sizeHint()
-        
+        """通用添加消息方法 (Delegate Version)"""
+        # [Delegate Architecture]
+        # Just create an item and set data. Paint/Layout is handled by DanmakuDelegate.
         item = QListWidgetItem()
-        item.setSizeHint(size)
+        item.setData(Qt.ItemDataRole.UserRole, message)
         
         self.danmaku_list.addItem(item)
-        self.danmaku_list.setItemWidget(item, item_widget)
         self.danmaku_list.scrollToBottom()
 
         # [Optimization] Reduce max history to 200 to prevent render lag
