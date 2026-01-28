@@ -654,7 +654,7 @@ class DanmakuWidget(QWidget):
                 border-color: transparent;
             }
         """)
-        close_btn.clicked.connect(self.close)
+        close_btn.clicked.connect(self.hide)
 
         # 组装 Header
         self.header_layout.addWidget(self.title_label)
@@ -1087,7 +1087,11 @@ class DanmakuWidget(QWidget):
 
 
 
-    # --- 客户端逻辑 ---
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Re-activate Layer Shell when shown to ensure overlay/input works
+        # Delayed to ensure window is mapped
+        QTimer.singleShot(100, self.activate_layer_shell)
     
     def setup_danmaku_client(self):
         self.danmaku_client = None
@@ -1220,8 +1224,15 @@ class DanmakuWidget(QWidget):
         )
         self.add_system_message(msg, "error")
 
-    @qasync.asyncClose
-    async def closeEvent(self, event: QCloseEvent):
-        if self.danmaku_client:
-            await self.danmaku_client.stop()
-        event.accept()
+    def closeEvent(self, event: QCloseEvent):
+        """覆盖关闭事件：最小化到系统托盘，而不是退出程序"""
+        event.ignore()
+        self.hide()
+        
+        # Reminder for user
+        self.tray_icon.showMessage(
+            "Bilibili Danmaku", 
+            "程序已最小化到托盘运行", 
+            QSystemTrayIcon.MessageIcon.Information, 
+            2000
+        )
