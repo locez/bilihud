@@ -274,7 +274,7 @@ class DanmakuItemWidget(QFrame):
         text_label.setTextFormat(Qt.TextFormat.RichText)
         text_label.setText(html_content)
         text_label.setWordWrap(True)
-        text_label.setGraphicsEffect(create_shadow_effect())
+        # text_label.setGraphicsEffect(create_shadow_effect())
         
         # 允许水平伸缩
         text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -330,7 +330,7 @@ class DanmakuItemWidget(QFrame):
         text_label.setTextFormat(Qt.TextFormat.RichText)
         text_label.setText(html_content)
         text_label.setWordWrap(True)
-        text_label.setGraphicsEffect(shadow)
+        # text_label.setGraphicsEffect(shadow)
         text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         
         # 保存 label 引用以便计算高度
@@ -368,7 +368,7 @@ class DanmakuItemWidget(QFrame):
         text_label.setTextFormat(Qt.TextFormat.RichText)
         text_label.setText(html_content)
         text_label.setWordWrap(True)
-        text_label.setGraphicsEffect(shadow)
+        # text_label.setGraphicsEffect(shadow)
         text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         
         # 保存 label 引用以便计算高度
@@ -740,6 +740,7 @@ class DanmakuWidget(QWidget):
         # 拖拽移动相关变量
         self._dragging = False
         self._drag_position = QPoint()
+        self._message_buffer = [] # [Optimization] Buffer
         
         # 大小调整手柄
         self.size_grip = CustomSizeGrip(self)
@@ -751,23 +752,7 @@ class DanmakuWidget(QWidget):
             }
         """)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        
-        # 1. 更新SizeGrip位置
-        rect = self.rect()
-        self.size_grip.move(
-            rect.right() - self.size_grip.width(),
-            rect.bottom() - self.size_grip.height()
-        )
-        
-        # 2. 在非穿透模式下，根据宽度动态调整列表项高度以支持换行
-        # 使用 event.size() 计算新的预期宽度，而不是依赖可能滞后的 viewport().width()
-        if not self.is_gaming_mode:
-            # 减去左右 Margin (5+5=10) 和 垂直滚动条预留宽度 (4) + 少量余量 (6) = 20
-            # 使用精准的宽度计算，不再使用过大的缓冲，避免空行
-            target_width = event.size().width() - 20
-            self.adjust_list_items_height(target_width)
+    # [Old resizeEvent removed - replaced by instrumented version below]
 
     def adjust_list_items_height(self, target_width: int = None):
         """重新计算所有列表项的高度"""
@@ -1059,78 +1044,100 @@ class DanmakuWidget(QWidget):
             # 这里的延时是必须的
             QTimer.singleShot(50, restore_window_state)
 
-    # --- 鼠标拖拽移动窗口逻辑 ---
+    # --- 鼠标拖拽移动窗口逻辑 (Simple & Robust) ---
     def mousePressEvent(self, event):
         if not self.is_gaming_mode and event.button() == Qt.MouseButton.LeftButton:
             self._dragging = True
-            
-            # Track drag offset relative to the window's top-left in LOCAL coordinates.
-            # We use manual position tracking (self.layer_pos) instead of Qt's geometry 
-            # because Qt's frameGeometry() can be unreliable on Layer Shell.
+            # [Simple Local Drag]
+            # Just track the local position. 1:1 feel.
             self._drag_local_pos = event.position().toPoint()
             event.accept()
 
     def mouseMoveEvent(self, event):
         if self._dragging:
+            # Local Drag
+            local_pos = event.position().toPoint()
+            diff = local_pos - self._drag_local_pos
+
+            # [Spike Filter]
+            # Ignore massive jumps > 100px.
+            #if diff.manhattanLength() > 100:
+            #    return
+
             has_layer_shell = (self.layer_shell_lib is not None)
             
             if has_layer_shell:
                 try:
                     cpp_ptr = sip.unwrapinstance(self.windowHandle())
-
-                    # Calculate TRUE Global Mouse Position manually.
-                    # Qt's event.globalPosition() can be stale if we don't call self.move(),
-                    # preventing the window from 'ghosting' by letting the compositor handle placement.
-                    # Formula: TGM = Trusted Window Pos + Trusted Local Mouse Event
                     
+                    current_pos = self.layer_pos
+                    target_pos = current_pos + diff
+                    
+                    # [Screen Bounds Clamping]
                     current_screen = self.windowHandle().screen()
-                    if not current_screen: return
-                    
-                    screen_origin = current_screen.geometry().topLeft()
-                    
-                    # Global Window Top-Left relative to screen origin
-                    win_global_pos = screen_origin + self.layer_pos
-                    
-                    # Calculate true global mouse coordinate
-                    true_global_mouse = win_global_pos + event.position().toPoint()
-                    
-                    # Determine new global window position
-                    new_global_top_left = true_global_mouse - self._drag_local_pos
-                    
-                    # Screen Switching Logic
-                    target_screen = QApplication.screenAt(true_global_mouse)
-                    
-                    if target_screen and target_screen != current_screen:
-                        self.windowHandle().setScreen(target_screen)
+                    if current_screen:
+                        s_geo = current_screen.geometry()
                         
-                        # Recalculate margins relative to new screen
-                        new_screen_origin = target_screen.geometry().topLeft()
-                        local_pos = new_global_top_left - new_screen_origin
+                        min_x = s_geo.x() - self.width() + 50
+                        max_x = s_geo.x() + s_geo.width() - 50
+                        min_y = s_geo.y() - 50 
+                        max_y = s_geo.y() + s_geo.height() - 50
                         
-                        self.layer_shell_lib.set_anchor_position(ctypes.c_void_p(cpp_ptr), local_pos.x(), local_pos.y())
-                        self.layer_pos = local_pos
-                    else:
-                        local_x = new_global_top_left.x() - screen_origin.x()
-                        local_y = new_global_top_left.y() - screen_origin.y()
+                        clamped_x = max(min_x, min(target_pos.x(), max_x))
+                        clamped_y = max(min_y, min(target_pos.y(), max_y))
                         
-                        self.layer_shell_lib.set_anchor_position(ctypes.c_void_p(cpp_ptr), local_x, local_y)
-                        self.layer_pos = QPoint(local_x, local_y)
-
-                    # Required to commit Layer Shell margin changes to the compositor
-                    self.update()
+                        target_pos = QPoint(clamped_x, clamped_y)
+                    
+                    self.layer_pos = target_pos
+                    
+                    self.layer_shell_lib.set_anchor_position(
+                        ctypes.c_void_p(cpp_ptr), 
+                        self.layer_pos.x(), 
+                        self.layer_pos.y()
+                    )
+                    self.update() 
                     
                 except Exception as e:
                     print(f"Wayland drag error: {e}")
             else:
-                # Fallback for X11/Standard
-                # Standard logic: New Global = Event Global - Drag Local
                 new_pos = event.globalPosition().toPoint() - self._drag_local_pos
                 self.move(new_pos)
             
             event.accept()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        
+        # 1. 更新SizeGrip位置
+        rect = self.rect()
+        self.size_grip.move(
+            rect.right() - self.size_grip.width(),
+            rect.bottom() - self.size_grip.height()
+        )
+        
+        # 2. 在非穿透模式下，调整列表项高度
+        if not self.is_gaming_mode:
+            target_width = event.size().width() - 20
+            self.adjust_list_items_height(target_width)
+
     def mouseReleaseEvent(self, event):
         self._dragging = False
+        
+        # [Message Buffering]
+        # Process all types of messages
+        if hasattr(self, '_message_buffer') and self._message_buffer:
+            for item_type, item_data in self._message_buffer:
+                if item_type == 'msg':
+                    self.add_message(item_data, _from_buffer=True)
+                elif item_type == 'gift':
+                    self.gift_received.emit(item_data)
+                elif item_type == 'interact':
+                    self.interact_received.emit(item_data)
+            self._message_buffer.clear()
+
+
+
+
 
     # --- 客户端逻辑 ---
     
@@ -1203,17 +1210,30 @@ class DanmakuWidget(QWidget):
             self.room_id_input.setText(str(self.room_id))
 
     def on_danmaku_received(self, danmaku_msg: web_models.DanmakuMessage):
-        self.danmaku_received.emit(danmaku_msg)
+        if self._dragging:
+            self._message_buffer.append(('msg', danmaku_msg))
+        else:
+            self.danmaku_received.emit(danmaku_msg)
 
     def on_gift_received(self, gift_msg: web_models.GiftMessage):
-        self.gift_received.emit(gift_msg)
+        if self._dragging:
+            self._message_buffer.append(('gift', gift_msg))
+        else:
+            self.gift_received.emit(gift_msg)
 
     def on_interact_received(self, interact_msg: web_models.InteractWordV2Message):
-        self.interact_received.emit(interact_msg)
+        if self._dragging:
+            self._message_buffer.append(('interact', interact_msg))
+        else:
+            self.interact_received.emit(interact_msg)
 
-    def add_message(self, message):
+    def add_message(self, message, _from_buffer=False):
         """通用添加消息方法"""
+        # [Buffer Handled in Callbacks]
+        pass # Optimization removed from here since we buffer at source
+
         item_widget = DanmakuItemWidget(message)
+
         
         # Pre-calculate height based on current viewport width
         width = self.danmaku_list.viewport().width()
@@ -1238,7 +1258,8 @@ class DanmakuWidget(QWidget):
         self.danmaku_list.setItemWidget(item, item_widget)
         self.danmaku_list.scrollToBottom()
 
-        if self.danmaku_list.count() > 500:
+        # [Optimization] Reduce max history to 200 to prevent render lag
+        if self.danmaku_list.count() > 200:
             self.danmaku_list.takeItem(0)
 
     def open_qr_login(self):
