@@ -92,6 +92,13 @@ def build_start_stream_request() -> dict[str, Any]:
     }
 
 
+def build_stop_stream_request() -> dict[str, Any]:
+    return {
+        "requestType": "StopStream",
+        "requestId": "stop-bilihud-stream",
+    }
+
+
 def obs_start_stream_requests(credential: StreamCredential) -> list[dict[str, Any]]:
     return [
         build_set_stream_service_request(credential.address, credential.key),
@@ -148,6 +155,17 @@ class ObsWebSocketClient:
                     await self._identify(ws)
                     for request in obs_start_stream_requests(credential):
                         await self._send_request(ws, request)
+            except TimeoutError as exc:
+                raise ObsApiError("连接 OBS WebSocket 超时。") from exc
+            except aiohttp.ClientError as exc:
+                raise ObsApiError(f"无法连接 OBS WebSocket: {exc}") from exc
+
+    async def stop_stream(self) -> None:
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.ws_connect(self.url, timeout=self.timeout) as ws:
+                    await self._identify(ws)
+                    await self._send_request(ws, build_stop_stream_request())
             except TimeoutError as exc:
                 raise ObsApiError("连接 OBS WebSocket 超时。") from exc
             except aiohttp.ClientError as exc:

@@ -74,7 +74,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y devscripts debhelper dh-python pybuild-plugin-pyproject python3-all python3-hatchling python3-pyqt6 liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev pkg-config libwayland-dev build-essential python3-pip
+          sudo apt-get install -y devscripts debhelper dh-python pybuild-plugin-pyproject python3-all python3-hatchling python3-aiohttp python3-pyqt6 python3-qrcode liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev pkg-config libwayland-dev build-essential python3-pip
           # Force install non-deb build requirement system-wide
           sudo pip install hatch-build-scripts --break-system-packages
 

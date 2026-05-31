@@ -81,6 +81,7 @@ class LiveControlDialog(QDialog):
         self._busy = False
         self._obs_busy = False
         self._obs_connected = False
+        self._obs_streaming_started = False
 
         self._init_ui()
         self._load_config_values()
@@ -814,7 +815,17 @@ class LiveControlDialog(QDialog):
                 return
             self._clear_credentials()
             self._set_live_active(False)
-            self.set_status("直播已停止。")
+            should_stop_obs = self._obs_streaming_started or self._obs_connected
+            obs_stopped = True
+            if should_stop_obs:
+                obs_stopped = await self.stop_obs_stream(auto=True)
+                if not self._is_current_action(action_generation, session):
+                    return
+            self._obs_streaming_started = False
+            if obs_stopped:
+                self.set_status("直播已停止，OBS 推流已停止。" if should_stop_obs else "直播已停止。")
+            else:
+                self.set_status("直播已停止；OBS 推流未能自动停止，请在 OBS 中手动确认。", error=True)
         except Exception as exc:
             if self._is_current_action(action_generation, session):
                 logger.exception("Failed to stop live")
@@ -825,6 +836,36 @@ class LiveControlDialog(QDialog):
 
     async def _write_obs_after_start(self) -> None:
         await self.start_obs_stream(auto=True)
+
+    async def stop_obs_stream(self, auto: bool = False) -> bool:
+        client = self._obs_client()
+        if client is None:
+            return False
+
+        self._save_form_config()
+        self._obs_busy = True
+        self._update_action_state()
+        if not auto:
+            self.set_status("正在停止 OBS 推流...")
+        try:
+            await client.stop_stream()
+            self._obs_streaming_started = False
+            if not auto:
+                self.set_status("OBS 推流已停止。", success=True)
+            return True
+        except ObsApiError as exc:
+            logger.info("Failed to stop OBS stream: %s", exc)
+            if not auto:
+                self.set_status(f"停止 OBS 推流失败: {exc}", error=True)
+            return False
+        except Exception as exc:
+            logger.exception("Unexpected OBS stop failure")
+            if not auto:
+                self.set_status(f"停止 OBS 推流失败: {exc}", error=True)
+            return False
+        finally:
+            self._obs_busy = False
+            self._update_action_state()
 
     @qasync.asyncSlot()
     async def handle_check_obs(self) -> None:
@@ -881,6 +922,7 @@ class LiveControlDialog(QDialog):
             self.set_status("正在填入 OBS 推流设置并启动推流...")
         try:
             await client.set_stream_service_settings_and_start(credential)
+            self._obs_streaming_started = True
             self.set_status(f"已将 {credential.label.upper()} 填入 OBS 并启动推流。", success=True)
         except ObsApiError as exc:
             logger.info("Failed to write OBS stream settings: %s", exc)

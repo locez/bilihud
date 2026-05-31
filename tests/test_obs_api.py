@@ -2,6 +2,7 @@ from bilihud.live_api import StreamCredential
 from bilihud.obs_api import (
     build_set_stream_service_request,
     build_start_stream_request,
+    build_stop_stream_request,
     compute_obs_auth,
     is_obs_process_name,
     obs_check_button_state,
@@ -46,6 +47,13 @@ def test_obs_start_stream_requests_sets_credentials_before_starting_stream():
         build_set_stream_service_request("rtmp://server", "stream-key"),
         build_start_stream_request(),
     ]
+
+
+def test_build_stop_stream_request_stops_obs_streaming():
+    assert build_stop_stream_request() == {
+        "requestType": "StopStream",
+        "requestId": "stop-bilihud-stream",
+    }
 
 
 def test_is_obs_process_name_matches_common_obs_binary_names():

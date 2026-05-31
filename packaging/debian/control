@@ -2,12 +2,12 @@ Source: bilihud
 Section: utils
 Priority: optional
 Maintainer: Locez <locez@locez.com>
-Build-Depends: debhelper-compat (= 13), dh-python, pybuild-plugin-pyproject, python3-all, python3-hatchling, python3-pyqt6, liblayershellqtinterface-dev, build-essential
+Build-Depends: debhelper-compat (= 13), dh-python, pybuild-plugin-pyproject, python3-all, python3-hatchling, python3-aiohttp, python3-pyqt6, python3-qrcode, liblayershellqtinterface-dev, build-essential
 Standards-Version: 4.6.2
 Homepage: https://github.com/locez/bilihud
 
 Package: bilihud
 Architecture: any
-Depends: ${python3:Depends}, ${shlibs:Depends}, ${misc:Depends}, python3-pyqt6
+Depends: ${python3:Depends}, ${shlibs:Depends}, ${misc:Depends}, python3-aiohttp, python3-pyqt6, python3-qrcode
 Description: Bilibili Danmaku HUD for Linux
  A desktop widget that displays Bilibili live danmaku (comments) on your screen.
