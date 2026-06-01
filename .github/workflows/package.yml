@@ -14,7 +14,7 @@ jobs:
       - name: Pre-install git
         run: dnf install -y git
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
       
@@ -59,7 +59,7 @@ jobs:
       - name: Build RPM
         run: rpmbuild -bb packaging/fedora/bilihud.spec
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bilihud-rpm
           path: /github/home/rpmbuild/RPMS/**/*.rpm
@@ -73,7 +73,7 @@ jobs:
           apt-get update
           apt-get install -y git ca-certificates
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
       
@@ -116,7 +116,7 @@ jobs:
         run: |
           apt-get install -y ./bilihud_*.deb
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bilihud-deb
           path: bilihud_*.deb
@@ -128,10 +128,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
       
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             bilihud-rpm/**/*.rpm
