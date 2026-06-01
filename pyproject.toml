@@ -16,7 +16,7 @@ artifacts = ["src/bilihud/libbili-layer.so"]
 
 [project]
 name = "bilihud"
-version = "0.4.0"
+version = "0.4.1"
 description = "B站弹幕阅读器 - 一个可以在游戏全屏时显示弹幕的Qt应用程序"
 readme = "README.md"
 authors = [
@@ -36,6 +36,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Multimedia :: Video"
 ]
 license = {text = "MIT"}

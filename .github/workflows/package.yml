@@ -66,17 +66,23 @@ jobs:
 
   deb:
     runs-on: ubuntu-latest
+    container: ubuntu:26.04
     steps:
+      - name: Pre-install git
+        run: |
+          apt-get update
+          apt-get install -y git ca-certificates
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y devscripts debhelper dh-python pybuild-plugin-pyproject python3-all python3-hatchling python3-aiohttp python3-pyqt6 python3-qrcode liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev pkg-config libwayland-dev build-essential python3-pip
+          apt-get update
+          apt-get install -y devscripts debhelper dh-python pybuild-plugin-pyproject python3-all python3-hatchling python3-aiohttp python3-pyqt6 python3-qrcode liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev pkg-config libwayland-dev build-essential python3-pip
           # Force install non-deb build requirement system-wide
-          sudo pip install hatch-build-scripts --break-system-packages
+          python3 -m pip install hatch-build-scripts --break-system-packages
 
       - name: Get Version
         id: get_version
@@ -105,6 +111,10 @@ jobs:
           debuild -us -uc -b
           # Move artifacts from parent dir to current dir for upload
           mv ../bilihud_*.deb .
+
+      - name: Install Deb on Ubuntu 26.04
+        run: |
+          apt-get install -y ./bilihud_*.deb
 
       - uses: actions/upload-artifact@v4
         with:
