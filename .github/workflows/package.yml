@@ -80,7 +80,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y devscripts debhelper dh-python pybuild-plugin-pyproject python3-all python3-hatchling python3-aiohttp python3-pyqt6 python3-qrcode liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev pkg-config libwayland-dev build-essential python3-pip
+          apt-get install -y devscripts debhelper dh-python pybuild-plugin-pyproject python3-all python3-hatchling python3-aiohttp python3-browser-cookie3 python3-brotli python3-keyring python3-pil python3-pyqt6 python3-qasync python3-qrcode liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev pkg-config libwayland-dev build-essential python3-pip
           # Force install non-deb build requirement system-wide
           python3 -m pip install hatch-build-scripts --break-system-packages
 
@@ -97,6 +97,10 @@ jobs:
 
       - name: Prepare Build
         run: |
+          # Ubuntu 26.04 does not provide python3-pure-protobuf, but bundled blivedm imports it.
+          python3 -m pip install --target src/bilihud/vendor pure-protobuf --break-system-packages
+          sed -i '/"pure_protobuf"/d; /"pure-protobuf"/d' pyproject.toml
+
           # Debian tools expect the debian/ directory in the root
           cp -r packaging/debian .
           chmod +x debian/rules
@@ -115,6 +119,11 @@ jobs:
       - name: Install Deb on Ubuntu 26.04
         run: |
           apt-get install -y ./bilihud_*.deb
+          python3 - <<'PY'
+          import bilihud.main
+          import pure_protobuf.annotations
+          import blivedm.models.web
+          PY
 
       - uses: actions/upload-artifact@v7
         with:

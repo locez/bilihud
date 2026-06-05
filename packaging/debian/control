@@ -8,6 +8,6 @@ Homepage: https://github.com/locez/bilihud
 
 Package: bilihud
 Architecture: any
-Depends: ${python3:Depends}, ${shlibs:Depends}, ${misc:Depends}, python3-aiohttp, python3-pyqt6, python3-qrcode
+Depends: ${python3:Depends}, ${shlibs:Depends}, ${misc:Depends}, python3-aiohttp, python3-browser-cookie3, python3-brotli, python3-keyring, python3-pil, python3-pyqt6, python3-qasync , python3-qrcode
 Description: Bilibili Danmaku HUD for Linux
  A desktop widget that displays Bilibili live danmaku (comments) on your screen.
