@@ -12,6 +12,10 @@ def should_disable_layer_shell(platform_name: str, current_desktop: str) -> bool
     return platform_name.startswith("wayland") and "gnome" in desktops
 
 
+def gaming_mode_available(platform_name: str, has_layer_shell: bool, layer_shell_disabled: bool) -> bool:
+    return has_layer_shell or not (platform_name.startswith("wayland") and layer_shell_disabled)
+
+
 def find_layer_shell_library(package_dir: str | Path) -> str | None:
     package_path = Path(package_dir)
     exact_path = package_path / LAYER_SHELL_LIBRARY_NAME

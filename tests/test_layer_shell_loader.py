@@ -1,4 +1,4 @@
-from bilihud.layer_shell_loader import find_layer_shell_library, should_disable_layer_shell
+from bilihud.layer_shell_loader import find_layer_shell_library, gaming_mode_available, should_disable_layer_shell
 
 
 def test_find_layer_shell_library_prefers_unsuffixed_name(tmp_path):
@@ -31,3 +31,15 @@ def test_should_not_disable_layer_shell_on_kde_wayland():
 
 def test_should_not_disable_layer_shell_on_x11():
     assert should_disable_layer_shell("xcb", "GNOME") is False
+
+
+def test_gaming_mode_unavailable_when_layer_shell_is_disabled_on_wayland():
+    assert gaming_mode_available("wayland", has_layer_shell=False, layer_shell_disabled=True) is False
+
+
+def test_gaming_mode_available_with_layer_shell():
+    assert gaming_mode_available("wayland", has_layer_shell=True, layer_shell_disabled=False) is True
+
+
+def test_gaming_mode_available_on_x11_without_layer_shell():
+    assert gaming_mode_available("xcb", has_layer_shell=False, layer_shell_disabled=False) is True

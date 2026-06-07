@@ -30,7 +30,12 @@ from .utils import load_config, save_config
 from .qr_login_dialog import QRLoginDialog
 from .live_control_dialog import LiveControlDialog
 from .auth import AuthManager
-from .layer_shell_loader import LAYER_SHELL_LIBRARY_NAME, find_layer_shell_library, should_disable_layer_shell
+from .layer_shell_loader import (
+    LAYER_SHELL_LIBRARY_NAME,
+    find_layer_shell_library,
+    gaming_mode_available,
+    should_disable_layer_shell,
+)
 
 class ModernInputWidget(QWidget):
     """
@@ -440,6 +445,7 @@ class DanmakuWidget(QWidget):
         self.setup_window_properties()
         self.init_ui()
         self.setup_tray_icon()
+        self.update_gaming_mode_availability()
         self.setup_danmaku_client()
         
         # 加载保存的配置
@@ -643,6 +649,11 @@ class DanmakuWidget(QWidget):
                 background-color: rgba(76, 175, 80, 150);
                 border-color: rgba(76, 175, 80, 200);
             }
+            QPushButton:disabled {
+                color: rgba(255, 255, 255, 90);
+                background-color: rgba(255, 255, 255, 8);
+                border-color: rgba(255, 255, 255, 15);
+            }
         """
 
         # 连接按钮
@@ -840,6 +851,24 @@ class DanmakuWidget(QWidget):
         msg_obj = SystemMessage(message, level)
         self.add_message(msg_obj)
 
+    def is_gaming_mode_available(self) -> bool:
+        return gaming_mode_available(
+            QGuiApplication.platformName(),
+            has_layer_shell=self.layer_shell_lib is not None,
+            layer_shell_disabled=bool(self.layer_shell_disabled_reason),
+        )
+
+    def update_gaming_mode_availability(self):
+        available = self.is_gaming_mode_available()
+        self.gaming_mode_btn.setEnabled(available)
+        self.tray_gaming_action.setEnabled(available)
+        if not available:
+            self.gaming_mode_btn.setText("穿透不可用")
+            self.gaming_mode_btn.setChecked(False)
+            self.tray_gaming_action.setChecked(False)
+            self.gaming_mode_btn.setToolTip("GNOME Wayland 不支持全屏浮窗/锁定穿透，也不保证普通窗口置顶")
+            self.tray_gaming_action.setToolTip("GNOME Wayland 不支持全屏浮窗/锁定穿透，也不保证普通窗口置顶")
+
     async def _send_danmaku_task(self, text: str):
         """实际执行发送弹幕的Task"""
         if self.danmaku_client:
@@ -881,6 +910,11 @@ class DanmakuWidget(QWidget):
 
     def toggle_gaming_mode_from_tray(self, checked):
         """从托盘切换游戏模式"""
+        if checked and not self.is_gaming_mode_available():
+            self.show_gaming_mode_unavailable_message()
+            self.tray_gaming_action.setChecked(False)
+            return
+
         # 避免递归更新
         if self.is_gaming_mode != checked:
             self.set_gaming_mode(checked)
@@ -888,7 +922,20 @@ class DanmakuWidget(QWidget):
     def toggle_gaming_mode(self):
         """切换鼠标穿透/游戏模式"""
         new_state = not self.is_gaming_mode
+        if new_state and not self.is_gaming_mode_available():
+            self.show_gaming_mode_unavailable_message()
+            self.gaming_mode_btn.setChecked(False)
+            return
+
         self.set_gaming_mode(new_state)
+
+    def show_gaming_mode_unavailable_message(self):
+        self.tray_icon.showMessage(
+            "Danmaku Overlay",
+            "GNOME Wayland 不支持全屏浮窗/锁定穿透，也不保证普通窗口置顶。\n当前仅支持普通窗口移动。",
+            QSystemTrayIcon.MessageIcon.Warning,
+            3000,
+        )
 
     def set_gaming_mode(self, enabled: bool):
         self.is_gaming_mode = enabled
@@ -954,7 +1001,7 @@ class DanmakuWidget(QWidget):
             
             # 1. Normal Mode Flags
             # 不需要 X11Bypass，也不需要 TransparentForInput
-            # 只是普通置顶无边框窗口
+            # 普通无边框窗口；在 GNOME Wayland 上，置顶 hint 可能被 compositor 忽略。
             
             # 2. UI调整
             self.header_widget.show()
