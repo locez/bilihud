@@ -30,6 +30,7 @@ from .utils import load_config, save_config
 from .qr_login_dialog import QRLoginDialog
 from .live_control_dialog import LiveControlDialog
 from .auth import AuthManager
+from .layer_shell_loader import LAYER_SHELL_LIBRARY_NAME, find_layer_shell_library
 
 class ModernInputWidget(QWidget):
     """
@@ -459,8 +460,9 @@ class DanmakuWidget(QWidget):
 
     def load_layer_shell_lib(self):
         try:
-            lib_path = os.path.join(os.path.dirname(__file__), "libbili-layer.so")
-            if os.path.exists(lib_path):
+            package_dir = os.path.dirname(__file__)
+            lib_path = find_layer_shell_library(package_dir)
+            if lib_path:
                 self.layer_shell_lib = ctypes.CDLL(lib_path)
                 
                 # Define argument types for safety
@@ -472,7 +474,7 @@ class DanmakuWidget(QWidget):
                 if hasattr(self.layer_shell_lib, 'set_keyboard_interactivity'):
                     self.layer_shell_lib.set_keyboard_interactivity.argtypes = [ctypes.c_void_p, ctypes.c_bool]
             else:
-                print(f"Layer Shell library not found at: {lib_path}")
+                print(f"Layer Shell library not found at: {os.path.join(package_dir, LAYER_SHELL_LIBRARY_NAME)}")
         except OSError as e:
             err_msg = str(e)
             if "version" in err_msg and "Qt" in err_msg and "not found" in err_msg:
