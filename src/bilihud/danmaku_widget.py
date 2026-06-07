@@ -30,7 +30,7 @@ from .utils import load_config, save_config
 from .qr_login_dialog import QRLoginDialog
 from .live_control_dialog import LiveControlDialog
 from .auth import AuthManager
-from .layer_shell_loader import LAYER_SHELL_LIBRARY_NAME, find_layer_shell_library
+from .layer_shell_loader import LAYER_SHELL_LIBRARY_NAME, find_layer_shell_library, should_disable_layer_shell
 
 class ModernInputWidget(QWidget):
     """
@@ -424,6 +424,7 @@ class DanmakuWidget(QWidget):
         self.danmaku_client: Optional[DanmakuClient] = None
         self.is_gaming_mode = False
         self.layer_shell_lib = None
+        self.layer_shell_disabled_reason = ""
         # Track Layer Shell position manually because Qt frameGeometry() is unreliable (returns 0,0)
         self.layer_pos = QPoint(0, 0)
         
@@ -460,6 +461,15 @@ class DanmakuWidget(QWidget):
 
     def load_layer_shell_lib(self):
         try:
+            platform_name = QGuiApplication.platformName()
+            current_desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
+            if should_disable_layer_shell(platform_name, current_desktop):
+                self.layer_shell_disabled_reason = (
+                    "GNOME/Mutter Wayland does not support wlr-layer-shell; fullscreen overlay is unsupported."
+                )
+                print(f"Layer Shell disabled: {self.layer_shell_disabled_reason}")
+                return
+
             package_dir = os.path.dirname(__file__)
             lib_path = find_layer_shell_library(package_dir)
             if lib_path:
@@ -1016,6 +1026,12 @@ class DanmakuWidget(QWidget):
     # --- 鼠标拖拽移动窗口逻辑 (Simple & Robust) ---
     def mousePressEvent(self, event):
         if not self.is_gaming_mode and event.button() == Qt.MouseButton.LeftButton:
+            if self.layer_shell_lib is None and QGuiApplication.platformName().startswith("wayland"):
+                handle = self.windowHandle()
+                if handle and hasattr(handle, "startSystemMove") and handle.startSystemMove():
+                    event.accept()
+                    return
+
             self._dragging = True
             # [Simple Local Drag]
             # Just track the local position. 1:1 feel.

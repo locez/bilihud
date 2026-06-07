@@ -186,7 +186,7 @@ wheels = [
 
 [[package]]
 name = "bilihud"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

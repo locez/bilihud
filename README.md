@@ -32,6 +32,14 @@
 * 支持 OBS WebSocket 联动：检查/启动 OBS，开播后自动填入 RTMP 地址和密钥并触发 OBS 开始推流
 * **注意：** 使用 layer-shell-qt 支持 wayland 环境
 
+## Wayland 支持范围
+
+BiliHUD 的全屏浮窗能力依赖 compositor 支持 `wlr-layer-shell` 协议。
+
+* KDE Plasma Wayland / KWin：预期支持全屏应用上方浮窗。
+* wlroots 系 compositor：如 compositor 提供 `wlr-layer-shell`，预期可用。
+* GNOME Wayland / Mutter：不支持 `wlr-layer-shell`，因此不支持全屏应用上方浮窗。BiliHUD 会回退为普通置顶窗口，仍可在桌面环境中移动和使用，但无法保证覆盖全屏游戏。
+
 ## 极速上手
 
 ### 1. 安装
