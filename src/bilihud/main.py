@@ -32,6 +32,20 @@ async def main(app, room_id: int):
 
     await app_close_event.wait()
 
+async def cancel_pending_tasks(loop, exclude=None):
+    exclude = set(exclude or ())
+    current_task = asyncio.current_task(loop=loop)
+    if current_task is not None:
+        exclude.add(current_task)
+    pending = [task for task in asyncio.all_tasks(loop) if task not in exclude and not task.done()]
+    if not pending:
+        return
+
+    for task in pending:
+        task.cancel()
+
+    await asyncio.gather(*pending, return_exceptions=True)
+
 def entry_point():
     import argparse
 
@@ -56,10 +70,12 @@ def entry_point():
     
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
+    _main_task = loop.create_task(main(app, args.room_id))
     
     try:
-        loop.run_until_complete(main(app, args.room_id))
+        loop.run_forever()
     finally:
+        loop.run_until_complete(cancel_pending_tasks(loop))
         loop.close()
 
 if __name__ == "__main__":
