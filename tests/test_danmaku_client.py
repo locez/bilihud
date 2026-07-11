@@ -92,8 +92,9 @@ class FakeCookie:
 
 
 class FakeHttpSession:
-    def __init__(self, get_payload=None, post_payload=None):
+    def __init__(self, get_payload=None, get_payloads=None, post_payload=None):
         self.get_payload = get_payload or {"code": 0, "data": {"data": []}}
+        self.get_payloads = list(get_payloads or [])
         self.post_payload = post_payload or {"code": 0, "message": "0"}
         self.posted_data = None
         self.get_params = None
@@ -106,7 +107,8 @@ class FakeHttpSession:
         self.get_params = params
         self.get_headers = headers
         self.get_calls.append((url, params, headers))
-        return FakeResponse(self.get_payload)
+        payload = self.get_payloads.pop(0) if self.get_payloads else self.get_payload
+        return FakeResponse(payload)
 
     def post(self, url, data=None):
         self.post_url = url
@@ -116,6 +118,92 @@ class FakeHttpSession:
 
 def _form_data_fields(form_data):
     return {disposition["name"]: value for disposition, _, value in form_data._fields}
+
+
+def test_fetch_audience_snapshot_uses_current_web_api_contract():
+    async def run_test():
+        client = DanmakuClient(7450109)
+        client.session = FakeHttpSession(
+            get_payloads=[
+                {
+                    "code": 0,
+                    "message": "OK",
+                    "data": {
+                        "room_info": {"uid": 9001, "online": 21},
+                        "popularity": {"popularity": 21},
+                        "watched_show": {"num": 9},
+                    },
+                },
+                {
+                    "code": 0,
+                    "message": "OK",
+                    "data": {
+                        "count": 3,
+                        "item": [
+                            {
+                                "uid": 1001,
+                                "name": "用户A",
+                                "score": 1,
+                                "rank": 1,
+                                "is_mystery": False,
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+
+        snapshot = await client.fetch_audience_snapshot()
+
+        assert snapshot.room_id == 7450109
+        assert snapshot.popularity == 21
+        assert snapshot.watched_count == 9
+        assert snapshot.online_rank_count == 3
+        assert snapshot.users[0].name == "用户A"
+        assert snapshot.users[0].contribution == 1
+
+        room_url, room_params, room_headers = client.session.get_calls[0]
+        assert room_url.endswith("/xlive/web-room/v1/index/getInfoByRoom")
+        assert room_params == {"room_id": 7450109}
+        assert room_headers == {"Referer": "https://live.bilibili.com/7450109"}
+
+        rank_url, rank_params, rank_headers = client.session.get_calls[1]
+        assert rank_url.endswith("/xlive/general-interface/v1/rank/queryContributionRank")
+        assert rank_params == {
+            "ruid": 9001,
+            "room_id": 7450109,
+            "page": 1,
+            "page_size": 100,
+            "type": "online_rank",
+            "switch": "contribution_rank",
+            "platform": "web",
+        }
+        assert rank_headers == {"Referer": "https://live.bilibili.com/7450109"}
+
+    asyncio.run(run_test())
+
+
+def test_fetch_audience_snapshot_requires_initialized_session():
+    async def run_test():
+        client = DanmakuClient(7450109)
+
+        with pytest.raises(RuntimeError, match="弹幕会话未初始化"):
+            await client.fetch_audience_snapshot()
+
+    asyncio.run(run_test())
+
+
+def test_fetch_audience_snapshot_propagates_api_error_without_credentials():
+    async def run_test():
+        client = DanmakuClient(7450109)
+        client.session = FakeHttpSession(
+            get_payload={"code": -101, "message": "账号未登录", "data": None}
+        )
+
+        with pytest.raises(ValueError, match="账号未登录"):
+            await client.fetch_audience_snapshot()
+
+    asyncio.run(run_test())
 
 
 class FakeBLiveClient:

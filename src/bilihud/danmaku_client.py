@@ -9,6 +9,7 @@ import blivedm
 import blivedm.models.web as web_models
 
 from .auth import AuthManager
+from .live_audience import AudienceSnapshot, parse_anchor_uid, parse_audience_snapshot
 from .live_emoticons import (
     LiveEmoticon,
     LiveEmoticonPackage,
@@ -18,6 +19,10 @@ from .live_emoticons import (
 
 WBI_NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
 LIVE_MSG_SEND_URL = "https://api.live.bilibili.com/msg/send"
+LIVE_ROOM_INFO_URL = "https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom"
+LIVE_AUDIENCE_RANK_URL = (
+    "https://api.live.bilibili.com/xlive/general-interface/v1/rank/queryContributionRank"
+)
 LIVE_WEB_LOCATION = "444.8"
 LIVE_EMOTICON_CACHE_TTL_SECONDS = 60.0
 WBI_MIXIN_KEY_ENC_TAB = (
@@ -144,6 +149,41 @@ class DanmakuClient:
         except Exception as e:
             print(f"Send danmaku exception: {e}")
             return False, f"发送异常: {str(e)}"
+
+    async def fetch_audience_snapshot(self) -> AudienceSnapshot:
+        if not self.session:
+            raise RuntimeError("弹幕会话未初始化")
+
+        headers = {"Referer": f"https://live.bilibili.com/{self.room_id}"}
+        async with self.session.get(
+            LIVE_ROOM_INFO_URL,
+            params={"room_id": self.room_id},
+            headers=headers,
+        ) as response:
+            if response.status != 200:
+                raise RuntimeError(f"直播间信息 HTTP错误: {response.status}")
+            room_payload = await response.json(content_type=None)
+
+        anchor_uid = parse_anchor_uid(room_payload)
+        rank_params = {
+            "ruid": anchor_uid,
+            "room_id": self.room_id,
+            "page": 1,
+            "page_size": 100,
+            "type": "online_rank",
+            "switch": "contribution_rank",
+            "platform": "web",
+        }
+        async with self.session.get(
+            LIVE_AUDIENCE_RANK_URL,
+            params=rank_params,
+            headers=headers,
+        ) as response:
+            if response.status != 200:
+                raise RuntimeError(f"在线榜 HTTP错误: {response.status}")
+            rank_payload = await response.json(content_type=None)
+
+        return parse_audience_snapshot(self.room_id, room_payload, rank_payload)
 
     async def fetch_live_emoticons(self):
         """Fetch room-specific live emoticon packages."""
