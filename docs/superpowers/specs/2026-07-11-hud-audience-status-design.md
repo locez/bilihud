@@ -41,7 +41,7 @@ Clicking `在线榜 3` opens a frameless popup anchored below the clickable text
 ```text
 在线榜                         可见 1 / 共 3
 用户名                                贡献值
-缘梦星声                                   1
+用户A                                      1
 还有 2 位用户未公开
 ```
 
