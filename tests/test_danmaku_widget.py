@@ -3,11 +3,13 @@ import asyncio
 import os
 from pathlib import Path
 
+import pytest
 from PyQt6.QtCore import QEvent
 from PyQt6.QtGui import QFont, QImage
 from PyQt6.QtWidgets import QApplication, QLabel
 
 from bilihud import danmaku_widget
+from bilihud.live_audience import AudienceSnapshot, AudienceUser
 from bilihud.live_emoticons import LiveEmoticon, LiveEmoticonPackage
 
 _QT_APP = None
@@ -441,6 +443,11 @@ def test_connect_to_room_replaces_stale_same_room_client(monkeypatch):
         widget._set_connected_ui = lambda: events.append("connected")
         widget._set_disconnected_ui = lambda: events.append("disconnected")
 
+        async def start_audience_refresh(client):
+            events.append(("audience-start", client.room_id))
+
+        widget._start_audience_refresh = start_audience_refresh
+
         monkeypatch.setattr(danmaku_widget, "DanmakuClient", NewDanmakuClient)
         monkeypatch.setattr(danmaku_widget, "save_config", lambda data: events.append(("save", data)))
 
@@ -451,7 +458,7 @@ def test_connect_to_room_replaces_stale_same_room_client(monkeypatch):
         assert widget.room_id_input.text == "7450109"
         assert widget.danmaku_client is NewDanmakuClient.instances[0]
         assert widget.danmaku_client.started is True
-        assert events[-1] == "connected"
+        assert events[-2:] == ["connected", ("audience-start", 7450109)]
 
     asyncio.run(run_test())
 
@@ -464,3 +471,193 @@ def test_live_control_start_live_ensures_hud_room_before_starting():
     assert source.index("await self._ensure_hud_room(room_id)") < source.index(
         "await self._sync_room_before_start_lenient"
     )
+
+
+def audience_snapshot(room_id=7450109):
+    return AudienceSnapshot(
+        room_id=room_id,
+        popularity=21,
+        watched_count=9,
+        online_rank_count=3,
+        users=(AudienceUser(1001, "用户A", 1, 1, False),),
+    )
+
+
+def test_refresh_audience_once_applies_only_current_room_and_generation():
+    class Client:
+        room_id = 7450109
+
+        async def fetch_audience_snapshot(self):
+            return audience_snapshot()
+
+    class Status:
+        def set_snapshot(self, snapshot):
+            applied.append(snapshot)
+
+        def setVisible(self, visible):
+            visibility.append(visible)
+
+    class Popup:
+        def set_snapshot(self, snapshot):
+            popup_applied.append(snapshot)
+
+        def hide(self):
+            popup_hidden.append(True)
+
+    async def run_test():
+        client = Client()
+        class Widget:
+            pass
+
+        widget = Widget()
+        widget.danmaku_client = client
+        widget.room_id = 7450109
+        widget._audience_generation = 4
+        widget._audience_snapshot = None
+        widget.is_gaming_mode = False
+        widget.audience_status = Status()
+        widget.audience_popup = Popup()
+        widget._sync_audience_visibility = lambda: (
+            danmaku_widget.DanmakuWidget._sync_audience_visibility(widget)
+        )
+
+        updated = await danmaku_widget.DanmakuWidget._refresh_audience_once(widget, client, 4)
+        stale = await danmaku_widget.DanmakuWidget._refresh_audience_once(widget, client, 3)
+
+        assert updated is True
+        assert stale is False
+        assert widget._audience_snapshot == audience_snapshot()
+        assert applied == [audience_snapshot()]
+        assert popup_applied == [audience_snapshot()]
+        assert visibility == [True]
+        assert popup_hidden == []
+
+    applied = []
+    popup_applied = []
+    popup_hidden = []
+    visibility = []
+    asyncio.run(run_test())
+
+
+def test_refresh_audience_once_keeps_last_snapshot_after_failure():
+    previous = audience_snapshot()
+
+    class Client:
+        room_id = 7450109
+
+        async def fetch_audience_snapshot(self):
+            raise RuntimeError("temporary failure")
+
+    async def run_test():
+        client = Client()
+        class Widget:
+            pass
+
+        widget = Widget()
+        widget.danmaku_client = client
+        widget.room_id = 7450109
+        widget._audience_generation = 2
+        widget._audience_snapshot = previous
+
+        updated = await danmaku_widget.DanmakuWidget._refresh_audience_once(widget, client, 2)
+
+        assert updated is False
+        assert widget._audience_snapshot is previous
+
+    asyncio.run(run_test())
+
+
+def test_stop_audience_refresh_cancels_task_and_clears_widgets():
+    class Status:
+        def clear(self):
+            calls.append("status-clear")
+
+    class Popup:
+        def hide(self):
+            calls.append("popup-hide")
+
+    async def run_test():
+        started = asyncio.Event()
+
+        async def forever():
+            started.set()
+            await asyncio.Event().wait()
+
+        class Widget:
+            pass
+
+        widget = Widget()
+        widget._audience_generation = 1
+        widget._audience_snapshot = audience_snapshot()
+        widget.audience_status = Status()
+        widget.audience_popup = Popup()
+        widget._audience_refresh_task = asyncio.create_task(forever())
+        await started.wait()
+
+        await danmaku_widget.DanmakuWidget._stop_audience_refresh(widget)
+
+        assert widget._audience_refresh_task is None
+        assert widget._audience_snapshot is None
+        assert calls == ["popup-hide", "status-clear"]
+
+    calls = []
+    asyncio.run(run_test())
+
+
+def test_sync_audience_visibility_hides_status_and_popup_in_gaming_mode():
+    calls = []
+
+    class Status:
+        def setVisible(self, visible):
+            calls.append(("visible", visible))
+
+    class Popup:
+        def hide(self):
+            calls.append(("popup", False))
+
+    class Widget:
+        pass
+
+    widget = Widget()
+    widget._audience_snapshot = audience_snapshot()
+    widget.is_gaming_mode = True
+    widget.audience_status = Status()
+    widget.audience_popup = Popup()
+
+    danmaku_widget.DanmakuWidget._sync_audience_visibility(widget)
+
+    assert calls == [("visible", False), ("popup", False)]
+
+
+def test_audience_refresh_loop_waits_thirty_seconds(monkeypatch):
+    class Client:
+        room_id = 7450109
+
+    async def run_test():
+        class Widget:
+            pass
+
+        widget = Widget()
+
+        async def refresh_once(client, generation):
+            calls.append(("refresh", client.room_id, generation))
+            return True
+
+        async def fake_sleep(delay):
+            calls.append(("sleep", delay))
+            raise asyncio.CancelledError
+
+        widget._refresh_audience_once = refresh_once
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+        with pytest.raises(asyncio.CancelledError):
+            await danmaku_widget.DanmakuWidget._audience_refresh_loop(widget, Client(), 7)
+
+    calls = []
+    asyncio.run(run_test())
+
+    assert calls == [
+        ("refresh", 7450109, 7),
+        ("sleep", danmaku_widget.AUDIENCE_REFRESH_INTERVAL_SECONDS),
+    ]
+    assert danmaku_widget.AUDIENCE_REFRESH_INTERVAL_SECONDS == 30.0

@@ -1,54 +1,81 @@
 # -*- coding: utf-8 -*-
-import sys
-import os
 import asyncio
-import qasync
 import ctypes
 import html
-from ctypes import c_void_p, c_int, c_ulong
+import logging
+import os
+import sys
+from ctypes import c_int, c_ulong, c_void_p
 from typing import Optional
-import PyQt6.sip as sip
-
-from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QListWidget, QListWidgetItem, QLineEdit, QPushButton, QFrame,
-    QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu,
-    QDialog, QSizePolicy, QAbstractItemView, QListView, QScrollArea,
-    QGridLayout, QToolButton, QTabWidget
-)
-from PyQt6.QtGui import (
-    QCloseEvent, QFont, QColor, QPalette, QIcon, QCursor, 
-    QLinearGradient, QBrush, QPainter, QAction, QGuiApplication,
-    QTextDocument, QImage, QPixmap
-)
-from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
-from PyQt6.QtCore import (
-    QTimer, Qt, pyqtSignal, QSize, QPoint, QRect, QUrl
-)
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 
 import blivedm.models.web as web_models
+import PyQt6.sip as sip
+import qasync
+from PyQt6.QtCore import QPoint, QSize, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import (
+    QAction,
+    QBrush,
+    QCloseEvent,
+    QColor,
+    QGuiApplication,
+    QIcon,
+    QImage,
+    QPainter,
+    QPixmap,
+    QTextDocument,
+)
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListView,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QPushButton,
+    QScrollArea,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QSystemTrayIcon,
+    QTabWidget,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from .audience_widgets import AudiencePopup, AudienceStatusWidget
+from .auth import AuthManager
 from .danmaku_client import DanmakuClient
 from .danmaku_format import (
     danmaku_author_badges_html,
     danmaku_message_content_html,
     danmaku_message_emoticon_urls,
 )
-from .live_emoticons import LiveEmoticon, LiveEmoticonPackage
-from .live_api import get_anchor_live_room_id
-from .mirror_state import MIRROR_DEFAULT_PORT, MIRROR_ROUTE, MirrorState
-from .mirror_server import MirrorServer
-from .mirror_settings_dialog import MirrorSettingsDialog
-from .utils import load_config, save_config
-from .qr_login_dialog import QRLoginDialog
-from .live_control_dialog import LiveControlDialog
-from .auth import AuthManager
 from .layer_shell_loader import (
     LAYER_SHELL_LIBRARY_NAME,
     find_layer_shell_library,
     gaming_mode_available,
     should_disable_layer_shell,
 )
+from .live_api import get_anchor_live_room_id
+from .live_audience import AudienceSnapshot
+from .live_control_dialog import LiveControlDialog
+from .live_emoticons import LiveEmoticon, LiveEmoticonPackage
+from .mirror_server import MirrorServer
+from .mirror_settings_dialog import MirrorSettingsDialog
+from .mirror_state import MIRROR_DEFAULT_PORT, MIRROR_ROUTE, MirrorState
+from .qr_login_dialog import QRLoginDialog
+from .utils import load_config, save_config
+
+logger = logging.getLogger(__name__)
+AUDIENCE_REFRESH_INTERVAL_SECONDS = 30.0
 
 
 class ModernInputWidget(QWidget):
@@ -715,6 +742,9 @@ class DanmakuWidget(QWidget):
         self.room_id = room_id
         self.sessdata = sessdata
         self.danmaku_client: Optional[DanmakuClient] = None
+        self._audience_refresh_task: asyncio.Task[None] | None = None
+        self._audience_generation = 0
+        self._audience_snapshot: AudienceSnapshot | None = None
         self.is_gaming_mode = False
         self.layer_shell_lib = None
         self.layer_shell_disabled_reason = ""
@@ -1029,9 +1059,13 @@ class DanmakuWidget(QWidget):
         self.input_area.emoticon_requested.connect(self.open_emoticon_picker)
         self.emoticon_picker = EmoticonPickerPopup(self)
         self.emoticon_picker.emoticon_selected.connect(self.trigger_send_live_emoticon)
+        self.audience_status = AudienceStatusWidget(self)
+        self.audience_popup = AudiencePopup(self)
+        self.audience_status.audience_requested.connect(self.open_audience_popup)
 
         # 组装 Main
         self.main_layout.addWidget(self.header_widget)
+        self.main_layout.addWidget(self.audience_status)
         self.main_layout.addWidget(self.danmaku_list)
         self.main_layout.addWidget(self.input_area) # 放在底部
         
@@ -1240,6 +1274,7 @@ class DanmakuWidget(QWidget):
 
     @qasync.asyncSlot()
     async def quit_app(self):
+        await self._stop_audience_refresh()
         if self.mirror_server is not None:
             await self.shutdown_mirror_server()
         QApplication.quit()
@@ -1405,6 +1440,8 @@ class DanmakuWidget(QWidget):
             # 这里的延时是必须的
             QTimer.singleShot(50, restore_window_state)
 
+        self._sync_audience_visibility()
+
     # --- 鼠标拖拽移动窗口逻辑 (Simple & Robust) ---
     def mousePressEvent(self, event):
         if not self.is_gaming_mode and event.button() == Qt.MouseButton.LeftButton:
@@ -1513,6 +1550,71 @@ class DanmakuWidget(QWidget):
     def setup_danmaku_client(self):
         self.danmaku_client = None
 
+    def open_audience_popup(self):
+        if self._audience_snapshot is None or self.is_gaming_mode:
+            return
+        self.audience_popup.set_snapshot(self._audience_snapshot)
+        self.audience_popup.show_below(self.audience_status.online_button, self)
+
+    async def _refresh_audience_once(
+        self,
+        client: DanmakuClient,
+        generation: int,
+    ) -> bool:
+        try:
+            snapshot = await client.fetch_audience_snapshot()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.info("Failed to refresh room audience data: %s", exc)
+            return False
+
+        if (
+            generation != self._audience_generation
+            or self.danmaku_client is not client
+            or self.room_id != snapshot.room_id
+        ):
+            return False
+
+        self._audience_snapshot = snapshot
+        self.audience_status.set_snapshot(snapshot)
+        self.audience_popup.set_snapshot(snapshot)
+        self._sync_audience_visibility()
+        return True
+
+    async def _audience_refresh_loop(
+        self,
+        client: DanmakuClient,
+        generation: int,
+    ) -> None:
+        while True:
+            await self._refresh_audience_once(client, generation)
+            await asyncio.sleep(AUDIENCE_REFRESH_INTERVAL_SECONDS)
+
+    async def _start_audience_refresh(self, client: DanmakuClient) -> None:
+        await self._stop_audience_refresh()
+        generation = self._audience_generation
+        self._audience_refresh_task = asyncio.create_task(
+            self._audience_refresh_loop(client, generation)
+        )
+
+    async def _stop_audience_refresh(self) -> None:
+        self._audience_generation += 1
+        task = self._audience_refresh_task
+        self._audience_refresh_task = None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        self._audience_snapshot = None
+        self.audience_popup.hide()
+        self.audience_status.clear()
+
+    def _sync_audience_visibility(self) -> None:
+        visible = self._audience_snapshot is not None and not self.is_gaming_mode
+        self.audience_status.setVisible(visible)
+        if not visible:
+            self.audience_popup.hide()
+
     def _wire_danmaku_client(self, client: DanmakuClient):
         client.set_danmaku_callback(self.on_danmaku_received)
         client.set_gift_callback(self.on_gift_received)
@@ -1565,6 +1667,10 @@ class DanmakuWidget(QWidget):
         if self._has_active_danmaku_connection() and self.room_id == room_id:
             self.room_id_input.setText(str(room_id))
             self._set_connected_ui()
+            client = self.danmaku_client
+            assert client is not None
+            if self._audience_refresh_task is None:
+                await self._start_audience_refresh(client)
             return
 
         if self.danmaku_client is not None and self.danmaku_client.client:
@@ -1572,25 +1678,31 @@ class DanmakuWidget(QWidget):
 
         self.room_id = room_id
         self.room_id_input.setText(str(room_id))
-        self.danmaku_client = DanmakuClient(room_id, self.sessdata)
-        self._wire_danmaku_client(self.danmaku_client)
+        client = DanmakuClient(room_id, self.sessdata)
+        self.danmaku_client = client
+        self._wire_danmaku_client(client)
         save_config({'room_id': room_id})
         self._set_connecting_ui()
         try:
-            await self.danmaku_client.start()
+            await client.start()
         except Exception:
             self.danmaku_client = None
             self._set_disconnected_ui()
             raise
         self._set_connected_ui()
+        await self._start_audience_refresh(client)
 
     async def _disconnect_current_room(self):
         self.connect_button.setEnabled(False)
+        client = self.danmaku_client
+        await self._stop_audience_refresh()
         try:
-            if self.danmaku_client is not None:
-                await self.danmaku_client.stop()
+            if client is not None:
+                await client.stop()
         except Exception as e:
             self._set_connected_ui()
+            if client is not None:
+                await self._start_audience_refresh(client)
             self.add_system_message(f"断开失败: {e}", "error")
             print(f"Disconnect failed: {e}")
             raise

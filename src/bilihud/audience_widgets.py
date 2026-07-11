@@ -136,9 +136,11 @@ class AudiencePopup(QFrame):
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.tree.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self.tree.header().setStretchLastSection(False)
-        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header_view = self.tree.header()
+        assert header_view is not None
+        header_view.setStretchLastSection(False)
+        header_view.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header_view.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         outer.addWidget(self.tree)
 
         self.empty_label = QLabel("暂无可见用户")
@@ -184,9 +186,9 @@ class AudiencePopup(QFrame):
         self.show()
         self.raise_()
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:
-        if event.key() == Qt.Key.Key_Escape:
+    def keyPressEvent(self, a0: QKeyEvent | None) -> None:
+        if a0 is not None and a0.key() == Qt.Key.Key_Escape:
             self.hide()
-            event.accept()
+            a0.accept()
             return
-        super().keyPressEvent(event)
+        super().keyPressEvent(a0)
