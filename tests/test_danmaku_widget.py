@@ -604,6 +604,60 @@ def test_stop_audience_refresh_cancels_task_and_clears_widgets():
     asyncio.run(run_test())
 
 
+def test_disconnect_failure_restores_last_audience_snapshot():
+    previous = audience_snapshot()
+
+    class Client:
+        async def stop(self):
+            raise RuntimeError("temporary failure")
+
+    class Button:
+        def setEnabled(self, enabled):
+            calls.append(("button", enabled))
+
+    class Status:
+        def set_snapshot(self, snapshot):
+            calls.append(("status", snapshot))
+
+    class Popup:
+        def set_snapshot(self, snapshot):
+            calls.append(("popup", snapshot))
+
+    async def run_test():
+        class Widget:
+            pass
+
+        widget = Widget()
+        widget.connect_button = Button()
+        widget.danmaku_client = Client()
+        widget._audience_snapshot = previous
+        widget.audience_status = Status()
+        widget.audience_popup = Popup()
+        widget._set_connected_ui = lambda: calls.append("connected")
+        widget._sync_audience_visibility = lambda: calls.append("visibility")
+        widget.add_system_message = lambda message, level: calls.append((level, message))
+
+        async def stop_refresh():
+            widget._audience_snapshot = None
+
+        async def start_refresh(client):
+            calls.append(("refresh", client))
+
+        widget._stop_audience_refresh = stop_refresh
+        widget._start_audience_refresh = start_refresh
+
+        with pytest.raises(RuntimeError, match="temporary failure"):
+            await danmaku_widget.DanmakuWidget._disconnect_current_room(widget)
+
+        assert widget._audience_snapshot is previous
+        assert ("status", previous) in calls
+        assert ("popup", previous) in calls
+        assert "visibility" in calls
+
+    calls = []
+    asyncio.run(run_test())
+
+
 def test_sync_audience_visibility_hides_status_and_popup_in_gaming_mode():
     calls = []
 

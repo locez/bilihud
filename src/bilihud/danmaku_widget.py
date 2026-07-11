@@ -1695,6 +1695,7 @@ class DanmakuWidget(QWidget):
     async def _disconnect_current_room(self):
         self.connect_button.setEnabled(False)
         client = self.danmaku_client
+        previous_snapshot = self._audience_snapshot
         await self._stop_audience_refresh()
         try:
             if client is not None:
@@ -1703,6 +1704,11 @@ class DanmakuWidget(QWidget):
             self._set_connected_ui()
             if client is not None:
                 await self._start_audience_refresh(client)
+            if previous_snapshot is not None:
+                self._audience_snapshot = previous_snapshot
+                self.audience_status.set_snapshot(previous_snapshot)
+                self.audience_popup.set_snapshot(previous_snapshot)
+                self._sync_audience_visibility()
             self.add_system_message(f"断开失败: {e}", "error")
             print(f"Disconnect failed: {e}")
             raise
