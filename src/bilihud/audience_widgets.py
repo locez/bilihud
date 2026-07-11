@@ -86,7 +86,7 @@ class AudiencePopup(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setObjectName("audiencePopup")
-        self.setMinimumWidth(220)
+        self.setFixedWidth(240)
         self.setMaximumHeight(260)
         self.setStyleSheet(
             """
@@ -105,7 +105,7 @@ class AudiencePopup(QFrame):
             }
             QHeaderView::section {
                 color: rgba(255, 255, 255, 120);
-                background: transparent;
+                background: #2b3038;
                 border: none;
                 padding: 3px 4px;
                 font-size: 10px;

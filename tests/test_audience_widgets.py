@@ -111,3 +111,17 @@ def test_popup_constrains_long_list_to_internal_scroll_area():
     assert popup.tree.topLevelItemCount() == 120
     assert popup.height() <= 260
     assert popup.tree.verticalScrollBar().maximum() > 0
+
+
+def test_popup_keeps_compact_width_for_long_usernames():
+    qt_app = app()
+    popup = AudiencePopup()
+    long_name = "一个较长的匿名用户名示例"
+    popup.set_snapshot(
+        snapshot(users=(AudienceUser(1001, long_name, 1, 1, False),))
+    )
+    popup.show()
+    qt_app.processEvents()
+
+    assert popup.width() == 240
+    assert popup.tree.topLevelItem(0).toolTip(0) == long_name
