@@ -384,7 +384,7 @@ def test_danmaku_widget_source_wires_emoticon_picker_to_client_methods():
     assert "await self.danmaku_client.send_live_emoticon(emoticon)" in source
 
 
-def test_live_control_uses_anchor_room_and_reconnects_hud_source():
+def test_live_control_uses_anchor_room_and_connects_hud_when_opened_source():
     source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
 
     assert "get_anchor_live_room_id" in source
@@ -393,7 +393,7 @@ def test_live_control_uses_anchor_room_and_reconnects_hud_source():
     assert "self._live_control_dialog.set_room_id(anchor_room_id)" in source
     assert "self._live_control_dialog.set_room_id(self.room_id)" not in source
     assert "await self._connect_to_room_id(anchor_room_id)" in source
-    assert "self._live_control_dialog.set_ensure_hud_room_callback(self._connect_to_room_id)" in source
+    assert "set_ensure_hud_room_callback" not in source
 
 
 def test_connect_to_room_replaces_stale_same_room_client(monkeypatch):
@@ -463,14 +463,12 @@ def test_connect_to_room_replaces_stale_same_room_client(monkeypatch):
     asyncio.run(run_test())
 
 
-def test_live_control_start_live_ensures_hud_room_before_starting():
+def test_live_control_start_live_does_not_manage_hud_connection():
     source = Path("src/bilihud/live_control_dialog.py").read_text(encoding="utf-8")
 
-    assert "def set_ensure_hud_room_callback" in source
-    assert "await self._ensure_hud_room(room_id)" in source
-    assert source.index("await self._ensure_hud_room(room_id)") < source.index(
-        "await self._sync_room_before_start_lenient"
-    )
+    assert "_ensure_hud_room_callback" not in source
+    assert "set_ensure_hud_room_callback" not in source
+    assert "_ensure_hud_room" not in source
 
 
 def audience_snapshot(room_id=7450109):

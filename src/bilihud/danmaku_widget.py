@@ -1805,7 +1805,6 @@ class DanmakuWidget(QWidget):
         if not hasattr(self, '_live_control_dialog'):
             self._live_control_dialog = LiveControlDialog(self)
             self._live_control_dialog.live_status_changed.connect(self.set_live_status_indicator)
-            self._live_control_dialog.set_ensure_hud_room_callback(self._connect_to_room_id)
         self._live_control_dialog.set_room_id(anchor_room_id)
         self._live_control_dialog.show()
         self._live_control_dialog.raise_()

@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 import aiohttp
@@ -95,7 +94,6 @@ class LiveControlDialog(QDialog):
         self._obs_busy = False
         self._obs_connected = False
         self._obs_streaming_started = False
-        self._ensure_hud_room_callback: Callable[[int], Awaitable[None]] | None = None
 
         self._init_ui()
         self._load_config_values()
@@ -301,9 +299,6 @@ class LiveControlDialog(QDialog):
     def set_room_id(self, room_id: int) -> None:
         if room_id > 0:
             self.room_id_input.setText(str(room_id))
-
-    def set_ensure_hud_room_callback(self, callback: Callable[[int], Awaitable[None]]) -> None:
-        self._ensure_hud_room_callback = callback
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -786,10 +781,6 @@ class LiveControlDialog(QDialog):
                     return
                 self._set_busy(True, "正在开始直播...")
 
-            await self._ensure_hud_room(room_id)
-            if not self._is_current_action(action_generation, session):
-                return
-
             self._save_form_config()
             await self._sync_room_before_start_lenient(session, room_id, title, area_id)
             if not self._is_current_action(action_generation, session):
@@ -812,10 +803,6 @@ class LiveControlDialog(QDialog):
         finally:
             if self._is_current_action(action_generation, session):
                 self._set_busy(False)
-
-    async def _ensure_hud_room(self, room_id: int) -> None:
-        if self._ensure_hud_room_callback is not None:
-            await self._ensure_hud_room_callback(room_id)
 
     def _handle_start_live_result(self, code: int, message: str, data: dict[str, Any]) -> None:
         if code == 0:
