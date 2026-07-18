@@ -152,8 +152,12 @@ Mirror 默认仅监听 `127.0.0.1`，用于本机浏览器源或本机浏览器�
 
 ### Arch Linux
 
-本项目已发布至 AUR ([bilihud-git](https://aur.archlinux.org/packages/bilihud-git))。推荐使用 `paru` 或其他 helper 快速安装：
+本项目已发布至 AUR ([bilihud（稳定版）](https://aur.archlinux.org/packages/bilihud)和[bilihud-git（开发版）](https://aur.archlinux.org/packages/bilihud-git))。推荐使用 `paru` 或其他 helper 快速安装：
 
+```bash
+paru -S bilihud
+```
+或
 ```bash
 paru -S bilihud-git
 ```
