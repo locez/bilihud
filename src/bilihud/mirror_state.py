@@ -96,17 +96,29 @@ def _interact_text(msg_type: int) -> str:
 
 
 def message_to_mirror_entry(seq: int, message: Any) -> dict[str, Any]:
-    if isinstance(message, web_models.DanmakuMessage):
+    is_danmaku = isinstance(message, web_models.DanmakuMessage) or (
+        hasattr(message, "uname")
+        and hasattr(message, "msg")
+        and not getattr(message, "is_system_info", False)
+        and not getattr(message, "is_system_error", False)
+    )
+    if is_danmaku:
+        segments = (
+            danmaku_segments(message)
+            if isinstance(message, web_models.DanmakuMessage)
+            else [{"type": "text", "text": str(getattr(message, "msg", ""))}]
+        )
         entry = {
             "seq": seq,
             "kind": "danmaku",
-            "user": message.uname,
+            "user": str(getattr(message, "uname", "")),
             "userColor": user_color_for_message(message),
-            "segments": danmaku_segments(message),
+            "segments": segments,
         }
-        badges = danmaku_author_badges(message)
-        if badges:
-            entry["badges"] = badges
+        if isinstance(message, web_models.DanmakuMessage):
+            badges = danmaku_author_badges(message)
+            if badges:
+                entry["badges"] = badges
         return entry
 
     if isinstance(message, web_models.GiftMessage):
