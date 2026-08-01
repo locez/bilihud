@@ -96,29 +96,17 @@ def _interact_text(msg_type: int) -> str:
 
 
 def message_to_mirror_entry(seq: int, message: Any) -> dict[str, Any]:
-    is_danmaku = isinstance(message, web_models.DanmakuMessage) or (
-        hasattr(message, "uname")
-        and hasattr(message, "msg")
-        and not getattr(message, "is_system_info", False)
-        and not getattr(message, "is_system_error", False)
-    )
-    if is_danmaku:
-        segments = (
-            danmaku_segments(message)
-            if isinstance(message, web_models.DanmakuMessage)
-            else [{"type": "text", "text": str(getattr(message, "msg", ""))}]
-        )
+    if isinstance(message, web_models.DanmakuMessage):
         entry = {
             "seq": seq,
             "kind": "danmaku",
-            "user": str(getattr(message, "uname", "")),
+            "user": message.uname,
             "userColor": user_color_for_message(message),
-            "segments": segments,
+            "segments": danmaku_segments(message),
         }
-        if isinstance(message, web_models.DanmakuMessage):
-            badges = danmaku_author_badges(message)
-            if badges:
-                entry["badges"] = badges
+        badges = danmaku_author_badges(message)
+        if badges:
+            entry["badges"] = badges
         return entry
 
     if isinstance(message, web_models.GiftMessage):
@@ -137,6 +125,15 @@ def message_to_mirror_entry(seq: int, message: Any) -> dict[str, Any]:
             "user": message.username,
             "userColor": user_color_for_message(message),
             "segments": [{"type": "text", "text": _interact_text(message.msg_type)}],
+        }
+
+    if hasattr(message, "uname") and hasattr(message, "msg") and not getattr(message, "is_system_info", False) and not getattr(message, "is_system_error", False):
+        return {
+            "seq": seq,
+            "kind": "danmaku",
+            "user": str(getattr(message, "uname", "")),
+            "userColor": user_color_for_message(message),
+            "segments": [{"type": "text", "text": str(getattr(message, "msg", ""))}],
         }
 
     return {
