@@ -27,8 +27,12 @@ def _restrict_permissions(path: Path) -> None:
 
 
 def _read_config_file(config_path: Path) -> dict[str, Any]:
-    # 读时顺带收紧权限（见 _restrict_permissions）
-    _restrict_permissions(config_path)
+    # 读时顺带收紧权限；失败仅告警不阻断，避免只读挂载等场景无法读取
+    if os.name == "posix":
+        try:
+            config_path.chmod(0o600)
+        except OSError as e:
+            print(f"Failed to restrict config permissions: {e}")
     with open(config_path, encoding="utf-8") as config_file:
         config = json.load(config_file)
     if not isinstance(config, dict):

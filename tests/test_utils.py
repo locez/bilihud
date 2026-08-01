@@ -86,10 +86,15 @@ def test_get_config_path_cleans_stale_temp_files(config_path):
     config_path.parent.mkdir(parents=True)
     stale = config_path.parent / f".{config_path.name}.abc123.tmp"
     stale.write_text("stale", encoding="utf-8")
+    config_path.write_text("{}", encoding="utf-8")
+    decoy = config_path.parent / "unrelated.json"
+    decoy.write_text("{}", encoding="utf-8")
 
     get_config_path()
 
     assert not stale.exists()
+    assert config_path.exists()
+    assert decoy.exists()
 
 
 def test_validate_room_id():
