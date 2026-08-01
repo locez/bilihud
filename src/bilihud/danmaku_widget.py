@@ -67,173 +67,18 @@ from .layer_shell_loader import (
     gaming_mode_available,
     should_disable_layer_shell,
 )
-from .live_api import (
-    AnchorLiveInfo,
-    AreaInfo,
-    LiveEmoticon,
-    LiveStatus,
-    fetch_anchor_live_info,
-    fetch_area_list,
-    get_anchor_live_room_id,
-    start_live,
-    stop_live,
-    update_live_info,
-)
-from .live_audience import AUDIENCE_REFRESH_INTERVAL_SECONDS, AudienceSnapshot
+from .live_api import get_anchor_live_room_id
+from .live_audience import AudienceSnapshot
 from .live_control_dialog import LiveControlDialog
+from .live_emoticons import LiveEmoticon, LiveEmoticonPackage
 from .mirror_server import MirrorServer
 from .mirror_settings_dialog import MirrorSettingsDialog
-from .mirror_state import (
-    MIRROR_DEFAULT_PORT,
-    MirrorState,
-)
-from .obs_api import OBSController
+from .mirror_state import MIRROR_DEFAULT_PORT, MIRROR_ROUTE, MirrorState
 from .qr_login_dialog import QRLoginDialog
-from .utils import X11Helper, load_config, save_config
+from .utils import load_config, save_config
 
 logger = logging.getLogger(__name__)
-
-
-class CustomSizeGrip(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMouseTracking(True)
-        self._resizing = False
-        self._drag_pos = QPoint()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._resizing = True
-            self._drag_pos = event.globalPosition().toPoint() - self.window().frameGeometry().bottomRight()
-            event.accept()
-
-    def mouseMoveEvent(self, event):
-        if self._resizing:
-            new_bottom_right = event.globalPosition().toPoint() - self._drag_pos
-            window = self.window()
-            new_width = max(window.minimumWidth(), new_bottom_right.x() - window.x())
-            new_height = max(window.minimumHeight(), new_bottom_right.y() - window.y())
-            window.resize(new_width, new_height)
-            event.accept()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._resizing = False
-            event.accept()
-
-
-class DanmakuDelegate(QStyledItemDelegate):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._doc_cache = {}
-        self._doc_access = {}
-        self._access_counter = 0
-        self.max_cache_size = 300
-
-    def forget_message(self, message):
-        key = id(message)
-        self._doc_cache.pop(key, None)
-        self._doc_access.pop(key, None)
-
-    def _trim_cache_if_needed(self):
-        if len(self._doc_cache) <= self.max_cache_size:
-            return
-        sorted_keys = sorted(self._doc_access.items(), key=lambda x: x[1])
-        remove_count = len(self._doc_cache) - self.max_cache_size
-        for key, _ in sorted_keys[:remove_count]:
-            self._doc_cache.pop(key, None)
-            self._doc_access.pop(key, None)
-
-    def _get_document(self, option, index):
-        message = index.data(Qt.ItemDataRole.UserRole)
-        if not message:
-            return None
-
-        key = id(message)
-        self._access_counter += 1
-        self._doc_access[key] = self._access_counter
-
-        content_width = option.rect.width()
-        if content_width <= 0:
-            content_width = 300
-
-        doc = self._doc_cache.get(key)
-        if doc is None:
-            doc = QTextDocument()
-            doc.setDocumentMargin(0)
-            
-            badges_html = danmaku_author_badges_html(message)
-            content_html = danmaku_message_content_html(message)
-            
-            if isinstance(message, web_models.DanmakuMessage):
-                color = "#66CCFF"
-                if getattr(message, "privilege_type", 0) > 0:
-                    color = "#FFD700"
-                elif getattr(message, "vip", False) or getattr(message, "svip", False):
-                    color = "#FF69B4"
-                elif getattr(message, "admin", False):
-                    color = "#FF4500"
-                
-                uname = html.escape(message.uname)
-                full_html = f"""
-                <div style="font-family: sans-serif; font-size: 13px; line-height: 1.3; color: white; word-wrap: break-word;">
-                    {badges_html}<span style="color: {color}; font-weight: bold;">{uname}</span>: {content_html}
-                </div>
-                """
-            elif isinstance(message, web_models.GiftMessage):
-                uname = html.escape(message.uname)
-                gift_name = html.escape(message.gift_name)
-                action = html.escape(message.action)
-                full_html = f"""
-                <div style="font-family: sans-serif; font-size: 13px; line-height: 1.3; color: #FFD700; font-weight: bold; background: rgba(255, 215, 0, 0.15); padding: 4px; border-radius: 4px;">
-                    🎁 感谢 {uname} {action} {gift_name} x{message.num}
-                </div>
-                """
-            elif isinstance(message, web_models.InteractWordV2Message):
-                uname = html.escape(message.username)
-                action_text = "进入直播间"
-                if message.msg_type == 2:
-                    action_text = "关注了主播"
-                elif message.msg_type == 3:
-                    action_text = "分享了直播间"
-                full_html = f"""
-                <div style="font-family: sans-serif; font-size: 11px; line-height: 1.2; color: rgba(255, 255, 255, 0.6);">
-                    ✨ {uname} {action_text}
-                </div>
-                """
-            else:
-                msg_text = html.escape(getattr(message, 'msg', str(message)))
-                color = "#AAAAAA"
-                if getattr(message, 'is_system_error', False):
-                    color = "#FF5555"
-                full_html = f"""
-                <div style="font-family: sans-serif; font-size: 12px; line-height: 1.3; color: {color}; font-style: italic;">
-                    {msg_text}
-                </div>
-                """
-
-            doc.setHtml(full_html)
-            self._doc_cache[key] = doc
-            self._trim_cache_if_needed()
-
-        doc.setTextWidth(content_width)
-        return doc
-
-    def sizeHint(self, option, index):
-        doc = self._get_document(option, index)
-        if doc:
-            return QSize(int(doc.idealWidth()), int(doc.size().height()) + 4)
-        return super().sizeHint(option, index)
-
-    def paint(self, painter, option, index):
-        doc = self._get_document(option, index)
-        if doc:
-            painter.save()
-            painter.translate(option.rect.topLeft())
-            doc.drawContents(painter)
-            painter.restore()
-        else:
-            super().paint(painter, option, index)
+AUDIENCE_REFRESH_INTERVAL_SECONDS = 30.0
 
 
 class ModernInputWidget(QWidget):
@@ -242,203 +87,600 @@ class ModernInputWidget(QWidget):
 
     def __init__(self, parent=None, placeholder="发送弹幕...", show_emoticon_button: bool = True):
         super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(6)
 
-        self.input = QLineEdit()
-        self.input.setPlaceholderText(placeholder)
-        self.input.setStyleSheet("""
+        self.input_edit = QLineEdit()
+        self.input_edit.setPlaceholderText(placeholder)
+        self.input_edit.setStyleSheet("""
             QLineEdit {
-                border: 1px solid rgba(255, 255, 255, 40);
-                border-radius: 6px;
-                padding: 4px 8px;
-                background: rgba(0, 0, 0, 80);
+                background-color: rgba(255, 255, 255, 30);
                 color: white;
+                border: 1px solid rgba(255, 255, 255, 50);
+                border-radius: 13px;
+                padding: 4px 10px;
+                font-family: 'Segoe UI', 'Microsoft YaHei';
                 font-size: 12px;
+                selection-background-color: rgba(255, 255, 255, 100);
             }
             QLineEdit:focus {
-                border-color: rgba(102, 204, 255, 200);
+                background-color: rgba(255, 255, 255, 50);
+                border: 1px solid rgba(255, 255, 255, 150);
             }
         """)
-        self.input.returnPressed.connect(self._on_send)
-        layout.addWidget(self.input)
+        self.input_edit.returnPressed.connect(self.on_send)
 
-        if show_emoticon_button:
-            self.emoticon_btn = QToolButton()
-            self.emoticon_btn.setText("😀")
-            self.emoticon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.emoticon_btn.setStyleSheet("""
-                QToolButton {
-                    border: 1px solid rgba(255, 255, 255, 40);
-                    border-radius: 6px;
-                    background: rgba(0, 0, 0, 80);
-                    color: white;
-                    font-size: 14px;
-                    padding: 2px 6px;
-                }
-                QToolButton:hover {
-                    background: rgba(255, 255, 255, 30);
-                }
-            """)
-            self.emoticon_btn.clicked.connect(self.emoticon_requested.emit)
-            layout.addWidget(self.emoticon_btn)
-
-        self.send_btn = QPushButton("发送")
-        self.send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.send_btn.setStyleSheet("""
+        self.emoticon_btn = QPushButton("☻")
+        self.emoticon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.emoticon_btn.setFixedSize(28, 26)
+        self.emoticon_btn.setToolTip("发送表情")
+        self.emoticon_btn.setStyleSheet("""
             QPushButton {
-                background: #00A1D6;
+                background-color: rgba(255, 255, 255, 35);
                 color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 4px 12px;
-                font-size: 12px;
+                border: 1px solid rgba(255, 255, 255, 60);
+                border-radius: 13px;
                 font-weight: bold;
+                font-size: 14px;
             }
             QPushButton:hover {
-                background: #00B5E5;
+                background-color: rgba(255, 255, 255, 60);
             }
             QPushButton:pressed {
-                background: #008CB8;
+                background-color: rgba(255, 255, 255, 80);
             }
         """)
-        self.send_btn.clicked.connect(self._on_send)
-        layout.addWidget(self.send_btn)
+        self.emoticon_btn.clicked.connect(self.emoticon_requested.emit)
+        self.emoticon_btn.setVisible(show_emoticon_button)
+        
+        self.send_btn = QPushButton("发送")
+        self.send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.send_btn.setFixedSize(46, 26)
+        self.send_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4FacFe, stop:1 #00f2fe);
+                color: white;
+                border: none;
+                border-radius: 13px;
+                font-weight: bold;
+                font-size: 11px;
+                font-family: 'Segoe UI', 'Microsoft YaHei';
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #66b5ff, stop:1 #33f5ff);
+            }
+            QPushButton:pressed {
+                background: #00bcd4;
+            }
+        """)
+        self.send_btn.clicked.connect(self.on_send)
 
-    def _on_send(self):
-        text = self.input.text().strip()
+        self.layout.addWidget(self.input_edit)
+        self.layout.addWidget(self.emoticon_btn)
+        self.layout.addWidget(self.send_btn)
+
+    def on_send(self):
+        text = self.input_edit.text().strip()
         if text:
             self.send_requested.emit(text)
-            self.input.clear()
+            self.input_edit.clear()
+
+    def setFocus(self):
+        self.input_edit.setFocus()
 
 
 class EmoticonPickerPopup(QDialog):
     emoticon_selected = pyqtSignal(object)
 
     def __init__(self, parent=None):
-        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
-        self.setFixedSize(320, 240)
-        self.setStyleSheet("""
-            QDialog {
-                background: #222222;
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.resize(330, 260)
+        self._network_manager = QNetworkAccessManager(self)
+        self._image_cache: dict[str, QPixmap] = {}
+        self._button_by_url: dict[str, list[QToolButton]] = {}
+        self._emoticon_buttons: list[QToolButton] = []
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(6, 6, 6, 6)
+        self.container = QFrame(self)
+        self.container.setStyleSheet("""
+            QFrame {
+                background-color: rgba(22, 24, 28, 235);
                 border: 1px solid rgba(255, 255, 255, 40);
                 border-radius: 8px;
             }
-        """)
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        
-        self.status_label = QLabel("加载表情包中...")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("color: #AAAAAA; font-size: 12px;")
-        layout.addWidget(self.status_label)
-
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet("""
             QTabWidget::pane {
                 border: none;
-                background: transparent;
             }
             QTabBar::tab {
-                background: rgba(255, 255, 255, 10);
-                color: #CCCCCC;
-                padding: 4px 8px;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
+                background: rgba(255, 255, 255, 24);
+                color: white;
+                padding: 5px 9px;
+                margin-right: 4px;
+                border-radius: 5px;
                 font-size: 11px;
             }
             QTabBar::tab:selected {
-                background: #00A1D6;
+                background: rgba(79, 172, 254, 150);
+            }
+            QToolButton {
+                background: rgba(255, 255, 255, 18);
+                border: 1px solid rgba(255, 255, 255, 22);
+                border-radius: 6px;
                 color: white;
+                padding: 2px;
+            }
+            QToolButton:hover {
+                background: rgba(255, 255, 255, 40);
+            }
+            QToolButton:disabled {
+                background: rgba(255, 255, 255, 10);
+                color: rgba(255, 255, 255, 110);
             }
         """)
-        self.tab_widget.hide()
-        layout.addWidget(self.tab_widget)
+        outer.addWidget(self.container)
+        layout = QVBoxLayout(self.container)
+        layout.setContentsMargins(8, 8, 8, 8)
+        self.tabs = QTabWidget(self.container)
+        layout.addWidget(self.tabs)
 
     def set_loading(self):
-        self.tab_widget.hide()
-        self.status_label.setText("加载表情包中...")
-        self.status_label.show()
+        self._clear_tabs()
+        label = QLabel("加载中...", self)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet("color: rgba(255, 255, 255, 180);")
+        self.tabs.addTab(label, "表情")
 
     def set_error(self, message: str):
-        self.tab_widget.hide()
-        self.status_label.setText(f"加载失败: {message}")
-        self.status_label.show()
+        self._clear_tabs()
+        label = QLabel(message, self)
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet("color: rgba(255, 255, 255, 180);")
+        self.tabs.addTab(label, "表情")
 
-    def set_packages(self, packages: list):
-        self.status_label.hide()
-        self.tab_widget.clear()
-        
+    def set_packages(self, packages: list[LiveEmoticonPackage]):
+        self._clear_tabs()
         if not packages:
-            self.status_label.setText("当前直播间暂无可用表情包")
-            self.status_label.show()
+            self.set_error("没有可显示的直播间表情")
             return
 
-        for pkg in packages:
-            scroll = QScrollArea()
+        for package in packages:
+            page = QWidget(self)
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(0, 4, 0, 0)
+            scroll = QScrollArea(page)
             scroll.setWidgetResizable(True)
-            scroll.setStyleSheet("background: transparent; border: none;")
-            
-            container = QWidget()
-            grid = QGridLayout(container)
-            grid.setContentsMargins(4, 4, 4, 4)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            grid_host = QWidget(scroll)
+            grid = QGridLayout(grid_host)
+            grid.setContentsMargins(0, 0, 0, 0)
             grid.setSpacing(6)
-            
-            row, col = 0, 0
-            for emoticon in pkg.emoticons:
-                btn = QToolButton()
-                btn.setFixedSize(36, 36)
-                btn.setToolTip(emoticon.emoji)
-                
-                if emoticon.url:
-                    btn.setText("")
-                    # Simple text fallback if image not loaded dynamically here
-                    btn.setText(emoticon.emoji)
-                else:
-                    btn.setText(emoticon.emoji)
-                    
-                if emoticon.is_locked:
-                    btn.setEnabled(False)
-                    btn.setToolTip(f"{emoticon.emoji} (未解锁)")
-                    btn.setStyleSheet("opacity: 0.4;")
-                else:
-                    btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                    btn.clicked.connect(lambda _, e=emoticon: self._on_select(e))
 
-                grid.addWidget(btn, row, col)
-                col += 1
-                if col >= 6:
-                    col = 0
-                    row += 1
+            for index, emoticon in enumerate(package.emoticons):
+                button = self._create_emoticon_button(emoticon)
+                row, col = divmod(index, 5)
+                grid.addWidget(button, row, col)
+                self._emoticon_buttons.append(button)
 
-            scroll.setWidget(container)
-            self.tab_widget.addTab(scroll, pkg.pkg_name)
+            scroll.setWidget(grid_host)
+            page_layout.addWidget(scroll)
+            self.tabs.addTab(page, package.name)
 
-        self.tab_widget.show()
+    def _clear_tabs(self):
+        self._emoticon_buttons.clear()
+        self._button_by_url.clear()
+        while self.tabs.count():
+            page = self.tabs.widget(0)
+            self.tabs.removeTab(0)
+            if page is not None:
+                page.deleteLater()
 
-    def _on_select(self, emoticon):
+    def _create_emoticon_button(self, emoticon: LiveEmoticon) -> QToolButton:
+        button = QToolButton(self)
+        button.setFixedSize(52, 52)
+        button.setIconSize(QSize(42, 42))
+        label = emoticon.unlock_label
+        button.setToolTip(emoticon.emoji if not label else f"{emoticon.emoji} - {label}")
+        if not emoticon.is_available:
+            button.setEnabled(False)
+            if label:
+                button.setText(label)
+                button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+                color = emoticon.unlock_color if emoticon.unlock_color.startswith("#") else "rgba(255, 255, 255, 140)"
+                button.setStyleSheet(
+                    f"""
+                    QToolButton:disabled {{
+                        background: rgba(255, 255, 255, 10);
+                        color: {color};
+                    }}
+                    """
+                )
+        else:
+            button.clicked.connect(lambda _checked=False, emoticon=emoticon: self._select_emoticon(emoticon))
+
+        self._load_icon(button, emoticon.url)
+        return button
+
+    def _select_emoticon(self, emoticon: LiveEmoticon):
         self.emoticon_selected.emit(emoticon)
         self.hide()
+
+    def _load_icon(self, button: QToolButton, url: str):
+        cached = self._image_cache.get(url)
+        if cached:
+            button.setIcon(QIcon(cached))
+            return
+
+        self._button_by_url.setdefault(url, []).append(button)
+        if len(self._button_by_url[url]) > 1:
+            return
+
+        request = QNetworkRequest(QUrl(url))
+        request.setRawHeader(b"Referer", b"https://live.bilibili.com/")
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 BiliHUD")
+        reply = self._network_manager.get(request)
+        reply.finished.connect(lambda reply=reply, url=url: self._on_icon_loaded(reply, url))
+
+    def _on_icon_loaded(self, reply, url: str):
+        pixmap = QPixmap()
+        pixmap.loadFromData(reply.readAll())
+        reply.deleteLater()
+        buttons = self._button_by_url.pop(url, [])
+        if pixmap.isNull():
+            return
+        self._image_cache[url] = pixmap
+        icon = QIcon(pixmap)
+        for button in buttons:
+            button.setIcon(icon)
 
 
 class DanmakuInputDialog(QDialog):
     send_message = pyqtSignal(str)
-
+    
     def __init__(self, parent=None):
-        super().__init__(parent, Qt.WindowType.WindowStaysOnTopHint)
-        self.setWindowTitle("发送直播弹幕")
-        self.setFixedSize(360, 100)
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Window)
+        self.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.resize(450, 60)
         
-        layout = QVBoxLayout(self)
-        self.input_widget = ModernInputWidget(self, placeholder="输入弹幕内容发送到直播间...")
-        self.input_widget.send_requested.connect(self._on_send)
-        layout.addWidget(self.input_widget)
-
-    def _on_send(self, text: str):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.container = QFrame(self)
+        self.container.setStyleSheet("""
+            QFrame {
+                background-color: rgba(20, 20, 30, 220);
+                border-radius: 15px;
+                border: 1px solid rgba(255, 255, 255, 30);
+            }
+        """)
+        
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(15)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        self.container.setGraphicsEffect(shadow)
+        
+        container_layout = QHBoxLayout(self.container)
+        container_layout.setContentsMargins(10, 8, 10, 8)
+        
+        self.input_widget = ModernInputWidget(self, placeholder="输入弹幕... [ESC关闭]", show_emoticon_button=False)
+        self.input_widget.send_requested.connect(self.on_send)
+        
+        container_layout.addWidget(self.input_widget)
+        layout.addWidget(self.container)
+        
+    def on_send(self, text):
         self.send_message.emit(text)
         self.hide()
+            
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.input_widget.setFocus()
+        screen = QApplication.primaryScreen().geometry()
+        self.move(
+            screen.width() // 2 - self.width() // 2,
+            int(screen.height() * 0.8)
+        )
+        self.activateWindow()
+        self.raise_()
+        
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.hide()
+        super().keyPressEvent(event)
+
+
+class X11Helper:
+    _x11 = None
+    _xext = None
+    
+    @classmethod
+    def init(cls):
+        if cls._x11: return
+        try:
+            cls._x11 = ctypes.cdll.LoadLibrary('libX11.so.6')
+            cls._xext = ctypes.cdll.LoadLibrary('libXext.so.6')
+            
+            cls._x11.XOpenDisplay.restype = c_void_p
+            cls._x11.XOpenDisplay.argtypes = [c_void_p]
+            cls._x11.XFlush.argtypes = [c_void_p]
+            cls._x11.XCloseDisplay.argtypes = [c_void_p]
+            
+            cls._xext.XShapeCombineRectangles.argtypes = [
+                c_void_p, c_ulong, c_int, c_int, c_int, c_void_p, c_int, c_int, c_int
+            ]
+            
+            cls._xext.XShapeCombineMask.argtypes = [
+                c_void_p, c_ulong, c_int, c_int, c_int, c_void_p, c_int
+            ]
+        except Exception as e:
+            print(f"X11 init failed: {e}")
+
+    @classmethod
+    def set_click_through(cls, win_id, enabled):
+        if sys.platform != 'linux': return
+        
+        cls.init()
+        if not cls._x11 or not cls._xext: return
+        
+        display = cls._x11.XOpenDisplay(None)
+        if not display:
+            print("Failed to open X Display")
+            return
+        
+        ShapeInput = 2
+        ShapeSet = 0
+        
+        try:
+            if enabled:
+                cls._xext.XShapeCombineRectangles(
+                    display, win_id, ShapeInput, 0, 0, None, 0, ShapeSet, 0
+                )
+            else:
+                cls._xext.XShapeCombineMask(
+                    display, win_id, ShapeInput, 0, 0, None, ShapeSet
+                )
+            cls._x11.XFlush(display)
+        finally:
+            cls._x11.XCloseDisplay(display)
+
+
+class DanmakuDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cache = {}
+        self._emoticon_cache: dict[str, QImage | None] = {}
+        self._emoticon_docs: dict[str, list[QTextDocument]] = {}
+        self._network_manager = QNetworkAccessManager(self)
+
+    def _get_document(self, message, width, font):
+        msg_id = id(message)
+
+        cached = self._cache.get(msg_id)
+        if cached is not None:
+            cached_message, doc = cached
+            if cached_message is message:
+                if doc.textWidth() != width:
+                    doc.setTextWidth(width)
+                return doc
+
+        html_content = self.get_html_for_message(message)
+        doc = QTextDocument()
+        doc.setDocumentMargin(0)
+        doc.setDefaultFont(font)
+        doc.setHtml(html_content)
+        doc.setTextWidth(width)
+        self._attach_emoticon_resource(doc, message)
+
+        self._cache[msg_id] = (message, doc)
+        return doc
+
+    def forget_message(self, message) -> None:
+        msg_id = id(message)
+        cached = self._cache.get(msg_id)
+        if cached is not None and cached[0] is message:
+            self._cache.pop(msg_id, None)
+
+    def _attach_emoticon_resource(self, doc: QTextDocument, message) -> None:
+        if not isinstance(message, web_models.DanmakuMessage):
+            return
+
+        for url in danmaku_message_emoticon_urls(message):
+            qurl = QUrl(url)
+            cached = self._emoticon_cache.get(url)
+            if cached:
+                doc.addResource(QTextDocument.ResourceType.ImageResource, qurl, cached)
+                continue
+            if url not in self._emoticon_cache:
+                self._emoticon_cache[url] = None
+                request = QNetworkRequest(qurl)
+                request.setRawHeader(b"Referer", b"https://live.bilibili.com/")
+                request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 BiliHUD")
+                reply = self._network_manager.get(request)
+                reply.finished.connect(lambda reply=reply, url=url: self._on_emoticon_loaded(reply, url))
+
+            self._emoticon_docs.setdefault(url, []).append(doc)
+
+    def _on_emoticon_loaded(self, reply, url: str) -> None:
+        image = QImage.fromData(reply.readAll())
+        reply.deleteLater()
+        docs = self._emoticon_docs.pop(url, [])
+        if image.isNull():
+            self._emoticon_cache.pop(url, None)
+            return
+
+        self._emoticon_cache[url] = image
+        qurl = QUrl(url)
+        for doc in docs:
+            doc.addResource(QTextDocument.ResourceType.ImageResource, qurl, image)
+
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "viewport"):
+            parent.viewport().update()
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
+        options = option
+        self.initStyleOption(options, index)
+        
+        msg_data = index.data(Qt.ItemDataRole.UserRole)
+        if not msg_data:
+            return
+
+        painter.save()
+        width = options.rect.width()
+        if width <= 0: width = 300
+        
+        doc = self._get_document(msg_data, width, options.font)
+        painter.translate(options.rect.x(), options.rect.y() + 1)
+        doc.drawContents(painter)
+        painter.restore()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index):
+        msg_data = index.data(Qt.ItemDataRole.UserRole)
+        if not msg_data:
+            return QSize(0, 0)
+            
+        width = option.rect.width()
+        if width <= 0:
+            if self.parent() and hasattr(self.parent(), 'viewport'):
+                width = self.parent().viewport().width()
+        if width <= 0: width = 300
+             
+        doc = self._get_document(msg_data, width, option.font)
+        return QSize(width, int(doc.size().height()) + 2)
+
+    def get_html_for_message(self, message) -> str:
+        if isinstance(message, web_models.DanmakuMessage):
+            user_color = self.get_user_color(message)
+            badges_html = danmaku_author_badges_html(message)
+            content_html = danmaku_message_content_html(message)
+            return f"""
+            <style>
+                .meta-badge {{
+                    display: inline-block;
+                    padding: 0 4px;
+                    font-family: 'Segoe UI', 'Microsoft YaHei';
+                    font-size: 10px;
+                    line-height: 13px;
+                    font-weight: 700;
+                    color: white;
+                    vertical-align: 1px;
+                }}
+                .medal-badge {{
+                    letter-spacing: 0;
+                }}
+                .wealth-badge {{
+                    color: #C9B6FF;
+                }}
+                .privilege-badge {{
+                    color: #FFD700;
+                    min-width: 13px;
+                    text-align: center;
+                }}
+                .user {{ color: {user_color}; font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
+                .colon {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
+                .content {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 13px; font-weight: 500; }}
+                .reply {{ color: #FF79C6; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 13px; font-weight: 700; }}
+                .emoticon {{ vertical-align: middle; }}
+                body, p {{ line-height: 120%; margin: 0; padding: 0; }} 
+            </style>
+            <p>{badges_html}<span class="user">{html.escape(message.uname, quote=True)}</span><span class="colon"> : </span><span class="content">{content_html}</span></p>
+            """
+        elif isinstance(message, web_models.GiftMessage):
+            return f"""
+            <style>
+                .user {{ color: #FFD700; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 12px; }}
+                .action {{ color: #FF66CC; font-family: 'Microsoft YaHei'; font-size: 12px; }}
+                .gift {{ color: #FF66CC; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 12px; }}
+                body, p {{ line-height: 120%; margin: 0; padding: 0; }}
+            </style>
+            <p><span class="user">{message.uname}</span>
+            <span class="action"> {message.action} </span>
+            <span class="gift">{message.gift_name} x{message.num}</span></p>
+            """
+        elif isinstance(message, web_models.InteractWordV2Message):
+            msg_type_map = {1: '进入直播间', 2: '关注了主播', 3: '分享了直播间'}
+            action_text = msg_type_map.get(message.msg_type, '进入直播间')
+            return f"""
+            <style>
+                .user {{ color: #AAAAAA; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 11px; }}
+                .info {{ color: #AAAAAA; font-family: 'Microsoft YaHei'; font-size: 11px; }}
+                body, p {{ line-height: 120%; margin: 0; padding: 0; }}
+            </style>
+            <p><span class="user">{message.username}</span>
+            <span class="info"> {action_text}</span></p>
+            """
+        if hasattr(message, "uname") and hasattr(message, "msg"):
+            user_color = self.get_user_color(message)
+            return f"""
+            <style>
+                .user {{ color: {user_color}; font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
+                .colon {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
+                .content {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 13px; font-weight: 500; }}
+                body, p {{ line-height: 120%; margin: 0; padding: 0; }}
+            </style>
+            <p><span class="user">{html.escape(str(message.uname), quote=True)}</span><span class="colon"> : </span><span class="content">{html.escape(str(message.msg), quote=True)}</span></p>
+            """
+        return ""
+
+    def get_user_color(self, danmaku_msg) -> str:
+        if getattr(danmaku_msg, 'is_system_error', False):
+            return "#FF5555"
+        elif getattr(danmaku_msg, 'is_system_info', False):
+            return "#AAAAAA"
+            
+        if getattr(danmaku_msg, "privilege_type", 0) > 0:
+            return "#FFD700"
+        elif getattr(danmaku_msg, "vip", False) or getattr(danmaku_msg, "svip", False):
+            return "#FF69B4"
+        elif getattr(danmaku_msg, "admin", False):
+            return "#FF4500"
+        return "#66CCFF"
+
+
+class CustomSizeGrip(QWidget):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setFixedSize(16, 16)
+        self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        self.setStyleSheet("background-color: transparent;")
+        self._resizing = False
+        self._start_mouse_pos = None
+        self._start_size = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._resizing = True
+            self._start_mouse_pos = event.globalPosition().toPoint()
+            self._start_size = self.parent().size()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._resizing:
+            delta = event.globalPosition().toPoint() - self._start_mouse_pos
+            new_width = max(self.parent().minimumWidth(), self._start_size.width() + delta.x())
+            new_height = max(self.parent().minimumHeight(), self._start_size.height() + delta.y())
+            self.parent().resize(new_width, new_height)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._resizing = False
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        color = QColor(255, 255, 255, 100)
+        painter.setBrush(QBrush(color))
+        painter.drawEllipse(10, 10, 3, 3)
+        painter.drawEllipse(6, 10, 3, 3)
+        painter.drawEllipse(10, 6, 3, 3)
 
 
 class DanmakuWidget(QWidget):
@@ -485,7 +727,6 @@ class DanmakuWidget(QWidget):
             self.room_id = config['room_id']
         
         self.room_id_input.setText(str(self.room_id))
-        
         QTimer.singleShot(100, self.activate_layer_shell)
     
     def _delayed_adjust_height(self):
