@@ -4,7 +4,6 @@ from __future__ import annotations
 import datetime
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +79,6 @@ class DanmakuLogger:
 
         for log_file in self.get_log_files():
             try:
-                # 文件名格式: danmaku_YYYY-MM-DD.jsonl
                 stem = log_file.stem
                 if stem.startswith("danmaku_"):
                     date_str = stem[len("danmaku_"):]
@@ -97,5 +95,4 @@ class DanmakuLogger:
         """获取所有存留的历史日志文件列表（按日期倒序）。"""
         if not self.log_dir.exists():
             return []
-        files = sorted(self.log_dir.glob("danmaku_*.jsonl"), reverse=True)
-        return files
+        return sorted(self.log_dir.glob("danmaku_*.jsonl"), reverse=True)
