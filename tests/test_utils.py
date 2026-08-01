@@ -4,7 +4,7 @@ import stat
 import pytest
 
 import bilihud.utils as utils
-from bilihud.utils import load_config, save_config, validate_room_id
+from bilihud.utils import get_config_path, load_config, save_config, validate_room_id
 
 
 @pytest.fixture
@@ -80,6 +80,16 @@ def test_load_config_restricts_existing_permissions(config_path):
 
     assert load_config() == {"obs_password": "secret"}
     assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
+
+
+def test_get_config_path_cleans_stale_temp_files(config_path):
+    config_path.parent.mkdir(parents=True)
+    stale = config_path.parent / f".{config_path.name}.abc123.tmp"
+    stale.write_text("stale", encoding="utf-8")
+
+    get_config_path()
+
+    assert not stale.exists()
 
 
 def test_validate_room_id():

@@ -11,16 +11,24 @@ def get_config_path() -> Path:
     xdg_config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     config_dir = Path(xdg_config_home) / "bilihud"
     config_dir.mkdir(parents=True, exist_ok=True)
-    return config_dir / "config.json"
+    config_path = config_dir / "config.json"
+    # 清理崩溃残留的原子写入临时文件
+    for stale in config_dir.glob(f".{config_path.name}.*.tmp"):
+        with suppress(OSError):
+            stale.unlink()
+    return config_path
+
+
+def _restrict_permissions(path: Path) -> None:
+    # POSIX 下收紧到仅属主可读写，配置含 OBS 密码等敏感信息；失败静默（文件仍可用）
+    if os.name == "posix":
+        with suppress(OSError):
+            path.chmod(0o600)
 
 
 def _read_config_file(config_path: Path) -> dict[str, Any]:
-    if os.name == "posix":
-        try:
-            config_path.chmod(0o600)
-        except OSError as e:
-            print(f"Failed to restrict config permissions: {e}")
-
+    # 读时顺带收紧权限（见 _restrict_permissions）
+    _restrict_permissions(config_path)
     with open(config_path, encoding="utf-8") as config_file:
         config = json.load(config_file)
     if not isinstance(config, dict):
@@ -42,7 +50,10 @@ def load_config() -> dict[str, Any]:
 
 
 def save_config(data: dict[str, Any]) -> bool:
-    """保存配置"""
+    """保存配置（原子写入：临时文件 → fsync → replace）。
+
+    现有配置损坏时返回 False 保留原文件，不会用新数据覆盖修复，以免静默丢失其他配置项。
+    """
     temp_path: Path | None = None
     try:
         config_path = get_config_path()
@@ -61,7 +72,7 @@ def save_config(data: dict[str, Any]) -> bool:
             delete=False,
         ) as temp_file:
             temp_path = Path(temp_file.name)
-            os.chmod(temp_path, 0o600)
+            _restrict_permissions(temp_path)
             temp_file.write(serialized_config)
             temp_file.flush()
             os.fsync(temp_file.fileno())
