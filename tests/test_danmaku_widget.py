@@ -143,12 +143,17 @@ def test_danmaku_widget_exposes_bilihud_mirror_tray_action(monkeypatch):
 
 
 def test_danmaku_widget_opens_single_mirror_settings_dialog(monkeypatch):
+    class Signal:
+        def connect(self, _callback):
+            pass
+
     class FakeDialog:
         instances = []
 
         def __init__(self, owner):
             self.owner = owner
             self.calls = []
+            self.mirror_enabled_requested = Signal()
             self.instances.append(self)
 
         def refresh(self):
@@ -166,6 +171,8 @@ def test_danmaku_widget_opens_single_mirror_settings_dialog(monkeypatch):
     _app()
     widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
     QWidget.__init__(widget)
+    widget._shutting_down = False
+    widget._mirror_settings_dialog = None
     monkeypatch.setattr(danmaku_widget, "MirrorSettingsDialog", FakeDialog)
 
     danmaku_widget.DanmakuWidget.open_mirror_settings(widget)
@@ -206,6 +213,34 @@ def test_danmaku_widget_keeps_mirror_enabled_config_when_shutting_down():
         assert widget.mirror_server is None
         assert widget.mirror_enabled is True
         assert events == ["refresh"]
+
+    asyncio.run(run_test())
+
+
+def test_danmaku_widget_keeps_mirror_reference_when_stop_fails():
+    class FakeServer:
+        def __init__(self):
+            self.stop_calls = 0
+
+        async def stop(self):
+            self.stop_calls += 1
+            if self.stop_calls == 1:
+                raise RuntimeError("mirror close failed")
+
+    async def run_test():
+        server = FakeServer()
+        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+        widget.mirror_server = server
+        widget.mirror_enabled = True
+        widget.refresh_mirror_settings = lambda: None
+
+        with pytest.raises(RuntimeError, match="mirror close failed"):
+            await danmaku_widget.DanmakuWidget.shutdown_mirror_server(widget)
+        assert widget.mirror_server is server
+
+        await danmaku_widget.DanmakuWidget.shutdown_mirror_server(widget)
+        assert widget.mirror_server is None
+        assert server.stop_calls == 2
 
     asyncio.run(run_test())
 
@@ -615,6 +650,7 @@ def test_connect_to_room_replaces_stale_same_room_client(monkeypatch):
 
     class StaleDanmakuClient:
         client = StaleBLiveClient()
+        is_running = False
 
     class NewDanmakuClient:
         instances = []
@@ -673,6 +709,59 @@ def test_connect_to_room_replaces_stale_same_room_client(monkeypatch):
         assert widget.danmaku_client is NewDanmakuClient.instances[0]
         assert widget.danmaku_client.started is True
         assert events[-2:] == ["connected", ("audience-start", 7450109)]
+
+    asyncio.run(run_test())
+
+
+def test_connect_to_room_keeps_partial_client_when_cleanup_fails(monkeypatch):
+    class RoomInput:
+        def __init__(self):
+            self.value = ""
+
+        def text(self):
+            return self.value
+
+        def setText(self, value):
+            self.value = value
+
+    class FailingClient:
+        instances = []
+
+        def __init__(self, room_id, sessdata, auth_service=None):
+            self.room_id = room_id
+            self.sessdata = sessdata
+            self.auth_service = auth_service
+            self.client = object()
+            self.stop_calls = 0
+            self.instances.append(self)
+
+        async def start(self):
+            raise RuntimeError("connect failed")
+
+        async def stop(self):
+            self.stop_calls += 1
+            raise RuntimeError("cleanup failed")
+
+    async def run_test():
+        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+        widget.room_id = 7450109
+        widget.sessdata = "sess"
+        widget.auth_service = object()
+        widget.room_id_input = RoomInput()
+        widget.danmaku_client = None
+        widget._wire_danmaku_client = lambda _client: None
+        widget._update_persisted_config = lambda **_kwargs: True
+        widget._set_connecting_ui = lambda: None
+        widget._set_disconnected_ui = lambda: None
+
+        monkeypatch.setattr(danmaku_widget, "DanmakuClient", FailingClient)
+
+        with pytest.raises(RuntimeError, match="connect failed"):
+            await danmaku_widget.DanmakuWidget._connect_to_room_id(widget, 7450109)
+
+        client = FailingClient.instances[0]
+        assert client.stop_calls == 1
+        assert widget.danmaku_client is client
 
     asyncio.run(run_test())
 

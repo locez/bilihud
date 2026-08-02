@@ -1,4 +1,4 @@
-import qasync
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QClipboard, QGuiApplication
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import (
 
 
 class MirrorSettingsDialog(QDialog):
+    mirror_enabled_requested = pyqtSignal(bool)
+
     def __init__(self, owner: QWidget):
         super().__init__(owner)
         self.owner = owner
@@ -96,10 +98,9 @@ class MirrorSettingsDialog(QDialog):
         status = self.owner.mirror_status_text()
         self.set_mirror_state(enabled, status, self.owner.mirror_url)
 
-    @qasync.asyncSlot(bool)
-    async def _on_enabled_toggled(self, checked: bool) -> None:
-        await self.owner.set_mirror_enabled(checked)
-        self.refresh()
+    def _on_enabled_toggled(self, checked: bool) -> None:
+        """Forward a settings request to the lifecycle-owning widget."""
+        self.mirror_enabled_requested.emit(checked)
 
     def copy_url(self) -> None:
         QGuiApplication.clipboard().setText(self.url_input.text(), mode=QClipboard.Mode.Clipboard)

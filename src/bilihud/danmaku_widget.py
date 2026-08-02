@@ -5,14 +5,14 @@ import html
 import logging
 import os
 import sys
+from collections.abc import Coroutine
 from ctypes import c_int, c_ulong, c_void_p
 from dataclasses import replace
-from typing import Optional
+from typing import Any, Optional
 
 import blivedm.models.web as web_models
 import PyQt6.sip as sip
-import qasync
-from PyQt6.QtCore import QPoint, QSize, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QPoint, QSize, Qt, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QAction,
     QBrush,
@@ -66,6 +66,7 @@ from .layer_shell_loader import (
     gaming_mode_available,
     should_disable_layer_shell,
 )
+from .lifecycle import TaskScope, TaskSupervisor, cancel_task
 from .live_api import get_anchor_live_room_id
 from .live_audience import AudienceSnapshot
 from .live_control_dialog import LiveControlDialog
@@ -744,9 +745,17 @@ class DanmakuWidget(QWidget):
         room_id: int = 0,
         sessdata: str = "",
         services: AppServices | None = None,
+        task_supervisor: TaskSupervisor | None = None,
     ) -> None:
         """Create the widget and load its shared typed services and saved settings."""
         super().__init__()
+        self._task_supervisor = task_supervisor if task_supervisor is not None else TaskSupervisor()
+        self._owns_task_supervisor = task_supervisor is None
+        self._task_scope: TaskScope = self._task_supervisor.create_scope("danmaku-widget")
+        self._mirror_start_task: asyncio.Task[None] | None = None  # Startup task canceled before server cleanup.
+        self._action_tasks: set[asyncio.Task[Any]] = set()  # Qt-triggered workflows owned by this widget.
+        self._shutting_down = False  # Prevent new work from starting during application shutdown.
+        self._shutdown_complete = False  # Makes repeated application stop requests idempotent.
         self.room_id = room_id  # Current room displayed and used by the client.
         self.sessdata = sessdata  # Optional session override supplied by the caller.
         self.services = services if services is not None else create_default_services()
@@ -756,6 +765,9 @@ class DanmakuWidget(QWidget):
         self._audience_refresh_task: asyncio.Task[None] | None = None  # Cancelled on disconnect.
         self._audience_generation = 0
         self._audience_snapshot: AudienceSnapshot | None = None
+        self._live_control_dialog: LiveControlDialog | None = None  # Reused live-control dialog owner.
+        self._mirror_settings_dialog: MirrorSettingsDialog | None = None  # Reused Mirror settings owner.
+        self._qr_login_dialog: QRLoginDialog | None = None  # Active modal QR-login dialog, if any.
         self.is_gaming_mode = False
         self.layer_shell_lib = None
         self.layer_shell_disabled_reason = ""
@@ -782,8 +794,6 @@ class DanmakuWidget(QWidget):
         self.setup_tray_icon()
         self.update_gaming_mode_availability()
         self.setup_danmaku_client()
-        if self.mirror_enabled:
-            asyncio.create_task(self.start_mirror_server())
         
         # 加载保存的配置
         if config.room_id is not None:
@@ -794,6 +804,45 @@ class DanmakuWidget(QWidget):
         
         # Try to activate Layer Shell initially
         QTimer.singleShot(100, self.activate_layer_shell)
+
+    async def start(self) -> None:
+        """Start widget-owned background workflows after construction is complete."""
+        if self._shutting_down or not self.mirror_enabled:
+            return
+        if self._mirror_start_task is None or self._mirror_start_task.done():
+            self._mirror_start_task = self._task_scope.create_task(
+                self.start_mirror_server(),
+                name="mirror-startup",
+            )
+
+    def _create_action_task(
+        self,
+        coroutine: Coroutine[Any, Any, None],
+        *,
+        name: str,
+    ) -> asyncio.Task[None]:
+        """Create and retain one Qt-triggered workflow under the widget owner."""
+        task = self._task_scope.create_task(coroutine, name=name)
+        self._action_tasks.add(task)
+        task.add_done_callback(self._discard_action_task)
+        return task
+
+    def _discard_action_task(self, task: asyncio.Task[Any]) -> None:
+        """Remove a completed Qt-triggered workflow from the widget registry."""
+        self._action_tasks.discard(task)
+
+    async def _cancel_action_tasks(self) -> None:
+        """Cancel and await Qt-triggered workflows before closing their resources."""
+        current_task = asyncio.current_task()
+        pending = tuple(
+            task
+            for task in self._action_tasks
+            if not task.done() and task is not current_task
+        )
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
     
     def _delayed_adjust_height(self):
         """Debounced execution of item layout update"""
@@ -1233,11 +1282,21 @@ class DanmakuWidget(QWidget):
 
     def trigger_send(self, text: str):
         """处理发送弹幕请求"""
-        if not text: return
-        asyncio.create_task(self._send_danmaku_task(text))
+        if not text or self._shutting_down:
+            return
+        self._task_scope.create_task(self._send_danmaku_task(text), name="send-danmaku")
 
-    @qasync.asyncSlot()
-    async def open_emoticon_picker(self):
+    @pyqtSlot()
+    def open_emoticon_picker(self) -> asyncio.Task[None] | None:
+        """Schedule the emoticon loading workflow under the widget owner."""
+        if self._shutting_down:
+            return None
+        return self._create_action_task(
+            self._open_emoticon_picker(),
+            name="open-emoticon-picker",
+        )
+
+    async def _open_emoticon_picker(self) -> None:
         if not self.danmaku_client or not self.danmaku_client.session:
             self.add_system_message("未连接直播间，无法加载表情", "error")
             return
@@ -1257,7 +1316,12 @@ class DanmakuWidget(QWidget):
         self.emoticon_picker.set_packages(packages)
 
     def trigger_send_live_emoticon(self, emoticon: LiveEmoticon):
-        asyncio.create_task(self._send_live_emoticon_task(emoticon))
+        if self._shutting_down:
+            return
+        self._task_scope.create_task(
+            self._send_live_emoticon_task(emoticon),
+            name="send-live-emoticon",
+        )
 
     async def _send_live_emoticon_task(self, emoticon: LiveEmoticon):
         if not self.danmaku_client:
@@ -1283,11 +1347,94 @@ class DanmakuWidget(QWidget):
             self.show()
             self.activateWindow()
 
-    @qasync.asyncSlot()
-    async def quit_app(self):
-        await self._stop_audience_refresh()
-        if self.mirror_server is not None:
-            await self.shutdown_mirror_server()
+    async def shutdown(self) -> None:
+        """Stop widget-owned workflows and release their network resources."""
+        if self._shutdown_complete:
+            return
+
+        self._shutting_down = True
+        shutdown_errors: list[Exception] = []
+        try:
+            await self._cancel_action_tasks()
+
+            live_control_dialog = self._live_control_dialog
+            if live_control_dialog is not None:
+                try:
+                    await live_control_dialog.shutdown()
+                    live_control_dialog.close()
+                except Exception as exc:
+                    logger.exception("Failed to close live control dialog")
+                    shutdown_errors.append(exc)
+
+            qr_login_dialog = self._qr_login_dialog
+            if qr_login_dialog is not None:
+                try:
+                    await qr_login_dialog.shutdown()
+                    qr_login_dialog.close()
+                except Exception as exc:
+                    logger.exception("Failed to close QR login dialog")
+                    shutdown_errors.append(exc)
+                else:
+                    self._qr_login_dialog = None
+
+            mirror_settings_dialog = self._mirror_settings_dialog
+            if mirror_settings_dialog is not None:
+                mirror_settings_dialog.close()
+
+            try:
+                await cancel_task(self._mirror_start_task)
+            except Exception as exc:
+                logger.exception("Failed to cancel Mirror startup")
+                shutdown_errors.append(exc)
+            self._mirror_start_task = None
+            try:
+                await self._stop_audience_refresh()
+            except Exception as exc:
+                logger.exception("Failed to stop audience refresh")
+                shutdown_errors.append(exc)
+            try:
+                await self._task_scope.cancel_all()
+            except Exception as exc:
+                logger.exception("Failed to cancel widget tasks")
+                shutdown_errors.append(exc)
+
+            try:
+                await self.shutdown_mirror_server()
+            except Exception as exc:
+                logger.exception("Failed to close Mirror server")
+                shutdown_errors.append(exc)
+
+            client = self.danmaku_client
+            if client is not None:
+                try:
+                    await client.stop()
+                except Exception as exc:
+                    logger.exception("Failed to close danmaku client")
+                    shutdown_errors.append(exc)
+                else:
+                    self.danmaku_client = None
+        finally:
+            if self._owns_task_supervisor:
+                try:
+                    await self._task_supervisor.shutdown()
+                except Exception as exc:
+                    logger.exception("Failed to close widget task supervisor")
+                    shutdown_errors.append(exc)
+
+        if shutdown_errors:
+            raise shutdown_errors[0]
+        self._shutdown_complete = True
+
+    @pyqtSlot()
+    def quit_app(self) -> asyncio.Task[None] | None:
+        """Schedule resource cleanup before requesting the Qt process exit."""
+        if self._shutting_down:
+            return None
+        return self._create_action_task(self._quit_app(), name="quit-app")
+
+    async def _quit_app(self) -> None:
+        """Close application resources before requesting the Qt process exit."""
+        await self.shutdown()
         QApplication.quit()
 
     def toggle_gaming_mode_from_tray(self, checked):
@@ -1538,7 +1685,7 @@ class DanmakuWidget(QWidget):
         
         # [Message Buffering]
         # Process all types of messages
-        if hasattr(self, '_message_buffer') and self._message_buffer:
+        if self._message_buffer:
             for item_type, item_data in self._message_buffer:
                 if item_type == 'msg':
                     self.add_message(item_data)
@@ -1620,8 +1767,9 @@ class DanmakuWidget(QWidget):
     async def _start_audience_refresh(self, client: DanmakuClient) -> None:
         await self._stop_audience_refresh()
         generation = self._audience_generation
-        self._audience_refresh_task = asyncio.create_task(
-            self._audience_refresh_loop(client, generation)
+        self._audience_refresh_task = self._task_scope.create_task(
+            self._audience_refresh_loop(client, generation),
+            name="audience-refresh",
         )
 
     async def _stop_audience_refresh(self) -> None:
@@ -1629,8 +1777,7 @@ class DanmakuWidget(QWidget):
         task = self._audience_refresh_task
         self._audience_refresh_task = None
         if task is not None:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            await cancel_task(task)
         self._audience_snapshot = None
         self.audience_popup.hide()
         self.audience_status.clear()
@@ -1682,9 +1829,8 @@ class DanmakuWidget(QWidget):
         """)
 
     def _has_active_danmaku_connection(self) -> bool:
-        if self.danmaku_client is None or self.danmaku_client.client is None:
-            return False
-        return bool(getattr(self.danmaku_client.client, "is_running", False))
+        client = self.danmaku_client
+        return client is not None and client.is_running
 
     async def _connect_to_room_id(self, room_id: int):
         if room_id <= 0:
@@ -1694,7 +1840,8 @@ class DanmakuWidget(QWidget):
             self.room_id_input.setText(str(room_id))
             self._set_connected_ui()
             client = self.danmaku_client
-            assert client is not None
+            if client is None:
+                return
             if self._audience_refresh_task is None:
                 await self._start_audience_refresh(client)
             return
@@ -1711,8 +1858,14 @@ class DanmakuWidget(QWidget):
         self._set_connecting_ui()
         try:
             await client.start()
-        except Exception:
-            self.danmaku_client = None
+        except BaseException:
+            try:
+                await client.stop()
+            except BaseException:
+                logger.exception("Failed to clean up danmaku client after connection failure")
+            else:
+                if self.danmaku_client is client:
+                    self.danmaku_client = None
             self._set_disconnected_ui()
             raise
         self._set_connected_ui()
@@ -1741,9 +1894,17 @@ class DanmakuWidget(QWidget):
         self.danmaku_client = None
         self._set_disconnected_ui()
 
-    @qasync.asyncSlot()
-    async def toggle_connection(self):
+    @pyqtSlot()
+    def toggle_connection(self) -> asyncio.Task[None] | None:
+        """Schedule the room connection workflow under the widget owner."""
+        if self._shutting_down:
+            return None
+        return self._create_action_task(self._toggle_connection(), name="toggle-connection")
+
+    async def _toggle_connection(self) -> None:
         """切换连接状态"""
+        if self._shutting_down:
+            return
         if not self._has_active_danmaku_connection():
             # 连接
             try:
@@ -1818,40 +1979,84 @@ class DanmakuWidget(QWidget):
         await self._connect_to_room_id(anchor_room_id)
         return anchor_room_id
 
-    @qasync.asyncSlot()
-    async def open_live_control(self):
+    @pyqtSlot()
+    def open_live_control(self) -> asyncio.Task[None] | None:
+        """Schedule opening the live control dialog under the widget owner."""
+        if self._shutting_down:
+            return None
+        return self._create_action_task(
+            self._open_live_control(),
+            name="open-live-control",
+        )
+
+    async def _open_live_control(self) -> None:
         """打开直播控制窗口"""
+        if self._shutting_down:
+            return
         try:
             anchor_room_id = await self._ensure_live_control_room()
         except Exception as e:
             self.add_system_message(f"无法打开直播控制: {e}", "error")
             print(f"Open live control failed: {e}")
             return
+        if self._shutting_down:
+            return
 
-        if not hasattr(self, '_live_control_dialog'):
-            self._live_control_dialog = LiveControlDialog(self, services=self.services)
+        if self._live_control_dialog is None:
+            self._live_control_dialog = LiveControlDialog(
+                self,
+                services=self.services,
+                task_scope=self._task_scope.child("live-control"),
+            )
             self._live_control_dialog.live_status_changed.connect(self.set_live_status_indicator)
-        self._live_control_dialog.set_room_id(anchor_room_id)
-        self._live_control_dialog.show()
-        self._live_control_dialog.raise_()
-        self._live_control_dialog.activateWindow()
+        dialog = self._live_control_dialog
+        if dialog is None:
+            return
+        dialog.set_room_id(anchor_room_id)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def open_mirror_settings(self):
-        if not hasattr(self, '_mirror_settings_dialog'):
+        if self._shutting_down:
+            return
+        if self._mirror_settings_dialog is None:
             self._mirror_settings_dialog = MirrorSettingsDialog(self)
-        self._mirror_settings_dialog.refresh()
-        self._mirror_settings_dialog.show()
-        self._mirror_settings_dialog.raise_()
-        self._mirror_settings_dialog.activateWindow()
+            self._mirror_settings_dialog.mirror_enabled_requested.connect(
+                self._schedule_mirror_toggle
+            )
+        dialog = self._mirror_settings_dialog
+        dialog.refresh()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     @property
     def mirror_url(self) -> str:
         return f"http://127.0.0.1:{self.mirror_port}{MIRROR_ROUTE}"
 
-    @qasync.asyncSlot()
-    async def toggle_mirror_server(self):
+    @pyqtSlot()
+    def toggle_mirror_server(self) -> asyncio.Task[None] | None:
+        """Schedule the Mirror toggle workflow under the widget owner."""
+        if self._shutting_down:
+            return None
+        return self._create_action_task(
+            self._toggle_mirror_server(),
+            name="toggle-mirror-server",
+        )
+
+    async def _toggle_mirror_server(self) -> None:
         await self.set_mirror_enabled(self.mirror_server is None)
         self.refresh_mirror_settings()
+
+    def _schedule_mirror_toggle(self, enabled: bool) -> None:
+        """Schedule a Mirror settings request from the presentation signal."""
+        if self._shutting_down:
+            return
+        self._create_action_task(
+            self.set_mirror_enabled(enabled),
+            name="toggle-mirror-settings",
+        )
 
     async def set_mirror_enabled(self, enabled: bool):
         if enabled:
@@ -1863,12 +2068,14 @@ class DanmakuWidget(QWidget):
             self.mirror_enabled = False
             self.mirror_error = ""
             self._update_persisted_config(mirror_enabled=False)
+            await cancel_task(self._mirror_start_task)
+            self._mirror_start_task = None
             await self.shutdown_mirror_server()
             self.add_system_message("BiliHUD Mirror 已停止。")
         self.refresh_mirror_settings()
 
     def refresh_mirror_settings(self):
-        if hasattr(self, '_mirror_settings_dialog'):
+        if self._mirror_settings_dialog is not None:
             self._mirror_settings_dialog.refresh()
 
     def mirror_status_text(self) -> str:
@@ -1880,7 +2087,14 @@ class DanmakuWidget(QWidget):
             return "已启用，当前未启动"
         return "未启动"
 
-    async def start_mirror_server(self):
+    async def start_mirror_server(self) -> None:
+        if self._shutting_down:
+            return
+
+        startup_task = self._mirror_start_task
+        if startup_task is not None and startup_task is not asyncio.current_task() and not startup_task.done():
+            await startup_task
+            return
         if self.mirror_server is not None:
             self.refresh_mirror_settings()
             return
@@ -1899,28 +2113,59 @@ class DanmakuWidget(QWidget):
         self.refresh_mirror_settings()
         self.add_system_message(f"BiliHUD Mirror 已启动: {server.url}")
 
-    async def stop_mirror_server(self):
+    async def stop_mirror_server(self) -> None:
         await self.set_mirror_enabled(False)
 
-    async def shutdown_mirror_server(self):
+    async def shutdown_mirror_server(self) -> None:
         if self.mirror_server is None:
             return
 
         server = self.mirror_server
-        self.mirror_server = None
         await server.stop()
+        self.mirror_server = None
         self.refresh_mirror_settings()
 
     def set_live_status_indicator(self, is_live: bool):
         """显示或隐藏标题栏直播状态点。"""
-        if hasattr(self, 'live_status_dot'):
-            self.live_status_dot.setVisible(is_live)
+        self.live_status_dot.setVisible(is_live)
 
     def open_qr_login(self):
-        """打开扫码登录窗口"""
-        dialog = QRLoginDialog(self, auth_service=self.auth_service)
+        """Open the QR-login window without blocking the application event loop."""
+        if self._shutting_down:
+            return
+        dialog = self._qr_login_dialog
+        if dialog is not None:
+            dialog.raise_()
+            dialog.activateWindow()
+            return
+
+        dialog = QRLoginDialog(
+            self,
+            auth_service=self.auth_service,
+            task_scope=self._task_scope.child("qr-login"),
+        )
         dialog.login_success.connect(self.on_login_success)
-        dialog.exec()
+        dialog.finished.connect(lambda _result: self._finish_qr_login(dialog))
+        self._qr_login_dialog = dialog
+        dialog.open()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _finish_qr_login(self, dialog: QRLoginDialog) -> None:
+        """Release a completed QR-login dialog through the widget task owner."""
+        if self._shutting_down:
+            return
+        self._create_action_task(
+            self._close_qr_login(dialog),
+            name="close-qr-login",
+        )
+
+    async def _close_qr_login(self, dialog: QRLoginDialog) -> None:
+        """Await QR-login task cancellation before deleting its presentation object."""
+        await dialog.shutdown()
+        if self._qr_login_dialog is dialog:
+            self._qr_login_dialog = None
+        dialog.deleteLater()
 
     def on_login_success(self):
         """登录成功，提醒用户重连"""

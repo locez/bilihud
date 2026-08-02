@@ -201,7 +201,7 @@ def mirror_html(events_route: str = MIRROR_EVENTS_ROUTE) -> str:
 
 
 class MirrorServer:
-    def __init__(self, state: MirrorState, host: str = "127.0.0.1", port: int = MIRROR_DEFAULT_PORT):
+    def __init__(self, state: MirrorState, host: str = "127.0.0.1", port: int = MIRROR_DEFAULT_PORT) -> None:
         self.state = state
         self.host = host
         self.port = port
@@ -214,21 +214,35 @@ class MirrorServer:
         return f"http://{self.host}:{self.port}{MIRROR_ROUTE}"
 
     async def start(self) -> None:
+        if self._runner is not None:
+            return
+
         app = web.Application()
         app.router.add_get(MIRROR_ROUTE, self._handle_page)
         app.router.add_get(MIRROR_EVENTS_ROUTE, self._handle_events)
         app.router.add_get(MIRROR_IMAGE_ROUTE, self._handle_image)
-        self._runner = web.AppRunner(app)
-        await self._runner.setup()
-        self._site = web.TCPSite(self._runner, self.host, self.port)
-        await self._site.start()
+        runner = web.AppRunner(app)
+        self._runner = runner
+        try:
+            await runner.setup()
+            site = web.TCPSite(runner, self.host, self.port)
+            self._site = site
+            await site.start()
+        except BaseException:
+            try:
+                await runner.cleanup()
+            finally:
+                self._runner = None
+                self._site = None
+            raise
 
     async def stop(self) -> None:
+        runner = self._runner
         for queue in list(self._clients):
             queue.put_nowait("")
         self._clients.clear()
-        if self._runner is not None:
-            await self._runner.cleanup()
+        if runner is not None:
+            await runner.cleanup()
         self._runner = None
         self._site = None
 

@@ -1,6 +1,7 @@
 import asyncio
 import json
 
+import pytest
 from aiohttp import ClientSession, web
 
 from bilihud.mirror_server import IMAGE_PROXY_HEADERS, MirrorServer, mirror_event_payload, mirror_html
@@ -119,6 +120,49 @@ def test_mirror_server_registers_image_proxy_route():
                     assert await response.text() == "Invalid image URL"
         finally:
             await mirror_server.stop()
+
+    asyncio.run(run_test())
+
+
+def test_mirror_server_stop_is_idempotent():
+    async def run_test():
+        mirror_server = MirrorServer(MirrorState(), port=0)
+        await mirror_server.start()
+
+        await mirror_server.stop()
+        await mirror_server.stop()
+
+        assert mirror_server._runner is None
+        assert mirror_server._site is None
+
+    asyncio.run(run_test())
+
+
+def test_mirror_server_keeps_runner_when_cleanup_fails():
+    class FakeRunner:
+        def __init__(self):
+            self.cleanup_calls = 0
+
+        async def cleanup(self):
+            self.cleanup_calls += 1
+            if self.cleanup_calls == 1:
+                raise RuntimeError("runner cleanup failed")
+
+    async def run_test():
+        mirror_server = MirrorServer(MirrorState())
+        runner = FakeRunner()
+        mirror_server._runner = runner
+        mirror_server._site = object()
+
+        with pytest.raises(RuntimeError, match="runner cleanup failed"):
+            await mirror_server.stop()
+        assert mirror_server._runner is runner
+        assert mirror_server._site is not None
+
+        await mirror_server.stop()
+        assert mirror_server._runner is None
+        assert mirror_server._site is None
+        assert runner.cleanup_calls == 2
 
     asyncio.run(run_test())
 
