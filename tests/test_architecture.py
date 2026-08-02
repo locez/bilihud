@@ -20,6 +20,8 @@ APPLICATION_MODULE_NAMES: Final[tuple[str, ...]] = (
     "hud_controller",
     "hud_ports",
     "live_control_service",
+    "mirror_coordinator",
+    "mirror_ports",
 )
 
 
@@ -182,6 +184,25 @@ def test_live_control_service_keeps_concrete_network_and_presentation_outside_ap
     for module in _imported_modules(path):
         if _is_forbidden(module, forbidden_prefixes):
             violations.append(f"live_control_service imports {module}")
+
+    assert violations == []
+
+
+def test_mirror_coordinator_keeps_http_and_presentation_outside_application() -> None:
+    forbidden_prefixes = frozenset(
+        {
+            "PyQt5",
+            "PyQt6",
+            "aiohttp",
+            "bilihud.mirror_server",
+            "bilihud.mirror_settings_dialog",
+        }
+    )
+    violations: list[str] = []
+    path = SOURCE_ROOT / "mirror_coordinator.py"
+    for module in _imported_modules(path):
+        if _is_forbidden(module, forbidden_prefixes):
+            violations.append(f"mirror_coordinator imports {module}")
 
     assert violations == []
 

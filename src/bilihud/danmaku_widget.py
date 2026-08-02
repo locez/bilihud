@@ -6,7 +6,6 @@ import os
 import sys
 from collections.abc import Coroutine
 from ctypes import c_int, c_ulong, c_void_p
-from dataclasses import replace
 from typing import Any
 
 import PyQt6.sip as sip
@@ -52,7 +51,7 @@ from PyQt6.QtWidgets import (
 
 from .audience_widgets import AudiencePopup, AudienceStatusWidget
 from .auth import AuthenticationService
-from .config import AppConfig, ConfigStore
+from .config import ConfigStore
 from .danmaku_format import (
     danmaku_author_badges_html,
     danmaku_message_content_html,
@@ -83,13 +82,12 @@ from .layer_shell_loader import (
     gaming_mode_available,
     should_disable_layer_shell,
 )
-from .lifecycle import TaskScope, TaskSupervisor, cancel_task
+from .lifecycle import TaskScope, TaskSupervisor
 from .live_api import get_anchor_live_room_id
 from .live_control_dialog import LiveControlDialog
 from .live_emoticons import LiveEmoticon, LiveEmoticonPackage
-from .mirror_server import MirrorServer
+from .mirror_coordinator import MirrorCoordinator, MirrorOperationResult
 from .mirror_settings_dialog import MirrorSettingsDialog
-from .mirror_state import MIRROR_ROUTE, MirrorState
 from .mock_messages import mock_message_batch
 from .qr_login_dialog import QRLoginDialog
 from .services import AppServices, create_default_services
@@ -752,7 +750,6 @@ class DanmakuWidget(QWidget):
         self._task_supervisor = task_supervisor if task_supervisor is not None else TaskSupervisor()
         self._owns_task_supervisor = task_supervisor is None
         self._task_scope: TaskScope = self._task_supervisor.create_scope("danmaku-widget")
-        self._mirror_start_task: asyncio.Task[None] | None = None  # Startup task canceled before server cleanup.
         self._action_tasks: set[asyncio.Task[Any]] = set()  # Qt-triggered workflows owned by this widget.
         self._shutting_down = False  # Prevent new work from starting during application shutdown.
         self._shutdown_complete = False  # Makes repeated application stop requests idempotent.
@@ -761,6 +758,7 @@ class DanmakuWidget(QWidget):
         self.services = services if services is not None else create_default_services()
         self.config_store: ConfigStore = self.services.config_store  # Typed settings boundary.
         self.auth_service: AuthenticationService = self.services.auth_service  # Shared auth boundary.
+        self.mirror_coordinator: MirrorCoordinator = self.services.mirror_coordinator
         self._live_control_dialog: LiveControlDialog | None = None  # Reused live-control dialog owner.
         self._mirror_settings_dialog: MirrorSettingsDialog | None = None  # Reused Mirror settings owner.
         self._qr_login_dialog: QRLoginDialog | None = None  # Active modal QR-login dialog, if any.
@@ -768,11 +766,7 @@ class DanmakuWidget(QWidget):
         self.layer_shell_lib = None
         self.layer_shell_disabled_reason = ""
         config = self.config_store.load()
-        self.mirror_state = MirrorState()
-        self.mirror_server: MirrorServer | None = None  # Server lifecycle is owned by the widget.
-        self.mirror_enabled = config.mirror_enabled  # Persisted startup preference.
-        self.mirror_error = ""
-        self.mirror_port = config.mirror_port  # Local port used by the Mirror server.
+        self.mirror_coordinator.apply_config(config)
         # Track Layer Shell position manually because Qt frameGeometry() is unreliable (returns 0,0)
         self.layer_pos = QPoint(0, 0)
 
@@ -813,14 +807,11 @@ class DanmakuWidget(QWidget):
         QTimer.singleShot(100, self.activate_layer_shell)
 
     async def start(self) -> None:
-        """Start widget-owned background workflows after construction is complete."""
-        if self._shutting_down or not self.mirror_enabled:
+        """Start application workflows after construction is complete."""
+        if self._shutting_down:
             return
-        if self._mirror_start_task is None or self._mirror_start_task.done():
-            self._mirror_start_task = self._task_scope.create_task(
-                self.start_mirror_server(),
-                name="mirror-startup",
-            )
+        result = await self.mirror_coordinator.start()
+        self._apply_mirror_result(result)
 
     def _create_action_task(
         self,
@@ -1377,12 +1368,6 @@ class DanmakuWidget(QWidget):
                 mirror_settings_dialog.close()
 
             try:
-                await cancel_task(self._mirror_start_task)
-            except Exception as exc:
-                logger.exception("Failed to cancel Mirror startup")
-                shutdown_errors.append(exc)
-            self._mirror_start_task = None
-            try:
                 await self.hud_controller.shutdown()
             except Exception as exc:
                 logger.exception("Failed to close HUD controller")
@@ -1685,21 +1670,6 @@ class DanmakuWidget(QWidget):
         # Delayed to ensure window is mapped
         QTimer.singleShot(100, self.activate_layer_shell)
 
-    def _persist_config(self, config: AppConfig) -> bool:
-        """Persist one complete typed configuration value through the injected store."""
-        return self.config_store.save(config)
-
-    def _update_persisted_config(self, *, room_id: int | None = None, mirror_enabled: bool | None = None) -> bool:
-        """Update room or Mirror settings without dropping unrelated saved fields."""
-        current = self.config_store.load()
-        updated = replace(
-            current,
-            room_id=current.room_id if room_id is None else room_id,
-            mirror_enabled=current.mirror_enabled if mirror_enabled is None else mirror_enabled,
-            mirror_port=self.mirror_port,
-        )
-        return self._persist_config(updated)
-
     def open_audience_popup(self):
         snapshot = self._hud_state.audience_snapshot
         if snapshot is None or self.is_gaming_mode:
@@ -1844,9 +1814,7 @@ class DanmakuWidget(QWidget):
 
         self.danmaku_list.scrollToBottom()
 
-        entry = self.mirror_state.add_message(message)
-        if self.mirror_server is not None:
-            self.mirror_server.publish_append(entry)
+        self.mirror_coordinator.publish_message(message)
 
     async def _ensure_live_control_room(self) -> int:
         """Resolve the authenticated anchor room and close the temporary session."""
@@ -1900,6 +1868,7 @@ class DanmakuWidget(QWidget):
         dialog.activateWindow()
 
     def open_mirror_settings(self):
+        """Open the Mirror settings view and bind the current application state."""
         if self._shutting_down:
             return
         if self._mirror_settings_dialog is None:
@@ -1908,14 +1877,30 @@ class DanmakuWidget(QWidget):
                 self._schedule_mirror_toggle
             )
         dialog = self._mirror_settings_dialog
-        dialog.refresh()
+        dialog.refresh(self.mirror_coordinator.state)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
 
     @property
     def mirror_url(self) -> str:
-        return f"http://127.0.0.1:{self.mirror_port}{MIRROR_ROUTE}"
+        """Return the endpoint exposed by the application-owned coordinator."""
+        return self.mirror_coordinator.state.url
+
+    @property
+    def mirror_enabled(self) -> bool:
+        """Return the persisted startup preference for compatibility with callers."""
+        return self.mirror_coordinator.state.enabled
+
+    @property
+    def mirror_port(self) -> int:
+        """Return the configured local Mirror port."""
+        return self.mirror_coordinator.state.port
+
+    @property
+    def mirror_error(self) -> str:
+        """Return the latest coordinator-reported startup or cleanup error."""
+        return self.mirror_coordinator.state.error
 
     @pyqtSlot()
     def toggle_mirror_server(self) -> asyncio.Task[None] | None:
@@ -1928,8 +1913,7 @@ class DanmakuWidget(QWidget):
         )
 
     async def _toggle_mirror_server(self) -> None:
-        await self.set_mirror_enabled(self.mirror_server is None)
-        self.refresh_mirror_settings()
+        await self.set_mirror_enabled(not self.mirror_coordinator.state.enabled)
 
     def _schedule_mirror_toggle(self, enabled: bool) -> None:
         """Schedule a Mirror settings request from the presentation signal."""
@@ -1940,71 +1924,41 @@ class DanmakuWidget(QWidget):
             name="toggle-mirror-settings",
         )
 
-    async def set_mirror_enabled(self, enabled: bool):
-        if enabled:
-            self.mirror_enabled = True
-            self.mirror_error = ""
-            self._update_persisted_config(mirror_enabled=True)
-            await self.start_mirror_server()
-        else:
-            self.mirror_enabled = False
-            self.mirror_error = ""
-            self._update_persisted_config(mirror_enabled=False)
-            await cancel_task(self._mirror_start_task)
-            self._mirror_start_task = None
-            await self.shutdown_mirror_server()
-            self.add_system_message("BiliHUD Mirror 已停止。")
-        self.refresh_mirror_settings()
+    async def set_mirror_enabled(self, enabled: bool) -> MirrorOperationResult:
+        """Delegate the Mirror preference and lifecycle transition to the coordinator."""
+        result = await self.mirror_coordinator.set_enabled(enabled)
+        self._apply_mirror_result(result)
+        return result
 
-    def refresh_mirror_settings(self):
+    def refresh_mirror_settings(self) -> None:
+        """Refresh the settings view from a coordinator-owned state snapshot."""
         if self._mirror_settings_dialog is not None:
-            self._mirror_settings_dialog.refresh()
+            self._mirror_settings_dialog.refresh(self.mirror_coordinator.state)
 
     def mirror_status_text(self) -> str:
-        if self.mirror_server is not None:
-            return "已启动"
-        if self.mirror_error:
-            return f"启动失败: {self.mirror_error}"
-        if self.mirror_enabled:
-            return "已启用，当前未启动"
-        return "未启动"
+        """Return the localized status exposed by the coordinator state."""
+        return self.mirror_coordinator.state.status_text
 
-    async def start_mirror_server(self) -> None:
-        if self._shutting_down:
-            return
+    async def start_mirror_server(self) -> MirrorOperationResult:
+        """Delegate server startup to the application-owned coordinator."""
+        result = await self.mirror_coordinator.start()
+        self._apply_mirror_result(result)
+        return result
 
-        startup_task = self._mirror_start_task
-        if startup_task is not None and startup_task is not asyncio.current_task() and not startup_task.done():
-            await startup_task
-            return
-        if self.mirror_server is not None:
-            self.refresh_mirror_settings()
-            return
+    async def stop_mirror_server(self) -> MirrorOperationResult:
+        """Disable Mirror through the coordinator and retain the resulting state."""
+        return await self.set_mirror_enabled(False)
 
-        server = MirrorServer(self.mirror_state, port=self.mirror_port)
-        try:
-            await server.start()
-        except OSError as exc:
-            self.mirror_error = str(exc)
-            self.add_system_message(f"BiliHUD Mirror 启动失败: {exc}", SystemMessageLevel.ERROR)
-            self.refresh_mirror_settings()
-            return
-
-        self.mirror_server = server
-        self.mirror_error = ""
+    async def shutdown_mirror_server(self) -> MirrorOperationResult:
+        """Stop the coordinator-owned server during widget shutdown."""
+        result = await self.mirror_coordinator.shutdown()
         self.refresh_mirror_settings()
-        self.add_system_message(f"BiliHUD Mirror 已启动: {server.url}")
+        return result
 
-    async def stop_mirror_server(self) -> None:
-        await self.set_mirror_enabled(False)
-
-    async def shutdown_mirror_server(self) -> None:
-        if self.mirror_server is None:
-            return
-
-        server = self.mirror_server
-        await server.stop()
-        self.mirror_server = None
+    def _apply_mirror_result(self, result: MirrorOperationResult) -> None:
+        """Render coordinator notices through the existing normalized HUD path."""
+        for notice in result.notices:
+            self.add_system_message(notice.text, notice.level)
         self.refresh_mirror_settings()
 
     def set_live_status_indicator(self, is_live: bool):

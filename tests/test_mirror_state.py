@@ -1,3 +1,5 @@
+import pytest
+
 from bilihud.domain.messages import (
     DanmakuMessage,
     GiftMessage,
@@ -218,3 +220,8 @@ def test_mirror_state_caps_messages_and_assigns_sequences():
     assert second["seq"] == 2
     assert third["seq"] == 3
     assert [entry["user"] for entry in state.snapshot()] == ["B", "C"]
+
+
+def test_mirror_state_rejects_nonpositive_history_limit():
+    with pytest.raises(ValueError, match="message limit must be positive"):
+        MirrorState(max_messages=0)

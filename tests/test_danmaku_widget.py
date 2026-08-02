@@ -20,6 +20,7 @@ from bilihud.domain.messages import (
     make_system_message,
 )
 from bilihud.live_emoticons import LiveEmoticon, LiveEmoticonPackage
+from bilihud.mirror_coordinator import MirrorCoordinatorState, MirrorOperationResult
 
 _QT_APP = None
 
@@ -182,7 +183,7 @@ def test_danmaku_widget_opens_single_mirror_settings_dialog(monkeypatch):
             self.mirror_enabled_requested = Signal()
             self.instances.append(self)
 
-        def refresh(self):
+        def refresh(self, _state):
             self.calls.append("refresh")
 
         def show(self):
@@ -199,6 +200,11 @@ def test_danmaku_widget_opens_single_mirror_settings_dialog(monkeypatch):
     QWidget.__init__(widget)
     widget._shutting_down = False
     widget._mirror_settings_dialog = None
+    widget.mirror_coordinator = type(
+        "Coordinator",
+        (),
+        {"state": MirrorCoordinatorState(False, False, 2233, "http://127.0.0.1:2233/bilihud-mirror")},
+    )()
     monkeypatch.setattr(danmaku_widget, "MirrorSettingsDialog", FakeDialog)
 
     danmaku_widget.DanmakuWidget.open_mirror_settings(widget)
@@ -218,55 +224,59 @@ def test_danmaku_widget_opens_single_mirror_settings_dialog(monkeypatch):
 
 
 def test_danmaku_widget_keeps_mirror_enabled_config_when_shutting_down():
-    class FakeServer:
+    class FakeCoordinator:
         def __init__(self):
-            self.stop_calls = 0
+            self.shutdown_calls = 0
+            self.state = MirrorCoordinatorState(True, True, 2233, "http://127.0.0.1:2233/bilihud-mirror")
 
-        async def stop(self):
-            self.stop_calls += 1
+        async def shutdown(self):
+            self.shutdown_calls += 1
+            self.state = MirrorCoordinatorState(True, False, 2233, "http://127.0.0.1:2233/bilihud-mirror")
+            return MirrorOperationResult(self.state)
 
     async def run_test():
-        server = FakeServer()
+        coordinator = FakeCoordinator()
         events = []
         widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
-        widget.mirror_server = server
-        widget.mirror_enabled = True
+        widget.mirror_coordinator = coordinator
         widget.refresh_mirror_settings = lambda: events.append("refresh")
 
         await danmaku_widget.DanmakuWidget.shutdown_mirror_server(widget)
 
-        assert server.stop_calls == 1
-        assert widget.mirror_server is None
-        assert widget.mirror_enabled is True
+        assert coordinator.shutdown_calls == 1
+        assert coordinator.state.enabled is True
+        assert coordinator.state.running is False
         assert events == ["refresh"]
 
     asyncio.run(run_test())
 
 
 def test_danmaku_widget_keeps_mirror_reference_when_stop_fails():
-    class FakeServer:
+    class FakeCoordinator:
         def __init__(self):
-            self.stop_calls = 0
+            self.shutdown_calls = 0
+            self.state = MirrorCoordinatorState(True, True, 2233, "http://127.0.0.1:2233/bilihud-mirror")
 
-        async def stop(self):
-            self.stop_calls += 1
-            if self.stop_calls == 1:
+        async def shutdown(self):
+            self.shutdown_calls += 1
+            if self.shutdown_calls == 1:
                 raise RuntimeError("mirror close failed")
+            self.state = MirrorCoordinatorState(True, False, 2233, "http://127.0.0.1:2233/bilihud-mirror")
+            return MirrorOperationResult(self.state)
 
     async def run_test():
-        server = FakeServer()
+        coordinator = FakeCoordinator()
         widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
-        widget.mirror_server = server
-        widget.mirror_enabled = True
+        widget.mirror_coordinator = coordinator
         widget.refresh_mirror_settings = lambda: None
 
         with pytest.raises(RuntimeError, match="mirror close failed"):
             await danmaku_widget.DanmakuWidget.shutdown_mirror_server(widget)
-        assert widget.mirror_server is server
+        assert coordinator.state.running is True
 
         await danmaku_widget.DanmakuWidget.shutdown_mirror_server(widget)
-        assert widget.mirror_server is None
-        assert server.stop_calls == 2
+        assert coordinator.state.running is False
+        assert coordinator.shutdown_calls == 2
 
     asyncio.run(run_test())
 
@@ -450,14 +460,10 @@ def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
         def scrollToBottom(self):
             calls.append("scroll")
 
-    class MirrorState:
-        def add_message(self, message):
+    class MirrorCoordinator:
+        def publish_message(self, message):
             calls.append(("mirror-add", message))
             return {"seq": 1}
-
-    class MirrorServer:
-        def publish_append(self, entry):
-            calls.append(("mirror-publish", entry))
 
     calls = []
     class Widget:
@@ -465,8 +471,7 @@ def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
 
     widget = Widget()
     widget.danmaku_list = FakeList()
-    widget.mirror_state = MirrorState()
-    widget.mirror_server = MirrorServer()
+    widget.mirror_coordinator = MirrorCoordinator()
     message = DanmakuMessage(
         author=MessageAuthor(uid=1, name="Locez", color="#66CCFF"),
         segments=(TextSegment("新弹幕"),),
@@ -476,7 +481,6 @@ def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
 
     assert calls.index("take") < calls.index("scroll")
     assert calls.index("scroll") < calls.index(("mirror-add", message))
-    assert ("mirror-publish", {"seq": 1}) in calls
 
 
 def test_modern_input_widget_exposes_emoticon_button_signal():

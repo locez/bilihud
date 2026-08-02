@@ -29,6 +29,11 @@ stable design rule, not a list of current migration tasks.
   client capability and factory ports used to inject infrastructure.
 - `danmaku_widget` binds `HudState` and `HudEvent` values to Qt controls and
   does not own a concrete `DanmakuClient` or its connection tasks.
+- `mirror_coordinator` owns Mirror configuration, message history, server
+  lifecycle, and typed operation results; `mirror_ports` injects the HTTP
+  capability without importing the concrete server into application code.
+- `mirror_server` only serves coordinator-owned state and applies the image
+  proxy allowlist, DNS address checks, redirect policy, and response limits.
 - Presentation code binds state and commands; it does not own business workflows.
 - Application code owns use-case lifecycles and coordinates infrastructure through ports.
 - Domain code remains deterministic and independently testable whenever practical.

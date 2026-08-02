@@ -5,7 +5,13 @@ import pytest
 from aiohttp import ClientSession, web
 
 from bilihud.domain.messages import DanmakuMessage, MessageAuthor, TextSegment
-from bilihud.mirror_server import IMAGE_PROXY_HEADERS, MirrorServer, mirror_event_payload, mirror_html
+from bilihud.mirror_server import (
+    IMAGE_PROXY_HEADERS,
+    ImageProxyPolicy,
+    MirrorServer,
+    mirror_event_payload,
+    mirror_html,
+)
 from bilihud.mirror_state import MIRROR_EVENTS_ROUTE, MIRROR_IMAGE_ROUTE, MIRROR_ROUTE, MirrorState
 
 
@@ -130,6 +136,26 @@ def test_mirror_server_registers_image_proxy_route():
     asyncio.run(run_test())
 
 
+def test_mirror_image_proxy_rejects_local_and_unallowlisted_hosts():
+    async def run_test():
+        mirror_server = MirrorServer(MirrorState(), port=0)
+        await mirror_server.start()
+
+        try:
+            image_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_IMAGE_ROUTE}"
+            async with ClientSession() as session:
+                async with session.get(image_url, params={"url": "http://127.0.0.1:8080/emote.png"}) as response:
+                    assert response.status == 400
+                    assert await response.text() == "Invalid image URL"
+                async with session.get(image_url, params={"url": "http://localhost:8080/emote.png"}) as response:
+                    assert response.status == 400
+                    assert await response.text() == "Invalid image URL"
+        finally:
+            await mirror_server.stop()
+
+    asyncio.run(run_test())
+
+
 def test_mirror_server_stop_is_idempotent():
     async def run_test():
         mirror_server = MirrorServer(MirrorState(), port=0)
@@ -189,7 +215,15 @@ def test_mirror_image_proxy_fetches_image_with_bilibili_headers():
         source_site = web.TCPSite(source_runner, "127.0.0.1", 0)
         await source_site.start()
 
-        mirror_server = MirrorServer(MirrorState(), port=0)
+        mirror_server = MirrorServer(
+            MirrorState(),
+            port=0,
+            image_proxy_policy=ImageProxyPolicy(
+                allowed_hosts=frozenset({"127.0.0.1"}),
+                allowed_host_suffixes=frozenset(),
+                allow_private_addresses=True,
+            ),
+        )
         await mirror_server.start()
 
         try:
@@ -204,6 +238,100 @@ def test_mirror_image_proxy_fetches_image_with_bilibili_headers():
 
             assert seen_headers == IMAGE_PROXY_HEADERS
         finally:
+            await mirror_server.stop()
+            await source_runner.cleanup()
+
+    asyncio.run(run_test())
+
+
+def test_mirror_image_proxy_rejects_redirects_to_untrusted_hosts_and_non_images():
+    async def run_test():
+        async def handle_redirect(_request: web.Request) -> web.Response:
+            raise web.HTTPFound(location="http://example.com/emote.png")
+
+        async def handle_text(_request: web.Request) -> web.Response:
+            return web.Response(text="not an image", content_type="text/plain")
+
+        source_app = web.Application()
+        source_app.router.add_get("/redirect", handle_redirect)
+        source_app.router.add_get("/text", handle_text)
+        source_runner = web.AppRunner(source_app)
+        await source_runner.setup()
+        source_site = web.TCPSite(source_runner, "127.0.0.1", 0)
+        await source_site.start()
+
+        mirror_server = MirrorServer(
+            MirrorState(),
+            port=0,
+            image_proxy_policy=ImageProxyPolicy(
+                allowed_hosts=frozenset({"127.0.0.1"}),
+                allowed_host_suffixes=frozenset(),
+                allow_private_addresses=True,
+            ),
+        )
+        await mirror_server.start()
+
+        try:
+            source_base_url = f"http://127.0.0.1:{_site_port(source_site)}"
+            mirror_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_IMAGE_ROUTE}"
+            async with ClientSession() as session:
+                async with session.get(mirror_url, params={"url": f"{source_base_url}/redirect"}) as response:
+                    assert response.status == 400
+                    assert await response.text() == "Invalid image URL"
+                async with session.get(mirror_url, params={"url": f"{source_base_url}/text"}) as response:
+                    assert response.status == 400
+                    assert await response.text() == "Invalid image URL"
+        finally:
+            await mirror_server.stop()
+            await source_runner.cleanup()
+
+    asyncio.run(run_test())
+
+
+def test_mirror_image_proxy_enforces_response_size_and_timeout_limits():
+    async def run_test():
+        never = asyncio.Event()
+
+        async def handle_large(_request: web.Request) -> web.Response:
+            return web.Response(body=b"12345", content_type="image/png")
+
+        async def handle_slow(_request: web.Request) -> web.Response:
+            await never.wait()
+            return web.Response(body=b"image-bytes", content_type="image/png")
+
+        source_app = web.Application()
+        source_app.router.add_get("/large", handle_large)
+        source_app.router.add_get("/slow", handle_slow)
+        source_runner = web.AppRunner(source_app)
+        await source_runner.setup()
+        source_site = web.TCPSite(source_runner, "127.0.0.1", 0)
+        await source_site.start()
+
+        mirror_server = MirrorServer(
+            MirrorState(),
+            port=0,
+            image_proxy_policy=ImageProxyPolicy(
+                allowed_hosts=frozenset({"127.0.0.1"}),
+                allowed_host_suffixes=frozenset(),
+                max_bytes=4,
+                timeout_seconds=0.1,
+                connect_timeout_seconds=0.1,
+                read_timeout_seconds=0.05,
+                allow_private_addresses=True,
+            ),
+        )
+        await mirror_server.start()
+
+        try:
+            source_base_url = f"http://127.0.0.1:{_site_port(source_site)}"
+            mirror_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_IMAGE_ROUTE}"
+            async with ClientSession() as session:
+                async with session.get(mirror_url, params={"url": f"{source_base_url}/large"}) as response:
+                    assert response.status == 413
+                async with session.get(mirror_url, params={"url": f"{source_base_url}/slow"}) as response:
+                    assert response.status == 504
+        finally:
+            never.set()
             await mirror_server.stop()
             await source_runner.cleanup()
 

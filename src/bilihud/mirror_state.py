@@ -163,8 +163,10 @@ class MirrorState:
 
     def __init__(self, max_messages: int = MIRROR_MAX_MESSAGES) -> None:
         """Create state with a maximum number of retained entries."""
-        self.max_messages = max_messages
-        self._next_seq = 1
+        if max_messages <= 0:
+            raise ValueError("Mirror message limit must be positive")
+        self.max_messages: int = max_messages
+        self._next_seq: int = 1
         self._messages: list[MirrorEntry] = []
 
     def add_message(self, message: HudMessage) -> MirrorEntry:

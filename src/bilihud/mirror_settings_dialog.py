@@ -11,18 +11,20 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .mirror_coordinator import MirrorCoordinatorState
+
 
 class MirrorSettingsDialog(QDialog):
     mirror_enabled_requested = pyqtSignal(bool)
 
-    def __init__(self, owner: QWidget):
-        super().__init__(owner)
-        self.owner = owner
+    def __init__(self, parent: QWidget | None = None) -> None:
+        """Create a settings view whose state is supplied explicitly by the caller."""
+        super().__init__(parent)
         self.setWindowTitle("BiliHUD Mirror")
         self.setMinimumWidth(460)
 
         self._init_ui()
-        self.refresh()
+        self.set_mirror_state(False, "未启动", "")
 
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -40,7 +42,6 @@ class MirrorSettingsDialog(QDialog):
         url_row = QHBoxLayout()
         self.url_input = QLineEdit()
         self.url_input.setReadOnly(True)
-        self.url_input.setText(self.owner.mirror_url)
         self.url_input.setCursorPosition(0)
         url_row.addWidget(self.url_input, 1)
 
@@ -86,6 +87,7 @@ class MirrorSettingsDialog(QDialog):
         )
 
     def set_mirror_state(self, enabled: bool, status: str, mirror_url: str) -> None:
+        """Render one explicit state snapshot without reading a parent widget."""
         self.enabled_checkbox.blockSignals(True)
         self.enabled_checkbox.setChecked(enabled)
         self.enabled_checkbox.blockSignals(False)
@@ -93,14 +95,16 @@ class MirrorSettingsDialog(QDialog):
         self.url_input.setText(mirror_url)
         self.url_input.setCursorPosition(0)
 
-    def refresh(self) -> None:
-        enabled = self.owner.mirror_enabled
-        status = self.owner.mirror_status_text()
-        self.set_mirror_state(enabled, status, self.owner.mirror_url)
+    def refresh(self, state: MirrorCoordinatorState) -> None:
+        """Bind one coordinator snapshot without reaching through a widget owner."""
+        self.set_mirror_state(state.enabled, state.status_text, state.url)
 
     def _on_enabled_toggled(self, checked: bool) -> None:
         """Forward a settings request to the lifecycle-owning widget."""
         self.mirror_enabled_requested.emit(checked)
 
     def copy_url(self) -> None:
-        QGuiApplication.clipboard().setText(self.url_input.text(), mode=QClipboard.Mode.Clipboard)
+        """Copy the currently rendered Mirror URL to the desktop clipboard."""
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(self.url_input.text(), mode=QClipboard.Mode.Clipboard)
