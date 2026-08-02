@@ -1,12 +1,10 @@
-import ast
 import asyncio
 import os
-from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QEvent
-from PyQt6.QtGui import QFont, QImage
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtCore import QEvent, QPoint
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import QApplication, QLabel, QWidget
 
 from bilihud import danmaku_widget
 from bilihud.live_audience import AudienceSnapshot, AudienceUser
@@ -22,100 +20,240 @@ def _app():
     return _QT_APP
 
 
-def test_danmaku_widget_does_not_manually_process_qt_events():
-    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+def test_layer_shell_drag_updates_anchor_position(monkeypatch):
+    class FakeGeometry:
+        def x(self):
+            return 0
 
-    assert "QApplication.processEvents()" not in source
+        def y(self):
+            return 0
 
+        def width(self):
+            return 1920
 
-def test_layer_shell_drag_does_not_force_widget_repaint():
-    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    method_source = None
+        def height(self):
+            return 1080
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "DanmakuWidget":
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef) and item.name == "mouseMoveEvent":
-                    method_source = ast.get_source_segment(source, item)
-                    break
+    class FakeScreen:
+        def geometry(self):
+            return FakeGeometry()
 
-    assert method_source is not None
-    assert "set_anchor_position" in method_source
-    assert "self.update()" not in method_source
+    class FakeWindow:
+        def screen(self):
+            return FakeScreen()
 
+    class FakeLayerShell:
+        def __init__(self):
+            self.calls = []
 
-def test_layer_shell_anchor_position_commits_surface():
-    source = Path("src/bilihud/layer_shell_bridge.cpp").read_text(encoding="utf-8")
-    function_start = source.index("void set_anchor_position")
-    function_end = source.index("void set_keyboard_interactivity", function_start)
-    function_source = source[function_start:function_end]
+        def set_anchor_position(self, pointer, x, y):
+            self.calls.append((pointer, x, y))
 
-    assert "ls_window->setMargins(margins);" in function_source
-    assert "nativeResourceForWindow(\"surface\", window)" in function_source
-    assert "wl_surface_commit(surface);" in function_source
+    class FakePosition:
+        def toPoint(self):
+            return QPoint(20, 20)
 
+    class FakeEvent:
+        def position(self):
+            return FakePosition()
 
-def test_danmaku_widget_imports_qimage_for_emoticon_loader():
-    assert danmaku_widget.QImage is QImage
+        def accept(self):
+            pass
 
+    layer_shell = FakeLayerShell()
+    widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+    widget._dragging = True
+    widget._drag_local_pos = QPoint(10, 10)
+    widget.layer_pos = QPoint(100, 100)
+    widget.layer_shell_lib = layer_shell
 
-def test_danmaku_widget_imports_mirror_components():
-    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+    monkeypatch.setattr(danmaku_widget.sip, "unwrapinstance", lambda _window: 123)
+    monkeypatch.setattr(danmaku_widget.DanmakuWidget, "windowHandle", lambda _self: FakeWindow())
+    monkeypatch.setattr(danmaku_widget.DanmakuWidget, "width", lambda _self: 300)
 
-    assert "from .mirror_state import MIRROR_DEFAULT_PORT, MIRROR_ROUTE, MirrorState" in source
-    assert "from .mirror_server import MirrorServer" in source
-    assert "from .mirror_settings_dialog import MirrorSettingsDialog" in source
+    danmaku_widget.DanmakuWidget.mouseMoveEvent(widget, FakeEvent())
 
-
-def test_danmaku_widget_add_message_publishes_to_mirror():
-    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
-
-    assert "entry = self.mirror_state.add_message(message)" in source
-    assert "self.mirror_server.publish_append(entry)" in source
-
-
-def test_danmaku_widget_exposes_bilihud_mirror_tray_action():
-    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
-
-    assert 'QAction("BiliHUD Mirror", self)' in source
-    assert source.count('QAction("BiliHUD Mirror", self)') == 1
-    assert "open_mirror_settings" in source
-    assert "MIRROR_ROUTE" in source
-    assert "显示 Mirror URL" not in source
-    assert "启动 BiliHUD Mirror" not in source
-    assert "停止 BiliHUD Mirror" not in source
-    assert "obs-mirror" not in source
-    assert "obs-danmaku" not in source
+    assert widget.layer_pos == QPoint(110, 110)
+    pointer, x, y = layer_shell.calls[0]
+    assert pointer.value == 123
+    assert (x, y) == (110, 110)
 
 
-def test_danmaku_widget_opens_single_mirror_settings_dialog():
-    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+def test_danmaku_widget_exposes_bilihud_mirror_tray_action(monkeypatch):
+    class Signal:
+        def __init__(self):
+            self.callbacks = []
 
-    assert "def open_mirror_settings(self):" in source
-    assert "MirrorSettingsDialog(self)" in source
-    assert "_mirror_settings_dialog" in source
+        def connect(self, callback):
+            self.callbacks.append(callback)
+
+        def emit(self, *args):
+            for callback in self.callbacks:
+                callback(*args)
+
+    class Action:
+        def __init__(self, text, _parent):
+            self.text = text
+            self.triggered = Signal()
+
+        def setCheckable(self, _checkable):
+            pass
+
+    class Menu:
+        def setStyleSheet(self, _style):
+            pass
+
+        def addAction(self, _action):
+            pass
+
+        def addSeparator(self):
+            pass
+
+    class TrayIcon:
+        def __init__(self, _parent):
+            self.activated = Signal()
+
+        def setContextMenu(self, _menu):
+            pass
+
+        def show(self):
+            pass
+
+    events = []
+    _app()
+    widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+    widget.open_input_dialog = lambda: events.append("input")
+    widget.toggle_visibility = lambda: events.append("visibility")
+    widget.toggle_gaming_mode_from_tray = lambda checked: events.append(("gaming", checked))
+    widget.open_qr_login = lambda: events.append("login")
+    widget.open_live_control = lambda: events.append("live-control")
+    widget.open_mirror_settings = lambda: events.append("mirror")
+    widget.quit_app = lambda: events.append("quit")
+    monkeypatch.setattr(danmaku_widget, "QAction", Action)
+    monkeypatch.setattr(danmaku_widget, "QMenu", Menu)
+    monkeypatch.setattr(danmaku_widget, "QSystemTrayIcon", TrayIcon)
+    monkeypatch.setattr(danmaku_widget.os.path, "exists", lambda _path: False)
+
+    danmaku_widget.DanmakuWidget.setup_tray_icon(widget)
+
+    assert widget.tray_mirror_action.text == "BiliHUD Mirror"
+    widget.tray_mirror_action.triggered.emit()
+    assert events == ["mirror"]
 
 
-def test_danmaku_widget_keeps_mirror_enabled_config_when_quitting():
-    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+def test_danmaku_widget_opens_single_mirror_settings_dialog(monkeypatch):
+    class FakeDialog:
+        instances = []
 
-    assert "await self.shutdown_mirror_server()" in source
-    assert "def mirror_status_text(self)" in source
-    assert "self.mirror_error" in source
-    assert 'return f"启动失败: {self.mirror_error}"' in source
-    assert "async def set_mirror_enabled(self, enabled: bool)" in source
-    assert source.index("async def shutdown_mirror_server") > source.index("async def stop_mirror_server")
-    shutdown_body = source.split("async def shutdown_mirror_server", 1)[1]
-    assert 'save_config({"mirror_enabled": False' not in shutdown_body
+        def __init__(self, owner):
+            self.owner = owner
+            self.calls = []
+            self.instances.append(self)
+
+        def refresh(self):
+            self.calls.append("refresh")
+
+        def show(self):
+            self.calls.append("show")
+
+        def raise_(self):
+            self.calls.append("raise")
+
+        def activateWindow(self):
+            self.calls.append("activate")
+
+    _app()
+    widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+    QWidget.__init__(widget)
+    monkeypatch.setattr(danmaku_widget, "MirrorSettingsDialog", FakeDialog)
+
+    danmaku_widget.DanmakuWidget.open_mirror_settings(widget)
+    danmaku_widget.DanmakuWidget.open_mirror_settings(widget)
+
+    assert len(FakeDialog.instances) == 1
+    assert FakeDialog.instances[0].calls == [
+        "refresh",
+        "show",
+        "raise",
+        "activate",
+        "refresh",
+        "show",
+        "raise",
+        "activate",
+    ]
 
 
-def test_danmaku_widget_emoticon_requests_include_bilibili_headers():
-    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+def test_danmaku_widget_keeps_mirror_enabled_config_when_shutting_down():
+    class FakeServer:
+        def __init__(self):
+            self.stop_calls = 0
 
-    assert 'request.setRawHeader(b"Referer", b"https://live.bilibili.com/")' in source
-    assert "https://live.bilibili.com/" in source
-    assert "QNetworkRequest.KnownHeaders.UserAgentHeader" in source
+        async def stop(self):
+            self.stop_calls += 1
+
+    async def run_test():
+        server = FakeServer()
+        events = []
+        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+        widget.mirror_server = server
+        widget.mirror_enabled = True
+        widget.refresh_mirror_settings = lambda: events.append("refresh")
+
+        await danmaku_widget.DanmakuWidget.shutdown_mirror_server(widget)
+
+        assert server.stop_calls == 1
+        assert widget.mirror_server is None
+        assert widget.mirror_enabled is True
+        assert events == ["refresh"]
+
+    asyncio.run(run_test())
+
+
+def test_emoticon_picker_requests_bilibili_headers(monkeypatch):
+    class FakeRequest:
+        class KnownHeaders:
+            UserAgentHeader = "user-agent"
+
+        def __init__(self, url):
+            self.url = url
+            self.raw_headers = {}
+            self.headers = {}
+
+        def setRawHeader(self, name, value):
+            self.raw_headers[name] = value
+
+        def setHeader(self, name, value):
+            self.headers[name] = value
+
+    class Signal:
+        def connect(self, _callback):
+            pass
+
+    class Reply:
+        finished = Signal()
+
+    class NetworkManager:
+        def __init__(self):
+            self.requests = []
+
+        def get(self, request):
+            self.requests.append(request)
+            return Reply()
+
+    class Button:
+        pass
+
+    _app()
+    picker = danmaku_widget.EmoticonPickerPopup()
+    manager = NetworkManager()
+    picker._network_manager = manager
+    monkeypatch.setattr(danmaku_widget, "QNetworkRequest", FakeRequest)
+
+    picker._load_icon(Button(), "https://i0.hdslb.com/bfs/live/emote.png")
+
+    request = manager.requests[0]
+    assert request.raw_headers == {b"Referer": b"https://live.bilibili.com/"}
+    assert request.headers == {"user-agent": "Mozilla/5.0 BiliHUD"}
 
 
 def test_danmaku_delegate_renders_local_system_messages():
@@ -245,8 +383,13 @@ def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
             calls.append("scroll")
 
     class MirrorState:
-        def add_message(self, _message):
+        def add_message(self, message):
+            calls.append(("mirror-add", message))
             return {"seq": 1}
+
+    class MirrorServer:
+        def publish_append(self, entry):
+            calls.append(("mirror-publish", entry))
 
     calls = []
     class Widget:
@@ -255,11 +398,14 @@ def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
     widget = Widget()
     widget.danmaku_list = FakeList()
     widget.mirror_state = MirrorState()
-    widget.mirror_server = None
+    widget.mirror_server = MirrorServer()
+    message = Message()
 
-    danmaku_widget.DanmakuWidget.add_message(widget, Message())
+    danmaku_widget.DanmakuWidget.add_message(widget, message)
 
     assert calls.index("take") < calls.index("scroll")
+    assert calls.index("scroll") < calls.index(("mirror-add", message))
+    assert ("mirror-publish", {"seq": 1}) in calls
 
 
 def test_modern_input_widget_exposes_emoticon_button_signal():
@@ -376,24 +522,81 @@ def test_emoticon_picker_keeps_one_tab_per_package():
     assert [picker.tabs.tabText(index) for index in range(picker.tabs.count())] == ["通用表情", "UP主大表情"]
 
 
-def test_danmaku_widget_source_wires_emoticon_picker_to_client_methods():
-    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+def test_danmaku_widget_sends_selected_live_emoticon():
+    class Client:
+        def __init__(self):
+            self.sent = []
 
-    assert "self.input_area.emoticon_requested.connect(self.open_emoticon_picker)" in source
-    assert "await self.danmaku_client.fetch_live_emoticons()" in source
-    assert "await self.danmaku_client.send_live_emoticon(emoticon)" in source
+        async def send_live_emoticon(self, emoticon):
+            self.sent.append(emoticon)
+            return False, "没有发送权限"
+
+    async def run_test():
+        client = Client()
+        errors = []
+        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+        widget.danmaku_client = client
+        widget.add_system_message = lambda message, level: errors.append((message, level))
+        emoticon = LiveEmoticon(
+            emoji="啊",
+            url="https://i0.hdslb.com/bfs/live/a.png",
+            width=100,
+            height=100,
+            perm=1,
+            unique="official_331",
+            emoticon_id=331,
+        )
+
+        await danmaku_widget.DanmakuWidget._send_live_emoticon_task(widget, emoticon)
+
+        assert client.sent == [emoticon]
+        assert errors == [("发送失败: 没有发送权限", "error")]
+
+    asyncio.run(run_test())
 
 
-def test_live_control_uses_anchor_room_and_connects_hud_when_opened_source():
-    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+def test_live_control_uses_authenticated_anchor_room(monkeypatch):
+    class Session:
+        def __init__(self):
+            self.closed = False
+            self.close_calls = 0
 
-    assert "get_anchor_live_room_id" in source
-    assert "async def open_live_control(self):" in source
-    assert "anchor_room_id = await self._ensure_live_control_room()" in source
-    assert "self._live_control_dialog.set_room_id(anchor_room_id)" in source
-    assert "self._live_control_dialog.set_room_id(self.room_id)" not in source
-    assert "await self._connect_to_room_id(anchor_room_id)" in source
-    assert "set_ensure_hud_room_callback" not in source
+        async def close(self):
+            self.closed = True
+            self.close_calls += 1
+
+    class AuthManager:
+        def __init__(self):
+            self.session = Session()
+
+        async def create_authenticated_session(self):
+            return self.session, True
+
+    async def get_anchor_room(session):
+        assert session is auth_manager.session
+        return 998877
+
+    async def run_test():
+        nonlocal auth_manager
+        auth_manager = AuthManager()
+        connected_rooms = []
+        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+
+        async def connect_to_room(room_id):
+            connected_rooms.append(room_id)
+
+        widget._connect_to_room_id = connect_to_room
+        monkeypatch.setattr(danmaku_widget, "AuthManager", lambda: auth_manager)
+        monkeypatch.setattr(danmaku_widget, "get_anchor_live_room_id", get_anchor_room)
+
+        room_id = await danmaku_widget.DanmakuWidget._ensure_live_control_room(widget)
+
+        assert room_id == 998877
+        assert connected_rooms == [998877]
+        assert auth_manager.session.close_calls == 1
+
+    auth_manager = None
+    asyncio.run(run_test())
 
 
 def test_connect_to_room_replaces_stale_same_room_client(monkeypatch):
@@ -463,12 +666,43 @@ def test_connect_to_room_replaces_stale_same_room_client(monkeypatch):
     asyncio.run(run_test())
 
 
-def test_live_control_start_live_does_not_manage_hud_connection():
-    source = Path("src/bilihud/live_control_dialog.py").read_text(encoding="utf-8")
+def test_disconnect_current_room_stops_client_and_clears_connection():
+    class Button:
+        def __init__(self):
+            self.enabled = True
 
-    assert "_ensure_hud_room_callback" not in source
-    assert "set_ensure_hud_room_callback" not in source
-    assert "_ensure_hud_room" not in source
+        def setEnabled(self, enabled):
+            self.enabled = enabled
+
+    class Client:
+        def __init__(self):
+            self.stop_calls = 0
+
+        async def stop(self):
+            self.stop_calls += 1
+
+    async def run_test():
+        events = []
+        client = Client()
+        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+        widget.connect_button = Button()
+        widget.danmaku_client = client
+        widget._audience_snapshot = None
+
+        async def stop_audience_refresh():
+            events.append("audience-stop")
+
+        widget._stop_audience_refresh = stop_audience_refresh
+        widget._set_disconnected_ui = lambda: events.append("disconnected")
+
+        await danmaku_widget.DanmakuWidget._disconnect_current_room(widget)
+
+        assert client.stop_calls == 1
+        assert widget.danmaku_client is None
+        assert widget.connect_button.enabled is False
+        assert events == ["audience-stop", "disconnected"]
+
+    asyncio.run(run_test())
 
 
 def audience_snapshot(room_id=7450109):

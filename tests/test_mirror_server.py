@@ -1,5 +1,4 @@
 import asyncio
-import inspect
 import json
 
 from aiohttp import ClientSession, web
@@ -64,22 +63,69 @@ def test_mirror_event_payload_serializes_named_event():
     assert json.loads(data_line.removeprefix("data: ")) == {"seq": 1, "segments": []}
 
 
-def test_mirror_server_registers_sse_client_before_snapshot_write():
-    source = inspect.getsource(MirrorServer._handle_events)
+async def _read_sse_event(response):
+    event_line = await asyncio.wait_for(response.content.readline(), timeout=1)
+    data_line = await asyncio.wait_for(response.content.readline(), timeout=1)
+    blank_line = await asyncio.wait_for(response.content.readline(), timeout=1)
 
-    assert source.index("self._clients.add(queue)") < source.index('mirror_event_payload("snapshot"')
+    assert event_line.startswith(b"event: ")
+    assert data_line.startswith(b"data: ")
+    assert blank_line == b"\n"
+    return event_line.decode().removeprefix("event: ").strip(), json.loads(
+        data_line.decode().removeprefix("data: ").strip()
+    )
+
+
+def test_mirror_server_streams_snapshot_before_later_messages():
+    async def run_test():
+        state = MirrorState()
+        state.add_message({"uname": "Locez", "msg": "历史消息"})
+        mirror_server = MirrorServer(state, port=0)
+        await mirror_server.start()
+
+        try:
+            events_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_EVENTS_ROUTE}"
+            async with ClientSession() as session:
+                async with session.get(events_url) as response:
+                    assert response.status == 200
+                    assert response.headers["Content-Type"].startswith("text/event-stream")
+                    event_name, snapshot = await _read_sse_event(response)
+
+                    assert event_name == "snapshot"
+                    assert snapshot == state.snapshot()
+
+                    next_entry = {"seq": 2, "user": "新用户", "segments": []}
+                    mirror_server.publish_append(next_entry)
+                    event_name, entry = await _read_sse_event(response)
+
+                    assert event_name == "append"
+                    assert entry == next_entry
+        finally:
+            await mirror_server.stop()
+
+    asyncio.run(run_test())
 
 
 def test_mirror_server_registers_image_proxy_route():
-    source = inspect.getsource(MirrorServer.start)
+    async def run_test():
+        mirror_server = MirrorServer(MirrorState(), port=0)
+        await mirror_server.start()
 
-    assert "self._handle_image" in source
-    assert "MIRROR_IMAGE_ROUTE" in source
+        try:
+            image_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_IMAGE_ROUTE}"
+            async with ClientSession() as session:
+                async with session.get(image_url, params={"url": "file:///tmp/emote.png"}) as response:
+                    assert response.status == 400
+                    assert await response.text() == "Invalid image URL"
+        finally:
+            await mirror_server.stop()
+
+    asyncio.run(run_test())
 
 
 def test_mirror_image_proxy_fetches_image_with_bilibili_headers():
     async def run_test():
-        seen_headers = {}
+        seen_headers: dict[str, str | None] = {}
 
         async def handle_source_image(request: web.Request) -> web.Response:
             seen_headers["Referer"] = request.headers.get("Referer")
