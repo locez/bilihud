@@ -1,19 +1,26 @@
-import importlib
-
+from bilihud.domain.messages import (
+    DanmakuMessage,
+    GiftMessage,
+    ImageSegment,
+    InteractionKind,
+    InteractMessage,
+    MessageAuthor,
+    MessageBadge,
+    MessageBadgeKind,
+    ReplySegment,
+    SystemMessageLevel,
+    TextSegment,
+    make_system_message,
+)
 from bilihud.mirror_state import MirrorState, message_to_mirror_entry
 
-web_models = importlib.import_module("blivedm.models.web")
+
+def _author(name="Locez", color="#66CCFF", badges=()):
+    return MessageAuthor(uid=1, name=name, color=color, badges=badges)
 
 
 def test_message_to_mirror_entry_converts_text_danmaku():
-    message = web_models.DanmakuMessage(
-        uname="Locez",
-        msg="<hello>",
-        privilege_type=0,
-        vip=0,
-        svip=0,
-        admin=0,
-    )
+    message = DanmakuMessage(author=_author(), segments=(TextSegment("<hello>"),))
 
     entry = message_to_mirror_entry(1, message)
 
@@ -27,15 +34,9 @@ def test_message_to_mirror_entry_converts_text_danmaku():
 
 
 def test_message_to_mirror_entry_converts_pure_emoticon_danmaku():
-    message = web_models.DanmakuMessage(
-        uname="Locez",
-        msg="[妙啊]",
-        dm_type=1,
-        emoticon_options={
-            "url": "https://i0.hdslb.com/bfs/live/emote.png",
-            "width": 183,
-            "height": 60,
-        },
+    message = DanmakuMessage(
+        author=_author(),
+        segments=(ImageSegment("[妙啊]", "https://i0.hdslb.com/bfs/live/emote.png", 183, 60),),
     )
 
     entry = message_to_mirror_entry(2, message)
@@ -52,20 +53,13 @@ def test_message_to_mirror_entry_converts_pure_emoticon_danmaku():
 
 
 def test_message_to_mirror_entry_converts_inline_emoticons():
-    message = web_models.DanmakuMessage(
-        uname="Locez",
-        msg="[汤圆] ok [汤圆]",
-        mode_info={
-            "extra": {
-                "emots": {
-                    "[汤圆]": {
-                        "url": "https://i0.hdslb.com/bfs/live/tangyuan.png",
-                        "width": 60,
-                        "height": 60,
-                    }
-                }
-            }
-        },
+    message = DanmakuMessage(
+        author=_author(),
+        segments=(
+            ImageSegment("[汤圆]", "https://i0.hdslb.com/bfs/live/tangyuan.png", 60, 60),
+            TextSegment(" ok "),
+            ImageSegment("[汤圆]", "https://i0.hdslb.com/bfs/live/tangyuan.png", 60, 60),
+        ),
     )
 
     entry = message_to_mirror_entry(3, message)
@@ -90,15 +84,9 @@ def test_message_to_mirror_entry_converts_inline_emoticons():
 
 
 def test_message_to_mirror_entry_preserves_reply_target_prefix():
-    message = web_models.DanmakuMessage(
-        uname="Locez",
-        msg="test",
-        mode_info={
-            "extra": {
-                "show_reply": True,
-                "reply_uname": "绚下的小恐龙",
-            }
-        },
+    message = DanmakuMessage(
+        author=_author(),
+        segments=(ReplySegment("@绚下的小恐龙 "), TextSegment("test")),
     )
 
     entry = message_to_mirror_entry(4, message)
@@ -110,15 +98,12 @@ def test_message_to_mirror_entry_preserves_reply_target_prefix():
 
 
 def test_message_to_mirror_entry_includes_compact_author_badges():
-    message = web_models.DanmakuMessage(
-        uname="Locez",
-        msg="测试",
-        medal_name="小狐",
-        medal_level=26,
-        mcolor=0x2FB6E8,
-        wealth_level=8,
-        privilege_type=3,
+    badges = (
+        MessageBadge(MessageBadgeKind.MEDAL, "小狐 26", "粉丝牌", "#FF79C6"),
+        MessageBadge(MessageBadgeKind.WEALTH, "✦ 8", "财富等级", "#C9B6FF"),
+        MessageBadge(MessageBadgeKind.PRIVILEGE, "⚓︎", "大航海", "#86C8FF"),
     )
+    message = DanmakuMessage(author=_author(badges=badges), segments=(TextSegment("测试"),))
 
     entry = message_to_mirror_entry(4, message)
 
@@ -145,9 +130,27 @@ def test_message_to_mirror_entry_includes_compact_author_badges():
 
 
 def test_message_to_mirror_entry_maps_guard_levels_to_blue_purple_gold_badges():
-    governor = message_to_mirror_entry(1, web_models.DanmakuMessage(uname="A", msg="1", privilege_type=1))
-    admiral = message_to_mirror_entry(2, web_models.DanmakuMessage(uname="B", msg="2", privilege_type=2))
-    captain = message_to_mirror_entry(3, web_models.DanmakuMessage(uname="C", msg="3", privilege_type=3))
+    governor = message_to_mirror_entry(
+        1,
+        DanmakuMessage(
+            author=_author(badges=(MessageBadge(MessageBadgeKind.PRIVILEGE, "🛳︎", "大航海", "#FFD700"),)),
+            segments=(TextSegment("1"),),
+        ),
+    )
+    admiral = message_to_mirror_entry(
+        2,
+        DanmakuMessage(
+            author=_author(badges=(MessageBadge(MessageBadgeKind.PRIVILEGE, "⛴︎", "大航海", "#C9B6FF"),)),
+            segments=(TextSegment("2"),),
+        ),
+    )
+    captain = message_to_mirror_entry(
+        3,
+        DanmakuMessage(
+            author=_author(badges=(MessageBadge(MessageBadgeKind.PRIVILEGE, "⚓︎", "大航海", "#86C8FF"),)),
+            segments=(TextSegment("3"),),
+        ),
+    )
 
     assert governor["badges"] == [{"type": "privilege", "text": "🛳︎", "title": "大航海", "color": "#FFD700"}]
     assert admiral["badges"] == [{"type": "privilege", "text": "⛴︎", "title": "大航海", "color": "#C9B6FF"}]
@@ -155,7 +158,13 @@ def test_message_to_mirror_entry_maps_guard_levels_to_blue_purple_gold_badges():
 
 
 def test_message_to_mirror_entry_converts_gift_message():
-    message = web_models.GiftMessage(uname="Locez", action="赠送", gift_name="辣条", num=3)
+    message = GiftMessage(
+        author=_author(color="#FFD700"),
+        segments=(TextSegment("赠送 辣条 x3"),),
+        action="赠送",
+        gift_name="辣条",
+        quantity=3,
+    )
 
     entry = message_to_mirror_entry(4, message)
 
@@ -169,7 +178,11 @@ def test_message_to_mirror_entry_converts_gift_message():
 
 
 def test_message_to_mirror_entry_converts_interact_message():
-    message = web_models.InteractWordV2Message(username="观众", msg_type=2)
+    message = InteractMessage(
+        author=_author(name="观众", color="#AAAAAA"),
+        segments=(TextSegment("关注了主播"),),
+        interaction=InteractionKind.FOLLOW,
+    )
 
     entry = message_to_mirror_entry(5, message)
 
@@ -182,12 +195,24 @@ def test_message_to_mirror_entry_converts_interact_message():
     }
 
 
+def test_message_to_mirror_entry_converts_system_message():
+    entry = message_to_mirror_entry(6, make_system_message("连接失败", SystemMessageLevel.ERROR))
+
+    assert entry == {
+        "seq": 6,
+        "kind": "system",
+        "user": " [系统]",
+        "userColor": "#FF5555",
+        "segments": [{"type": "text", "text": "连接失败"}],
+    }
+
+
 def test_mirror_state_caps_messages_and_assigns_sequences():
     state = MirrorState(max_messages=2)
 
-    first = state.add_message(web_models.DanmakuMessage(uname="A", msg="1"))
-    second = state.add_message(web_models.DanmakuMessage(uname="B", msg="2"))
-    third = state.add_message(web_models.DanmakuMessage(uname="C", msg="3"))
+    first = state.add_message(DanmakuMessage(author=_author(name="A"), segments=(TextSegment("1"),)))
+    second = state.add_message(DanmakuMessage(author=_author(name="B"), segments=(TextSegment("2"),)))
+    third = state.add_message(DanmakuMessage(author=_author(name="C"), segments=(TextSegment("3"),)))
 
     assert first["seq"] == 1
     assert second["seq"] == 2

@@ -7,9 +7,12 @@ from urllib.parse import urlencode, urlparse
 
 import aiohttp
 import blivedm
+import blivedm.clients.ws_base as ws_base
 import blivedm.models.web as web_models
 
 from .auth import AuthenticationService, AuthManager
+from .domain.messages import HudMessage
+from .infrastructure.blivedm_adapter import to_hud_message_or_system
 from .live_audience import AudienceSnapshot, parse_anchor_uid, parse_audience_snapshot
 from .live_emoticons import (
     LiveEmoticon,
@@ -61,9 +64,7 @@ class DanmakuClient:
         self.session: aiohttp.ClientSession | None = None  # Owned and closed by this client.
         self.client: blivedm.BLiveClient | None = None  # Underlying blivedm lifecycle handle.
         self.handler: DanmakuHandler | None = None  # Callback bridge owned by the client.
-        self.on_danmaku_received: Callable[[web_models.DanmakuMessage], None] | None = None
-        self.on_gift_received: Callable[[web_models.GiftMessage], None] | None = None
-        self.on_interact_received: Callable[[web_models.InteractWordV2Message], None] | None = None
+        self.on_message_received: Callable[[HudMessage], None] | None = None
         self.on_login_failed: Callable[[str], None] | None = None # callback(message)
         self._wbi_mixin_key: str | None = None  # Cached signing key for authenticated sends.
         self._live_emoticon_cache: list[LiveEmoticonPackage] | None = None  # Short-lived room cache.
@@ -75,17 +76,9 @@ class DanmakuClient:
         client = self.client
         return client is not None and client.is_running
 
-    def set_danmaku_callback(self, callback: Callable[[web_models.DanmakuMessage], None]) -> None:
-        """设置弹幕接收回调函数"""
-        self.on_danmaku_received = callback
-
-    def set_gift_callback(self, callback: Callable[[web_models.GiftMessage], None]) -> None:
-        """设置礼物接收回调函数"""
-        self.on_gift_received = callback
-
-    def set_interact_callback(self, callback: Callable[[web_models.InteractWordV2Message], None]) -> None:
-        """设置互动接收回调函数 (进房/关注)"""
-        self.on_interact_received = callback
+    def set_message_callback(self, callback: Callable[[HudMessage], None]) -> None:
+        """设置接收已转换为领域模型的直播消息回调。"""
+        self.on_message_received = callback
 
     def set_login_failed_callback(self, callback: Callable[[str], None]) -> None:
         """设置登录失效回调"""
@@ -403,29 +396,39 @@ def _text_escape_message(text: str) -> str:
 class DanmakuHandler(blivedm.BaseHandler):
     """弹幕处理器"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.danmaku_client: DanmakuClient | None = None
 
-    def set_danmaku_client(self, client: DanmakuClient):
+    def set_danmaku_client(self, client: DanmakuClient) -> None:
         self.danmaku_client = client
 
-    def _on_danmaku(self, client: blivedm.BLiveClient, message: web_models.DanmakuMessage):
+    def _emit_message(self, message: object) -> None:
+        """Convert a raw callback payload before handing it to application consumers."""
+        danmaku_client = self.danmaku_client
+        if danmaku_client is None:
+            return
+        callback = danmaku_client.on_message_received
+        if callback is not None:
+            callback(to_hud_message_or_system(message))
+
+    def _on_danmaku(self, client: ws_base.WebSocketClientBase, message: web_models.DanmakuMessage) -> None:
         """处理弹幕消息"""
-        if self.danmaku_client and self.danmaku_client.on_danmaku_received:
-            self.danmaku_client.on_danmaku_received(message)
+        self._emit_message(message)
 
-    def _on_gift(self, client: blivedm.BLiveClient, message: web_models.GiftMessage):
+    def _on_gift(self, client: ws_base.WebSocketClientBase, message: web_models.GiftMessage) -> None:
         """处理礼物消息"""
-        if self.danmaku_client and self.danmaku_client.on_gift_received:
-            self.danmaku_client.on_gift_received(message)
+        self._emit_message(message)
 
-    def _on_interact_word_v2(self, client: blivedm.BLiveClient, message: web_models.InteractWordV2Message):
+    def _on_interact_word_v2(
+        self,
+        client: ws_base.WebSocketClientBase,
+        message: web_models.InteractWordV2Message,
+    ) -> None:
         """处理进入房间/关注"""
-        if self.danmaku_client and self.danmaku_client.on_interact_received:
-            self.danmaku_client.on_interact_received(message)
+        self._emit_message(message)
 
-    def _on_super_chat(self, client: blivedm.BLiveClient, message: web_models.SuperChatMessage):
+    def _on_super_chat(self, client: ws_base.WebSocketClientBase, message: web_models.SuperChatMessage) -> None:
         """处理醒目留言"""
         # 可以在这里处理醒目留言
         pass

@@ -8,9 +8,8 @@ import sys
 from collections.abc import Coroutine
 from ctypes import c_int, c_ulong, c_void_p
 from dataclasses import replace
-from typing import Any, Optional
+from typing import Any
 
-import blivedm.models.web as web_models
 import PyQt6.sip as sip
 from PyQt6.QtCore import QPoint, QSize, Qt, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
@@ -18,6 +17,7 @@ from PyQt6.QtGui import (
     QBrush,
     QCloseEvent,
     QColor,
+    QFont,
     QGuiApplication,
     QIcon,
     QImage,
@@ -60,6 +60,15 @@ from .danmaku_format import (
     danmaku_message_content_html,
     danmaku_message_emoticon_urls,
 )
+from .domain.messages import (
+    DanmakuMessage,
+    GiftMessage,
+    HudMessage,
+    InteractMessage,
+    SystemMessage,
+    SystemMessageLevel,
+    make_system_message,
+)
 from .layer_shell_loader import (
     LAYER_SHELL_LIBRARY_NAME,
     find_layer_shell_library,
@@ -74,6 +83,7 @@ from .live_emoticons import LiveEmoticon, LiveEmoticonPackage
 from .mirror_server import MirrorServer
 from .mirror_settings_dialog import MirrorSettingsDialog
 from .mirror_state import MIRROR_ROUTE, MirrorState
+from .mock_messages import mock_message_batch
 from .qr_login_dialog import QRLoginDialog
 from .services import AppServices, create_default_services
 
@@ -474,13 +484,13 @@ class DanmakuDelegate(QStyledItemDelegate):
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._cache = {} # Map[id(message), (message, QTextDocument)]
+        self._cache: dict[int, tuple[HudMessage, QTextDocument]] = {}
         self._emoticon_cache: dict[str, QImage | None] = {}
         self._emoticon_docs: dict[str, list[QTextDocument]] = {}
         self._network_manager = QNetworkAccessManager(self)
         # We need to invalidate cache if width changes, but updating width on existing doc is cheap.
 
-    def _get_document(self, message, width, font):
+    def _get_document(self, message: HudMessage, width: int, font: QFont) -> QTextDocument:
         """Retrieve or create cached document."""
         msg_id = id(message)
 
@@ -508,14 +518,14 @@ class DanmakuDelegate(QStyledItemDelegate):
         # Pruned from DanmakuWidget.add_message when QListWidget drops old items.
         return doc
 
-    def forget_message(self, message) -> None:
+    def forget_message(self, message: HudMessage) -> None:
         msg_id = id(message)
         cached = self._cache.get(msg_id)
         if cached is not None and cached[0] is message:
             self._cache.pop(msg_id, None)
 
-    def _attach_emoticon_resource(self, doc: QTextDocument, message) -> None:
-        if not isinstance(message, web_models.DanmakuMessage):
+    def _attach_emoticon_resource(self, doc: QTextDocument, message: HudMessage) -> None:
+        if not isinstance(message, DanmakuMessage):
             return
 
         for url in danmaku_message_emoticon_urls(message):
@@ -592,9 +602,9 @@ class DanmakuDelegate(QStyledItemDelegate):
         
         return QSize(width, int(doc.size().height()) + 2) # +2 for margins
 
-    def get_html_for_message(self, message) -> str:
+    def get_html_for_message(self, message: HudMessage) -> str:
         """Construct HTML content based on message type."""
-        if isinstance(message, web_models.DanmakuMessage):
+        if isinstance(message, DanmakuMessage):
             user_color = self.get_user_color(message)
             badges_html = danmaku_author_badges_html(message)
             content_html = danmaku_message_content_html(message)
@@ -628,9 +638,9 @@ class DanmakuDelegate(QStyledItemDelegate):
                 .emoticon {{ vertical-align: middle; }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }} 
             </style>
-            <p>{badges_html}<span class="user">{html.escape(message.uname, quote=True)}</span><span class="colon"> : </span><span class="content">{content_html}</span></p>
+            <p>{badges_html}<span class="user">{html.escape(message.author.name, quote=True)}</span><span class="colon"> : </span><span class="content">{content_html}</span></p>
             """
-        elif isinstance(message, web_models.GiftMessage):
+        elif isinstance(message, GiftMessage):
             return f"""
             <style>
                 .user {{ color: #FFD700; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 12px; }}
@@ -638,49 +648,35 @@ class DanmakuDelegate(QStyledItemDelegate):
                 .gift {{ color: #FF66CC; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 12px; }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }}
             </style>
-            <p><span class="user">{message.uname}</span>
-            <span class="action"> {message.action} </span>
-            <span class="gift">{message.gift_name} x{message.num}</span></p>
+            <p><span class="user">{html.escape(message.author.name, quote=True)}</span>
+            <span class="action"> {html.escape(message.action, quote=True)} </span>
+            <span class="gift">{html.escape(message.gift_name, quote=True)} x{message.quantity}</span></p>
             """
-        elif isinstance(message, web_models.InteractWordV2Message):
-            msg_type_map = {1: '进入直播间', 2: '关注了主播', 3: '分享了直播间'}
-            action_text = msg_type_map.get(message.msg_type, '进入直播间')
+        elif isinstance(message, InteractMessage):
             return f"""
             <style>
                 .user {{ color: #AAAAAA; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 11px; }}
                 .info {{ color: #AAAAAA; font-family: 'Microsoft YaHei'; font-size: 11px; }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }}
             </style>
-            <p><span class="user">{message.username}</span>
-            <span class="info"> {action_text}</span></p>
+            <p><span class="user">{html.escape(message.author.name, quote=True)}</span>
+            <span class="info"> {html.escape(message.interaction.text, quote=True)}</span></p>
             """
-        if hasattr(message, "uname") and hasattr(message, "msg"):
-            user_color = self.get_user_color(message)
+        elif isinstance(message, SystemMessage):
             return f"""
             <style>
-                .user {{ color: {user_color}; font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
+                .user {{ color: {message.author.color}; font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
                 .colon {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
                 .content {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 13px; font-weight: 500; }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }}
             </style>
-            <p><span class="user">{html.escape(str(message.uname), quote=True)}</span><span class="colon"> : </span><span class="content">{html.escape(str(message.msg), quote=True)}</span></p>
+            <p><span class="user">{html.escape(message.author.name, quote=True)}</span><span class="colon"> : </span><span class="content">{html.escape(message.text, quote=True)}</span></p>
             """
         return ""
 
-    def get_user_color(self, danmaku_msg) -> str:
-        """根据用户等级获取用户名颜色"""
-        if getattr(danmaku_msg, 'is_system_error', False):
-            return "#FF5555"
-        elif getattr(danmaku_msg, 'is_system_info', False):
-            return "#AAAAAA"
-            
-        if danmaku_msg.privilege_type > 0:
-            return "#FFD700"
-        elif danmaku_msg.vip or danmaku_msg.svip:
-            return "#FF69B4"
-        elif danmaku_msg.admin:
-            return "#FF4500"
-        return "#66CCFF"
+    def get_user_color(self, message: HudMessage) -> str:
+        """Return the author color normalized at the infrastructure boundary."""
+        return message.author.color
 
 
 class CustomSizeGrip(QWidget):
@@ -736,9 +732,7 @@ class CustomSizeGrip(QWidget):
 class DanmakuWidget(QWidget):
     """Presentation shell for danmaku, Mirror, login, and live-control workflows."""
 
-    danmaku_received = pyqtSignal(web_models.DanmakuMessage)
-    gift_received = pyqtSignal(web_models.GiftMessage)
-    interact_received = pyqtSignal(web_models.InteractWordV2Message)
+    message_received = pyqtSignal(object)
 
     def __init__(
         self,
@@ -761,7 +755,7 @@ class DanmakuWidget(QWidget):
         self.services = services if services is not None else create_default_services()
         self.config_store: ConfigStore = self.services.config_store  # Typed settings boundary.
         self.auth_service: AuthenticationService = self.services.auth_service  # Shared auth boundary.
-        self.danmaku_client: Optional[DanmakuClient] = None  # Client owned by this widget.
+        self.danmaku_client: DanmakuClient | None = None  # Client owned by this widget.
         self._audience_refresh_task: asyncio.Task[None] | None = None  # Cancelled on disconnect.
         self._audience_generation = 0
         self._audience_snapshot: AudienceSnapshot | None = None
@@ -1132,9 +1126,7 @@ class DanmakuWidget(QWidget):
         self.setLayout(self.main_layout)
         
         # 信号连接
-        self.danmaku_received.connect(self.add_message)
-        self.gift_received.connect(self.add_message)
-        self.interact_received.connect(self.add_message)
+        self.message_received.connect(self.add_message)
         
         # 初始化全局输入框
         self.input_dialog = DanmakuInputDialog(None)
@@ -1143,7 +1135,7 @@ class DanmakuWidget(QWidget):
         # 拖拽移动相关变量
         self._dragging = False
         self._drag_position = QPoint()
-        self._message_buffer = [] # [Optimization] Buffer
+        self._message_buffer: list[HudMessage] = [] # [Optimization] Buffer
         
         # 大小调整手柄
         self.size_grip = CustomSizeGrip(self)
@@ -1221,6 +1213,10 @@ class DanmakuWidget(QWidget):
         self.tray_mirror_action = QAction("BiliHUD Mirror", self)
         self.tray_mirror_action.triggered.connect(self.open_mirror_settings)
         tray_menu.addAction(self.tray_mirror_action)
+
+        self.tray_mock_action = QAction("弹幕模拟", self)
+        self.tray_mock_action.triggered.connect(self.trigger_danmaku_simulation)
+        tray_menu.addAction(self.tray_mock_action)
         
         quit_action = QAction("退出程序", self)
         quit_action.triggered.connect(self.quit_app)
@@ -1231,21 +1227,13 @@ class DanmakuWidget(QWidget):
         
         self.tray_icon.activated.connect(self.on_tray_activated)
 
-    def add_system_message(self, message: str, level: str = "info"):
-        """添加系统消息到列表"""
-        class SystemMessage:
-            def __init__(self, msg, level):
-                self.uname = " [系统]"
-                self.msg = msg
-                self.privilege_type = 0
-                self.vip = False
-                self.svip = False
-                self.admin = False
-                self.is_system_error = (level == "error")
-                self.is_system_info = (level == "info")
-        
-        msg_obj = SystemMessage(message, level)
-        self.add_message(msg_obj)
+    def add_system_message(
+        self,
+        message: str,
+        level: SystemMessageLevel = SystemMessageLevel.INFO,
+    ) -> None:
+        """Add a locally generated system message to the shared message stream."""
+        self.add_message(make_system_message(message, level))
 
     def is_gaming_mode_available(self) -> bool:
         return gaming_mode_available(
@@ -1274,10 +1262,10 @@ class DanmakuWidget(QWidget):
                 # 可选：发送成功也显示一条本地回显，或者直接等服务器下发
                 pass 
             else:
-                self.add_system_message(f"发送失败: {msg}", "error")
+                self.add_system_message(f"发送失败: {msg}", SystemMessageLevel.ERROR)
                 print(f"弹幕发送失败: {msg}")
         else:
-              self.add_system_message("未连接直播间，无法发送", "error")
+              self.add_system_message("未连接直播间，无法发送", SystemMessageLevel.ERROR)
               print("未连接，无法发送")
 
     def trigger_send(self, text: str):
@@ -1298,7 +1286,7 @@ class DanmakuWidget(QWidget):
 
     async def _open_emoticon_picker(self) -> None:
         if not self.danmaku_client or not self.danmaku_client.session:
-            self.add_system_message("未连接直播间，无法加载表情", "error")
+            self.add_system_message("未连接直播间，无法加载表情", SystemMessageLevel.ERROR)
             return
 
         self.emoticon_picker.set_loading()
@@ -1325,16 +1313,23 @@ class DanmakuWidget(QWidget):
 
     async def _send_live_emoticon_task(self, emoticon: LiveEmoticon):
         if not self.danmaku_client:
-            self.add_system_message("未连接直播间，无法发送", "error")
+            self.add_system_message("未连接直播间，无法发送", SystemMessageLevel.ERROR)
             return
         success, msg = await self.danmaku_client.send_live_emoticon(emoticon)
         if not success:
-            self.add_system_message(f"发送失败: {msg}", "error")
+            self.add_system_message(f"发送失败: {msg}", SystemMessageLevel.ERROR)
 
     def open_input_dialog(self):
         """打开全局输入框"""
         self.input_dialog.show()
         self.input_dialog.activateWindow()
+
+    def trigger_danmaku_simulation(self) -> None:
+        """Inject the complete fixed message batch into the normal HUD path."""
+        if self._shutting_down:
+            return
+        for message in mock_message_batch():
+            self.add_message(message)
 
     def on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -1686,13 +1681,8 @@ class DanmakuWidget(QWidget):
         # [Message Buffering]
         # Process all types of messages
         if self._message_buffer:
-            for item_type, item_data in self._message_buffer:
-                if item_type == 'msg':
-                    self.add_message(item_data)
-                elif item_type == 'gift':
-                    self.gift_received.emit(item_data)
-                elif item_type == 'interact':
-                    self.interact_received.emit(item_data)
+            for message in self._message_buffer:
+                self.message_received.emit(message)
             self._message_buffer.clear()
 
 
@@ -1788,10 +1778,8 @@ class DanmakuWidget(QWidget):
         if not visible:
             self.audience_popup.hide()
 
-    def _wire_danmaku_client(self, client: DanmakuClient):
-        client.set_danmaku_callback(self.on_danmaku_received)
-        client.set_gift_callback(self.on_gift_received)
-        client.set_interact_callback(self.on_interact_received)
+    def _wire_danmaku_client(self, client: DanmakuClient) -> None:
+        client.set_message_callback(self.on_message_received)
         client.set_login_failed_callback(self.on_login_failed)
 
     def _set_connecting_ui(self):
@@ -1888,7 +1876,7 @@ class DanmakuWidget(QWidget):
                 self.audience_status.set_snapshot(previous_snapshot)
                 self.audience_popup.set_snapshot(previous_snapshot)
                 self._sync_audience_visibility()
-            self.add_system_message(f"断开失败: {e}", "error")
+            self.add_system_message(f"断开失败: {e}", SystemMessageLevel.ERROR)
             print(f"Disconnect failed: {e}")
             raise
         self.danmaku_client = None
@@ -1925,26 +1913,15 @@ class DanmakuWidget(QWidget):
         except ValueError:
             self.room_id_input.setText(str(self.room_id))
 
-    def on_danmaku_received(self, danmaku_msg: web_models.DanmakuMessage):
+    def on_message_received(self, message: HudMessage) -> None:
+        """Queue or display a message that has already crossed the blivedm boundary."""
         if self._dragging:
-            self._message_buffer.append(('msg', danmaku_msg))
+            self._message_buffer.append(message)
         else:
-            self.danmaku_received.emit(danmaku_msg)
+            self.message_received.emit(message)
 
-    def on_gift_received(self, gift_msg: web_models.GiftMessage):
-        if self._dragging:
-            self._message_buffer.append(('gift', gift_msg))
-        else:
-            self.gift_received.emit(gift_msg)
-
-    def on_interact_received(self, interact_msg: web_models.InteractWordV2Message):
-        if self._dragging:
-            self._message_buffer.append(('interact', interact_msg))
-        else:
-            self.interact_received.emit(interact_msg)
-
-    def add_message(self, message, _from_buffer=False):
-        """通用添加消息方法 (Delegate Version)"""
+    def add_message(self, message: HudMessage, _from_buffer: bool = False) -> None:
+        """Add one normalized message to Qt history and the optional Mirror stream."""
         # [Delegate Architecture]
         # Just create an item and set data. Paint/Layout is handled by DanmakuDelegate.
         item = QListWidgetItem()
@@ -1996,7 +1973,7 @@ class DanmakuWidget(QWidget):
         try:
             anchor_room_id = await self._ensure_live_control_room()
         except Exception as e:
-            self.add_system_message(f"无法打开直播控制: {e}", "error")
+            self.add_system_message(f"无法打开直播控制: {e}", SystemMessageLevel.ERROR)
             print(f"Open live control failed: {e}")
             return
         if self._shutting_down:
@@ -2104,7 +2081,7 @@ class DanmakuWidget(QWidget):
             await server.start()
         except OSError as exc:
             self.mirror_error = str(exc)
-            self.add_system_message(f"BiliHUD Mirror 启动失败: {exc}", "error")
+            self.add_system_message(f"BiliHUD Mirror 启动失败: {exc}", SystemMessageLevel.ERROR)
             self.refresh_mirror_settings()
             return
 
@@ -2190,7 +2167,7 @@ class DanmakuWidget(QWidget):
             QSystemTrayIcon.MessageIcon.Warning, 
             5000
         )
-        self.add_system_message(msg, "error")
+        self.add_system_message(msg, SystemMessageLevel.ERROR)
 
     def closeEvent(self, event: QCloseEvent):
         """覆盖关闭事件：最小化到系统托盘，而不是退出程序"""

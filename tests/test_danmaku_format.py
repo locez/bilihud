@@ -1,5 +1,3 @@
-import importlib
-
 from bilihud.danmaku_format import (
     danmaku_author_badges_html,
     danmaku_emoticon_scaled_size,
@@ -7,55 +5,48 @@ from bilihud.danmaku_format import (
     danmaku_message_content_html,
     danmaku_message_emoticon_urls,
 )
+from bilihud.domain.messages import (
+    DanmakuMessage,
+    ImageSegment,
+    MessageAuthor,
+    MessageBadge,
+    MessageBadgeKind,
+    ReplySegment,
+    TextSegment,
+)
 
-web_models = importlib.import_module("blivedm.models.web")
+
+def _message(*segments, badges=()):
+    return DanmakuMessage(
+        author=MessageAuthor(uid=1, name="Locez", color="#66CCFF", badges=badges),
+        segments=tuple(segments),
+    )
 
 
 def test_danmaku_emoticon_url_only_uses_pure_emoticon_messages():
-    emoticon = web_models.DanmakuMessage(
-        dm_type=1,
-        msg="[妙啊]",
-        emoticon_options={
-            "url": "https://i0.hdslb.com/bfs/live/emote.png",
-            "width": 183,
-            "height": 60,
-        },
-    )
-    text = web_models.DanmakuMessage(
-        dm_type=0,
-        msg="[妙啊]",
-        emoticon_options={
-            "url": "https://i0.hdslb.com/bfs/live/emote.png",
-            "width": 183,
-            "height": 60,
-        },
-    )
+    emoticon = _message(ImageSegment("[妙啊]", "https://i0.hdslb.com/bfs/live/emote.png", 183, 60))
+    text = _message(TextSegment("[妙啊]"))
 
     assert danmaku_emoticon_url(emoticon) == "https://i0.hdslb.com/bfs/live/emote.png"
     assert danmaku_emoticon_url(text) == ""
 
 
 def test_danmaku_emoticon_scaled_size_preserves_aspect_ratio():
-    options = {
-        "url": "https://i0.hdslb.com/bfs/live/emote.png",
-        "width": 183,
-        "height": 60,
-    }
+    segment = ImageSegment("[妙啊]", "https://i0.hdslb.com/bfs/live/emote.png", 183, 60)
 
-    assert danmaku_emoticon_scaled_size(options) == (104, 34)
+    assert danmaku_emoticon_scaled_size(segment) == (104, 34)
 
 
 def test_danmaku_message_content_html_renders_emoticon_image_and_escapes_text():
-    emoticon = web_models.DanmakuMessage(
-        dm_type=1,
-        msg='[<妙啊>"]',
-        emoticon_options={
-            "url": "https://i0.hdslb.com/bfs/live/emote.png?x=1&y=2",
-            "width": 60,
-            "height": 60,
-        },
+    emoticon = _message(
+        ImageSegment(
+            '[<妙啊>"]',
+            "https://i0.hdslb.com/bfs/live/emote.png?x=1&y=2",
+            60,
+            60,
+        )
     )
-    text = web_models.DanmakuMessage(dm_type=0, msg="<b>普通弹幕</b>")
+    text = _message(TextSegment("<b>普通弹幕</b>"))
 
     assert danmaku_message_content_html(emoticon) == (
         '<img class="emoticon" src="https://i0.hdslb.com/bfs/live/emote.png?x=1&amp;y=2" '
@@ -64,21 +55,11 @@ def test_danmaku_message_content_html_renders_emoticon_image_and_escapes_text():
     assert danmaku_message_content_html(text) == "&lt;b&gt;普通弹幕&lt;/b&gt;"
 
 
-def test_danmaku_message_content_html_renders_inline_emoticons_from_extra_emots():
-    message = web_models.DanmakuMessage(
-        dm_type=0,
-        msg="[汤圆][汤圆] <ok>",
-        mode_info={
-            "extra": {
-                "emots": {
-                    "[汤圆]": {
-                        "url": "https://i0.hdslb.com/bfs/live/tangyuan.png?x=1&y=2",
-                        "width": 60,
-                        "height": 60,
-                    }
-                }
-            }
-        },
+def test_danmaku_message_content_html_renders_inline_emoticons_from_segments():
+    message = _message(
+        ImageSegment("[汤圆]", "https://i0.hdslb.com/bfs/live/tangyuan.png?x=1&y=2", 60, 60),
+        ImageSegment("[汤圆]", "https://i0.hdslb.com/bfs/live/tangyuan.png?x=1&y=2", 60, 60),
+        TextSegment(" <ok>"),
     )
 
     assert danmaku_message_content_html(message) == (
@@ -90,17 +71,8 @@ def test_danmaku_message_content_html_renders_inline_emoticons_from_extra_emots(
     )
 
 
-def test_danmaku_message_content_html_prepends_reply_target():
-    message = web_models.DanmakuMessage(
-        dm_type=0,
-        msg="test",
-        mode_info={
-            "extra": {
-                "show_reply": True,
-                "reply_uname": "绚下的小恐龙",
-            }
-        },
-    )
+def test_danmaku_message_content_html_prepends_reply_target_prefix():
+    message = _message(ReplySegment("@绚下的小恐龙 "), TextSegment("test"))
 
     assert danmaku_message_content_html(message) == (
         '<span class="reply">@绚下的小恐龙&nbsp;</span>test'
@@ -108,25 +80,10 @@ def test_danmaku_message_content_html_prepends_reply_target():
 
 
 def test_danmaku_message_emoticon_urls_include_inline_emots_once():
-    message = web_models.DanmakuMessage(
-        dm_type=0,
-        msg="[汤圆][汤圆] [无图]",
-        mode_info={
-            "extra": {
-                "emots": {
-                    "[汤圆]": {
-                        "url": "https://i0.hdslb.com/bfs/live/tangyuan.png",
-                        "width": 60,
-                        "height": 60,
-                    },
-                    "[无图]": {
-                        "url": "",
-                        "width": 60,
-                        "height": 60,
-                    },
-                }
-            }
-        },
+    message = _message(
+        ImageSegment("[汤圆]", "https://i0.hdslb.com/bfs/live/tangyuan.png", 60, 60),
+        ImageSegment("[汤圆]", "https://i0.hdslb.com/bfs/live/tangyuan.png", 60, 60),
+        TextSegment(" [无图]"),
     )
 
     assert danmaku_message_emoticon_urls(message) == [
@@ -135,42 +92,24 @@ def test_danmaku_message_emoticon_urls_include_inline_emots_once():
 
 
 def test_danmaku_author_badges_html_renders_compact_metadata_badges():
-    message = web_models.DanmakuMessage(
-        medal_name="<狐>",
-        medal_level=26,
-        mcolor=0x2FB6E8,
-        wealth_level=8,
-        privilege_type=3,
+    badges = (
+        MessageBadge(MessageBadgeKind.MEDAL, "<狐> 26", "粉丝牌", "#FF79C6"),
+        MessageBadge(MessageBadgeKind.WEALTH, "✦ 8", "财富等级", "#C9B6FF"),
+        MessageBadge(MessageBadgeKind.PRIVILEGE, "⚓︎", "大航海", "#86C8FF"),
     )
+    message = _message(TextSegment("测试"), badges=badges)
 
-    badges = danmaku_author_badges_html(message)
+    rendered = danmaku_author_badges_html(message)
 
-    assert "meta-badge medal-badge" in badges
-    assert "&lt;狐&gt;" in badges
-    assert "26" in badges
-    assert "#FF79C6" in badges
-    assert "&lt;狐&gt; 26</span>&nbsp;<span" in badges
-    assert "meta-badge wealth-badge" in badges
-    assert "✦" in badges
-    assert "8" in badges
-    assert "✦ 8</span>&nbsp;<span" in badges
-    assert "meta-badge privilege-badge" in badges
-    assert "⚓︎" in badges
-    assert "舰长" not in badges
-    assert "荣耀" not in badges
-    assert "荣" not in badges
+    assert "meta-badge medal-badge" in rendered
+    assert "&lt;狐&gt; 26</span>&nbsp;<span" in rendered
+    assert "meta-badge wealth-badge" in rendered
+    assert "✦ 8</span>&nbsp;<span" in rendered
+    assert "meta-badge privilege-badge" in rendered
+    assert "⚓︎" in rendered
 
 
 def test_danmaku_author_badges_html_omits_empty_metadata():
-    message = web_models.DanmakuMessage()
+    message = _message(TextSegment("测试"))
 
     assert danmaku_author_badges_html(message) == ""
-
-
-def test_danmaku_author_badges_html_maps_guard_levels_to_blue_purple_gold():
-    assert "🛳︎" in danmaku_author_badges_html(web_models.DanmakuMessage(privilege_type=1))
-    assert "#FFD700" in danmaku_author_badges_html(web_models.DanmakuMessage(privilege_type=1))
-    assert "⛴︎" in danmaku_author_badges_html(web_models.DanmakuMessage(privilege_type=2))
-    assert "#C9B6FF" in danmaku_author_badges_html(web_models.DanmakuMessage(privilege_type=2))
-    assert "⚓︎" in danmaku_author_badges_html(web_models.DanmakuMessage(privilege_type=3))
-    assert "#86C8FF" in danmaku_author_badges_html(web_models.DanmakuMessage(privilege_type=3))

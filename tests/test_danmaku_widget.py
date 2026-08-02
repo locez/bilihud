@@ -8,6 +8,18 @@ from PyQt6.QtWidgets import QApplication, QLabel, QWidget
 
 from bilihud import danmaku_widget
 from bilihud.config import AppConfig
+from bilihud.domain.messages import (
+    DanmakuMessage,
+    GiftMessage,
+    InteractionKind,
+    InteractMessage,
+    MessageAuthor,
+    MessageBadge,
+    MessageBadgeKind,
+    ReplySegment,
+    TextSegment,
+    make_system_message,
+)
 from bilihud.live_audience import AudienceSnapshot, AudienceUser
 from bilihud.live_emoticons import LiveEmoticon, LiveEmoticonPackage
 
@@ -129,6 +141,7 @@ def test_danmaku_widget_exposes_bilihud_mirror_tray_action(monkeypatch):
     widget.open_qr_login = lambda: events.append("login")
     widget.open_live_control = lambda: events.append("live-control")
     widget.open_mirror_settings = lambda: events.append("mirror")
+    widget.trigger_danmaku_simulation = lambda: events.append("mock")
     widget.quit_app = lambda: events.append("quit")
     monkeypatch.setattr(danmaku_widget, "QAction", Action)
     monkeypatch.setattr(danmaku_widget, "QMenu", Menu)
@@ -140,6 +153,21 @@ def test_danmaku_widget_exposes_bilihud_mirror_tray_action(monkeypatch):
     assert widget.tray_mirror_action.text == "BiliHUD Mirror"
     widget.tray_mirror_action.triggered.emit()
     assert events == ["mirror"]
+    assert widget.tray_mock_action.text == "弹幕模拟"
+    widget.tray_mock_action.triggered.emit()
+    assert events == ["mirror", "mock"]
+
+
+def test_danmaku_widget_injects_fixed_mock_messages_into_hud(monkeypatch):
+    _app()
+    widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+    widget._shutting_down = False
+    received = []
+    widget.add_message = received.append
+
+    danmaku_widget.DanmakuWidget.trigger_danmaku_simulation(widget)
+
+    assert len(received) == len(danmaku_widget.mock_message_batch())
 
 
 def test_danmaku_widget_opens_single_mirror_settings_dialog(monkeypatch):
@@ -293,32 +321,53 @@ def test_emoticon_picker_requests_bilibili_headers(monkeypatch):
 
 
 def test_danmaku_delegate_renders_local_system_messages():
-    class SystemMessage:
-        uname = " [系统]"
-        msg = "BiliHUD Mirror 已启动: <url>"
-        is_system_info = True
-        is_system_error = False
-        privilege_type = 0
-        vip = False
-        svip = False
-        admin = False
-
-    html = danmaku_widget.DanmakuDelegate().get_html_for_message(SystemMessage())
+    html = danmaku_widget.DanmakuDelegate().get_html_for_message(
+        make_system_message("BiliHUD Mirror 已启动: <url>")
+    )
 
     assert "BiliHUD Mirror 已启动" in html
     assert "&lt;url&gt;" in html
     assert html.strip()
 
 
+def test_danmaku_delegate_renders_gift_and_interaction_variants():
+    gift = GiftMessage(
+        author=MessageAuthor(uid=1, name="送礼用户", color="#FFD700"),
+        segments=(TextSegment("赠送 辣条 x2"),),
+        action="赠送",
+        gift_name="辣条",
+        quantity=2,
+    )
+    interact = InteractMessage(
+        author=MessageAuthor(uid=2, name="互动用户", color="#AAAAAA"),
+        segments=(TextSegment("关注了主播"),),
+        interaction=InteractionKind.FOLLOW,
+    )
+    delegate = danmaku_widget.DanmakuDelegate()
+
+    gift_html = delegate.get_html_for_message(gift)
+    interact_html = delegate.get_html_for_message(interact)
+
+    assert "送礼用户" in gift_html
+    assert "赠送" in gift_html
+    assert "辣条 x2" in gift_html
+    assert "互动用户" in interact_html
+    assert "关注了主播" in interact_html
+
+
 def test_danmaku_delegate_renders_compact_author_badges():
-    message = danmaku_widget.web_models.DanmakuMessage(
-        uname="Locez",
-        msg="测试",
-        medal_name="小狐",
-        medal_level=26,
-        mcolor=0x2FB6E8,
-        wealth_level=8,
-        privilege_type=3,
+    message = DanmakuMessage(
+        author=MessageAuthor(
+            uid=1,
+            name="Locez",
+            color="#FFD700",
+            badges=(
+                MessageBadge(MessageBadgeKind.MEDAL, "小狐 26", "粉丝牌", "#FF79C6"),
+                MessageBadge(MessageBadgeKind.WEALTH, "✦ 8", "财富等级", "#C9B6FF"),
+                MessageBadge(MessageBadgeKind.PRIVILEGE, "⚓︎", "大航海", "#86C8FF"),
+            ),
+        ),
+        segments=(TextSegment("测试"),),
     )
 
     html = danmaku_widget.DanmakuDelegate().get_html_for_message(message)
@@ -338,15 +387,9 @@ def test_danmaku_delegate_renders_compact_author_badges():
 
 
 def test_danmaku_delegate_renders_reply_target_prefix():
-    message = danmaku_widget.web_models.DanmakuMessage(
-        uname="Locez",
-        msg="test",
-        mode_info={
-            "extra": {
-                "show_reply": True,
-                "reply_uname": "绚下的小恐龙",
-            }
-        },
+    message = DanmakuMessage(
+        author=MessageAuthor(uid=1, name="Locez", color="#66CCFF"),
+        segments=(ReplySegment("@绚下的小恐龙 "), TextSegment("test")),
     )
 
     html = danmaku_widget.DanmakuDelegate().get_html_for_message(message)
@@ -358,21 +401,17 @@ def test_danmaku_delegate_renders_reply_target_prefix():
 def test_danmaku_delegate_does_not_reuse_document_for_reused_message_id(monkeypatch):
     _app()
 
-    class Message:
-        privilege_type = 0
-        vip = False
-        svip = False
-        admin = False
-
-        def __init__(self, text: str):
-            self.uname = "Locez"
-            self.msg = text
+    def message(text: str) -> DanmakuMessage:
+        return DanmakuMessage(
+            author=MessageAuthor(uid=1, name="Locez", color="#66CCFF"),
+            segments=(TextSegment(text),),
+        )
 
     delegate = danmaku_widget.DanmakuDelegate()
     monkeypatch.setattr(danmaku_widget, "id", lambda _message: 7450109, raising=False)
 
-    first_doc = delegate._get_document(Message("旧消息"), 320, QFont())
-    second_doc = delegate._get_document(Message("新消息"), 320, QFont())
+    first_doc = delegate._get_document(message("旧消息"), 320, QFont())
+    second_doc = delegate._get_document(message("新消息"), 320, QFont())
 
     assert "旧消息" in first_doc.toPlainText()
     assert "新消息" in second_doc.toPlainText()
@@ -380,17 +419,12 @@ def test_danmaku_delegate_does_not_reuse_document_for_reused_message_id(monkeypa
 
 
 def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
-    class Message:
-        uname = "Locez"
-        msg = "新弹幕"
-        privilege_type = 0
-        vip = False
-        svip = False
-        admin = False
-
     class RemovedItem:
         def data(self, _role):
-            return Message()
+            return DanmakuMessage(
+                author=MessageAuthor(uid=1, name="Locez", color="#66CCFF"),
+                segments=(TextSegment("旧弹幕"),),
+            )
 
     class FakeDelegate:
         def forget_message(self, _message):
@@ -435,7 +469,10 @@ def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
     widget.danmaku_list = FakeList()
     widget.mirror_state = MirrorState()
     widget.mirror_server = MirrorServer()
-    message = Message()
+    message = DanmakuMessage(
+        author=MessageAuthor(uid=1, name="Locez", color="#66CCFF"),
+        segments=(TextSegment("新弹幕"),),
+    )
 
     danmaku_widget.DanmakuWidget.add_message(widget, message)
 

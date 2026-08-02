@@ -4,6 +4,7 @@ import json
 import pytest
 from aiohttp import ClientSession, web
 
+from bilihud.domain.messages import DanmakuMessage, MessageAuthor, TextSegment
 from bilihud.mirror_server import IMAGE_PROXY_HEADERS, MirrorServer, mirror_event_payload, mirror_html
 from bilihud.mirror_state import MIRROR_EVENTS_ROUTE, MIRROR_IMAGE_ROUTE, MIRROR_ROUTE, MirrorState
 
@@ -80,7 +81,12 @@ async def _read_sse_event(response):
 def test_mirror_server_streams_snapshot_before_later_messages():
     async def run_test():
         state = MirrorState()
-        state.add_message({"uname": "Locez", "msg": "历史消息"})
+        state.add_message(
+            DanmakuMessage(
+                author=MessageAuthor(uid=1, name="Locez", color="#66CCFF"),
+                segments=(TextSegment("历史消息"),),
+            )
+        )
         mirror_server = MirrorServer(state, port=0)
         await mirror_server.start()
 

@@ -5,7 +5,8 @@ import aiohttp
 import pytest
 
 from bilihud import danmaku_client
-from bilihud.danmaku_client import DanmakuClient, DanmakuShutdownError
+from bilihud.danmaku_client import DanmakuClient, DanmakuHandler, DanmakuShutdownError
+from bilihud.domain.messages import DanmakuMessage, GiftMessage, InteractMessage
 from bilihud.live_emoticons import LiveEmoticon
 
 
@@ -50,6 +51,26 @@ def test_start_starts_blivedm_client_and_reports_missing_login(monkeypatch):
         assert login_failures == ["未找到有效登录信息，请扫码登录"]
 
     asyncio.run(run_test())
+
+
+def test_handler_emits_normalized_domain_messages():
+    client = DanmakuClient(7450109)
+    received = []
+    client.set_message_callback(received.append)
+    handler = DanmakuHandler()
+    handler.set_danmaku_client(client)
+
+    handler._on_danmaku(None, danmaku_client.web_models.DanmakuMessage(uname="弹幕用户", msg="你好"))
+    handler._on_gift(None, danmaku_client.web_models.GiftMessage(uname="礼物用户", gift_name="辣条", num=1))
+    handler._on_interact_word_v2(
+        None,
+        danmaku_client.web_models.InteractWordV2Message(username="互动用户", msg_type=2),
+    )
+
+    assert isinstance(received[0], DanmakuMessage)
+    assert isinstance(received[1], GiftMessage)
+    assert isinstance(received[2], InteractMessage)
+    assert [message.author.name for message in received] == ["弹幕用户", "礼物用户", "互动用户"]
 
 
 def test_start_reports_expired_keyring_login(monkeypatch):

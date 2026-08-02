@@ -1,16 +1,20 @@
+"""In-memory Mirror state and serialization for normalized HUD messages."""
+
 from __future__ import annotations
 
-import re
-from typing import Any
+from typing import Literal, NotRequired, TypedDict
 
-import blivedm.models.web as web_models
-
-from .danmaku_format import (
-    danmaku_author_badges,
-    danmaku_emoticon_scaled_size,
-    danmaku_emoticon_url,
-    danmaku_inline_emoticons,
-    danmaku_reply_text,
+from .danmaku_format import danmaku_emoticon_scaled_size
+from .domain.messages import (
+    DanmakuMessage,
+    GiftMessage,
+    HudMessage,
+    ImageSegment,
+    InteractMessage,
+    MessageBadge,
+    MessageSegment,
+    ReplySegment,
+    SystemMessage,
 )
 
 MIRROR_DEFAULT_PORT = 2233
@@ -20,135 +24,158 @@ MIRROR_IMAGE_ROUTE = "/bilihud-mirror/image"
 MIRROR_MAX_MESSAGES = 200
 
 
-def user_color_for_message(message: Any) -> str:
-    if getattr(message, "is_system_error", False):
-        return "#FF5555"
-    if getattr(message, "is_system_info", False):
-        return "#AAAAAA"
-    if getattr(message, "privilege_type", 0) > 0:
-        return "#FFD700"
-    if isinstance(message, web_models.GiftMessage):
-        return "#FFD700"
-    if isinstance(message, web_models.InteractWordV2Message):
-        return "#AAAAAA"
-    if getattr(message, "vip", False) or getattr(message, "svip", False):
-        return "#FF69B4"
-    if getattr(message, "admin", False):
-        return "#FF4500"
-    return "#66CCFF"
+class MirrorTextSegment(TypedDict):
+    """Serialized literal text fragment sent to the Mirror browser."""
+
+    type: Literal["text"]
+    text: str
 
 
-def _image_segment(text: str, url: str, options: dict[str, Any]) -> dict[str, Any]:
-    width, height = danmaku_emoticon_scaled_size(options)
+class MirrorReplySegment(TypedDict):
+    """Serialized reply prefix sent to the Mirror browser."""
+
+    type: Literal["reply"]
+    text: str
+
+
+class MirrorImageSegment(TypedDict):
+    """Serialized image fragment sent to the Mirror browser."""
+
+    type: Literal["image"]
+    text: str
+    url: str
+    width: int
+    height: int
+
+
+type MirrorSegment = MirrorTextSegment | MirrorReplySegment | MirrorImageSegment
+
+
+class MirrorBadge(TypedDict):
+    """Serialized author badge sent to the Mirror browser."""
+
+    type: str
+    text: str
+    title: str
+    color: str
+
+
+class MirrorEntry(TypedDict):
+    """Stable JSON-compatible representation of one HUD message."""
+
+    seq: int
+    kind: Literal["danmaku", "gift", "interact", "system"]
+    user: str
+    userColor: str
+    segments: list[MirrorSegment]
+    badges: NotRequired[list[MirrorBadge]]
+
+
+def user_color_for_message(message: HudMessage) -> str:
+    """Return the color normalized by the infrastructure adapter."""
+    return message.author.color
+
+
+def _badge_to_mirror(badge: MessageBadge) -> MirrorBadge:
+    """Serialize one typed domain badge without exposing its enum instance."""
     return {
-        "type": "image",
-        "text": text,
-        "url": url,
-        "width": width,
-        "height": height,
+        "type": badge.kind.value,
+        "text": badge.text,
+        "title": badge.title,
+        "color": badge.color,
     }
 
 
-def danmaku_segments(message: web_models.DanmakuMessage) -> list[dict[str, Any]]:
-    segments: list[dict[str, Any]] = []
-    reply_text = danmaku_reply_text(message)
-    if reply_text:
-        segments.append({"type": "reply", "text": reply_text})
-
-    pure_url = danmaku_emoticon_url(message)
-    if pure_url:
-        segments.append(_image_segment(message.msg.strip() or "表情", pure_url, message.emoticon_options_dict))
-        return segments
-
-    text = message.msg.strip()
-    inline = {
-        token: options
-        for token, options in danmaku_inline_emoticons(message).items()
-        if token in text
-    }
-    if not inline:
-        segments.append({"type": "text", "text": text})
-        return segments
-
-    pattern = re.compile("|".join(re.escape(token) for token in sorted(inline, key=len, reverse=True)))
-    last_end = 0
-    for match in pattern.finditer(text):
-        if match.start() > last_end:
-            segments.append({"type": "text", "text": text[last_end:match.start()]})
-        token = match.group(0)
-        options = inline[token]
-        segments.append(_image_segment(token, str(options.get("url") or ""), options))
-        last_end = match.end()
-    if last_end < len(text):
-        segments.append({"type": "text", "text": text[last_end:]})
-    return segments
+def _segment_to_mirror(segment: MessageSegment) -> MirrorSegment:
+    """Serialize one typed domain fragment for the browser protocol."""
+    if isinstance(segment, ImageSegment):
+        width, height = danmaku_emoticon_scaled_size(segment)
+        return {
+            "type": "image",
+            "text": segment.text,
+            "url": segment.url,
+            "width": width,
+            "height": height,
+        }
+    if isinstance(segment, ReplySegment):
+        return {"type": "reply", "text": segment.text}
+    return {"type": "text", "text": segment.text}
 
 
-def _interact_text(msg_type: int) -> str:
-    return {
-        1: "进入直播间",
-        2: "关注了主播",
-        3: "分享了直播间",
-        4: "特别关注了主播",
-        5: "互粉了主播",
-        6: "为主播点赞了",
-    }.get(msg_type, "进入直播间")
+def danmaku_segments(message: DanmakuMessage) -> list[MirrorSegment]:
+    """Serialize normalized danmaku fragments using the Mirror wire contract."""
+    return [_segment_to_mirror(segment) for segment in message.segments]
 
 
-def message_to_mirror_entry(seq: int, message: Any) -> dict[str, Any]:
-    if isinstance(message, web_models.DanmakuMessage):
-        entry = {
+def _segments_for(message: HudMessage) -> list[MirrorSegment]:
+    """Serialize any supported message variant's shared fragment sequence."""
+    if isinstance(message, DanmakuMessage):
+        return danmaku_segments(message)
+    return [_segment_to_mirror(segment) for segment in message.segments]
+
+
+def message_to_mirror_entry(seq: int, message: HudMessage) -> MirrorEntry:
+    """Convert one normalized message into the browser-facing Mirror entry."""
+    if isinstance(message, DanmakuMessage):
+        entry: MirrorEntry = {
             "seq": seq,
             "kind": "danmaku",
-            "user": message.uname,
+            "user": message.author.name,
             "userColor": user_color_for_message(message),
             "segments": danmaku_segments(message),
         }
-        badges = danmaku_author_badges(message)
-        if badges:
-            entry["badges"] = badges
+        if message.author.badges:
+            entry["badges"] = [_badge_to_mirror(badge) for badge in message.author.badges]
         return entry
 
-    if isinstance(message, web_models.GiftMessage):
+    if isinstance(message, GiftMessage):
         return {
             "seq": seq,
             "kind": "gift",
-            "user": message.uname,
+            "user": message.author.name,
             "userColor": user_color_for_message(message),
-            "segments": [{"type": "text", "text": f"{message.action} {message.gift_name} x{message.num}"}],
+            "segments": _segments_for(message),
         }
 
-    if isinstance(message, web_models.InteractWordV2Message):
+    if isinstance(message, InteractMessage):
         return {
             "seq": seq,
             "kind": "interact",
-            "user": message.username,
+            "user": message.author.name,
             "userColor": user_color_for_message(message),
-            "segments": [{"type": "text", "text": _interact_text(message.msg_type)}],
+            "segments": _segments_for(message),
         }
 
-    return {
-        "seq": seq,
-        "kind": "system",
-        "user": str(getattr(message, "uname", "")),
-        "userColor": user_color_for_message(message),
-        "segments": [{"type": "text", "text": str(getattr(message, "msg", ""))}],
-    }
+    if isinstance(message, SystemMessage):
+        return {
+            "seq": seq,
+            "kind": "system",
+            "user": message.author.name,
+            "userColor": user_color_for_message(message),
+            "segments": _segments_for(message),
+        }
+
+    raise TypeError(f"unsupported HUD message type: {type(message).__name__}")
 
 
 class MirrorState:
-    def __init__(self, max_messages: int = MIRROR_MAX_MESSAGES):
+    """Keep a bounded history of serialized messages for Mirror clients."""
+
+    def __init__(self, max_messages: int = MIRROR_MAX_MESSAGES) -> None:
+        """Create state with a maximum number of retained entries."""
         self.max_messages = max_messages
         self._next_seq = 1
-        self._messages: list[dict[str, Any]] = []
+        self._messages: list[MirrorEntry] = []
 
-    def add_message(self, message: Any) -> dict[str, Any]:
+    def add_message(self, message: HudMessage) -> MirrorEntry:
+        """Serialize and append one message, evicting the oldest entries if needed."""
         entry = message_to_mirror_entry(self._next_seq, message)
         self._next_seq += 1
         self._messages.append(entry)
         if len(self._messages) > self.max_messages:
-            self._messages = self._messages[-self.max_messages:]
+            self._messages = self._messages[-self.max_messages :]
         return entry
 
-    def snapshot(self) -> list[dict[str, Any]]:
+    def snapshot(self) -> list[MirrorEntry]:
+        """Return the current bounded history in sequence order."""
         return list(self._messages)

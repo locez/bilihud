@@ -17,6 +17,13 @@ stable design rule, not a list of current migration tasks.
 - Dependencies should point toward stable contracts and business meaning.
 - External data is parsed and validated before entering the domain or application layer.
 - Third-party raw objects do not cross an infrastructure boundary without an explicit adapter contract.
+- `bilihud.domain.messages` owns HUD message variants, author metadata, badges,
+  and content segments; `bilihud.infrastructure.blivedm_adapter` is the only
+  boundary that converts `blivedm` web models into those contracts.
+- `bilihud.mock_messages` creates deterministic domain messages for the tray's
+  developer regression action and must not instantiate raw third-party models.
+- `danmaku_format`, `mirror_state`, and Qt message rendering consume domain
+  messages and must not import `blivedm` models directly.
 - Presentation code binds state and commands; it does not own business workflows.
 - Application code owns use-case lifecycles and coordinates infrastructure through ports.
 - Domain code remains deterministic and independently testable whenever practical.

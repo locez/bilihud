@@ -10,6 +10,12 @@ PRESENTATION_MODULE_NAMES: Final[tuple[str, ...]] = (
     "live_control_dialog",
     "qr_login_dialog",
 )
+MESSAGE_CONSUMER_MODULE_NAMES: Final[tuple[str, ...]] = (
+    "danmaku_format",
+    "danmaku_widget",
+    "mirror_state",
+    "mock_messages",
+)
 
 
 @dataclass(frozen=True)
@@ -96,6 +102,18 @@ def test_layer_import_rules_reject_forbidden_dependencies() -> None:
             for module in _imported_modules(path):
                 if _is_forbidden(module, rule.forbidden_prefixes):
                     violations.append(f"{rule.name}: {path.relative_to(SOURCE_ROOT)} imports {module}")
+
+    assert violations == []
+
+
+def test_message_consumers_do_not_import_blivedm_models() -> None:
+    """Keep third-party message parsing behind the infrastructure adapter."""
+    violations: list[str] = []
+    for name in MESSAGE_CONSUMER_MODULE_NAMES:
+        path = SOURCE_ROOT / f"{name}.py"
+        for module in _imported_modules(path):
+            if _is_forbidden(module, frozenset({"blivedm"})):
+                violations.append(f"{name} imports {module}")
 
     assert violations == []
 
