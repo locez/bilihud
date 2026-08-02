@@ -9,7 +9,7 @@ from bilihud.danmaku_client import DanmakuClient, DanmakuShutdownError
 from bilihud.live_emoticons import LiveEmoticon
 
 
-def test_start_starts_blivedm_client_before_returning(monkeypatch):
+def test_start_starts_blivedm_client_and_reports_missing_login(monkeypatch):
     class FakeAuthManager:
         def load_auth_cookies(self):
             return {}, False
@@ -39,17 +39,20 @@ def test_start_starts_blivedm_client_before_returning(monkeypatch):
         monkeypatch.setattr(danmaku_client.blivedm, "BLiveClient", FakeBLiveClient)
 
         client = DanmakuClient(7450109)
+        login_failures = []
+        client.set_login_failed_callback(login_failures.append)
 
         await client.start()
 
         assert client.client is not None
         assert client.client.start_calls == 1
         assert client.client.is_running is True
+        assert login_failures == ["未找到有效登录信息，请扫码登录"]
 
     asyncio.run(run_test())
 
 
-def test_start_reports_expired_keyring_login_without_falling_back_to_browser(monkeypatch):
+def test_start_reports_expired_keyring_login(monkeypatch):
     class FakeAuthManager:
         def load_auth_cookies(self):
             return {"SESSDATA": "expired"}, True

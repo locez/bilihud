@@ -13,7 +13,6 @@ depends=(
     'python-aiohttp'
     'python-qasync'
     'python-brotli'
-    'python-browser-cookie3' # AUR
     'python-pure-protobuf' # AUR
     'python-qrcode'
     'python-keyring'
