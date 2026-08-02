@@ -202,7 +202,7 @@ class DanmakuClient:
 
         return parse_audience_snapshot(self.room_id, room_payload, rank_payload)
 
-    async def fetch_live_emoticons(self):
+    async def fetch_live_emoticons(self) -> list[LiveEmoticonPackage]:
         """Fetch room-specific live emoticon packages."""
         if not self.session:
             raise RuntimeError("弹幕会话未初始化")
@@ -300,7 +300,7 @@ class DanmakuClient:
         self._wbi_mixin_key = mixin_key
         return mixin_key
 
-    async def stop(self, normal_timeout: float = 3.0, forced_timeout: float = 3.0):
+    async def stop(self, normal_timeout: float = 3.0, forced_timeout: float = 3.0) -> None:
         """Stop the underlying client and close all network resources it owns."""
         client = self.client
         session = self.session

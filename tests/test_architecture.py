@@ -16,6 +16,7 @@ MESSAGE_CONSUMER_MODULE_NAMES: Final[tuple[str, ...]] = (
     "mirror_state",
     "mock_messages",
 )
+APPLICATION_MODULE_NAMES: Final[tuple[str, ...]] = ("hud_controller", "hud_ports")
 
 
 @dataclass(frozen=True)
@@ -137,3 +138,32 @@ def test_presentation_uses_configuration_and_authentication_boundaries() -> None
                         violations.append(f"{name} imports {alias.name}")
 
     assert violations == []
+
+
+def test_hud_controller_keeps_presentation_and_concrete_network_outside_application() -> None:
+    forbidden_prefixes = frozenset(
+        {
+            "PyQt5",
+            "PyQt6",
+            "qasync",
+            "blivedm",
+            "aiohttp",
+            "bilihud.danmaku_client",
+            "bilihud.live_api",
+        }
+    )
+    violations: list[str] = []
+    for name in APPLICATION_MODULE_NAMES:
+        path = SOURCE_ROOT / f"{name}.py"
+        for module in _imported_modules(path):
+            if _is_forbidden(module, forbidden_prefixes):
+                violations.append(f"{name} imports {module}")
+
+    assert violations == []
+
+
+def test_danmaku_widget_uses_hud_controller_instead_of_concrete_client() -> None:
+    modules = _imported_modules(SOURCE_ROOT / "danmaku_widget.py")
+
+    assert "bilihud.hud_controller" in modules
+    assert "bilihud.danmaku_client" not in modules

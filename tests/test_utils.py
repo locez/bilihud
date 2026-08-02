@@ -11,3 +11,6 @@ def test_validate_room_id():
     assert validate_room_id("-1") is False
     assert validate_room_id("abc") is False
     assert validate_room_id("") is False
+    assert validate_room_id(123) is True
+    assert validate_room_id(0) is False
+    assert validate_room_id(-1) is False

@@ -6,6 +6,8 @@ from pathlib import Path
 from .auth import AuthenticationService, BilibiliAuthService, KeyringSessionStore, SessionStore
 from .config import ConfigStore, JsonConfigStore
 from .config_compat import LegacyConfigMigrator
+from .danmaku_client import DanmakuClient
+from .hud_ports import HudClientFactory
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +16,16 @@ class AppServices:
 
     config_store: ConfigStore  # Shared typed settings boundary for all UI workflows.
     auth_service: AuthenticationService  # Shared authentication and secure-secret boundary.
+    hud_client_factory: HudClientFactory  # Concrete HUD network adapter factory.
+
+
+def create_default_hud_client(
+    room_id: int,
+    sessdata: str,
+    auth_service: AuthenticationService,
+) -> DanmakuClient:
+    """Create the production client behind the application's HUD port."""
+    return DanmakuClient(room_id, sessdata, auth_service=auth_service)
 
 
 def create_default_services(config_path: Path | None = None) -> AppServices:
@@ -25,4 +37,5 @@ def create_default_services(config_path: Path | None = None) -> AppServices:
             migrator=LegacyConfigMigrator(session_store),
         ),
         auth_service=BilibiliAuthService(session_store),
+        hud_client_factory=create_default_hud_client,
     )

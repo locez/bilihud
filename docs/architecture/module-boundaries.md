@@ -24,6 +24,11 @@ stable design rule, not a list of current migration tasks.
   developer regression action and must not instantiate raw third-party models.
 - `danmaku_format`, `mirror_state`, and Qt message rendering consume domain
   messages and must not import `blivedm` models directly.
+- `hud_controller` owns room connection transitions, audience refresh tasks,
+  normalized send commands, and typed HUD events; `hud_ports` defines the
+  client capability and factory ports used to inject infrastructure.
+- `danmaku_widget` binds `HudState` and `HudEvent` values to Qt controls and
+  does not own a concrete `DanmakuClient` or its connection tasks.
 - Presentation code binds state and commands; it does not own business workflows.
 - Application code owns use-case lifecycles and coordinates infrastructure through ports.
 - Domain code remains deterministic and independently testable whenever practical.

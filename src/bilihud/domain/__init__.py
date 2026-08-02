@@ -1,5 +1,17 @@
 """Stable domain contracts used by the application and presentation layers."""
 
+from .hud import (
+    HudConnectionStatus,
+    HudEvent,
+    HudEventListener,
+    HudLoginFailed,
+    HudMessageReceived,
+    HudOperation,
+    HudOperationFailed,
+    HudSendResult,
+    HudState,
+    HudStateChanged,
+)
 from .messages import (
     DanmakuMessage,
     GiftCurrency,
@@ -24,6 +36,16 @@ __all__ = (
     "GiftMessage",
     "GiftCurrency",
     "HudMessage",
+    "HudConnectionStatus",
+    "HudEvent",
+    "HudEventListener",
+    "HudLoginFailed",
+    "HudMessageReceived",
+    "HudOperation",
+    "HudOperationFailed",
+    "HudSendResult",
+    "HudState",
+    "HudStateChanged",
     "ImageSegment",
     "InteractionKind",
     "InteractMessage",

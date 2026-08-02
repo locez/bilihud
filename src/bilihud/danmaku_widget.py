@@ -53,11 +53,19 @@ from PyQt6.QtWidgets import (
 from .audience_widgets import AudiencePopup, AudienceStatusWidget
 from .auth import AuthenticationService
 from .config import AppConfig, ConfigStore
-from .danmaku_client import DanmakuClient
 from .danmaku_format import (
     danmaku_author_badges_html,
     danmaku_message_content_html,
     danmaku_message_emoticon_urls,
+)
+from .domain.hud import (
+    HudConnectionStatus,
+    HudEvent,
+    HudLoginFailed,
+    HudMessageReceived,
+    HudOperationFailed,
+    HudState,
+    HudStateChanged,
 )
 from .domain.messages import (
     DanmakuMessage,
@@ -68,6 +76,7 @@ from .domain.messages import (
     SystemMessageLevel,
     make_system_message,
 )
+from .hud_controller import HudController
 from .layer_shell_loader import (
     LAYER_SHELL_LIBRARY_NAME,
     find_layer_shell_library,
@@ -76,7 +85,6 @@ from .layer_shell_loader import (
 )
 from .lifecycle import TaskScope, TaskSupervisor, cancel_task
 from .live_api import get_anchor_live_room_id
-from .live_audience import AudienceSnapshot
 from .live_control_dialog import LiveControlDialog
 from .live_emoticons import LiveEmoticon, LiveEmoticonPackage
 from .mirror_server import MirrorServer
@@ -87,7 +95,6 @@ from .qr_login_dialog import QRLoginDialog
 from .services import AppServices, create_default_services
 
 logger = logging.getLogger(__name__)
-AUDIENCE_REFRESH_INTERVAL_SECONDS = 30.0
 
 
 class ModernInputWidget(QWidget):
@@ -754,10 +761,6 @@ class DanmakuWidget(QWidget):
         self.services = services if services is not None else create_default_services()
         self.config_store: ConfigStore = self.services.config_store  # Typed settings boundary.
         self.auth_service: AuthenticationService = self.services.auth_service  # Shared auth boundary.
-        self.danmaku_client: DanmakuClient | None = None  # Client owned by this widget.
-        self._audience_refresh_task: asyncio.Task[None] | None = None  # Cancelled on disconnect.
-        self._audience_generation = 0
-        self._audience_snapshot: AudienceSnapshot | None = None
         self._live_control_dialog: LiveControlDialog | None = None  # Reused live-control dialog owner.
         self._mirror_settings_dialog: MirrorSettingsDialog | None = None  # Reused Mirror settings owner.
         self._qr_login_dialog: QRLoginDialog | None = None  # Active modal QR-login dialog, if any.
@@ -786,14 +789,25 @@ class DanmakuWidget(QWidget):
         self.init_ui()
         self.setup_tray_icon()
         self.update_gaming_mode_availability()
-        self.setup_danmaku_client()
 
         # 加载保存的配置
         if config.room_id is not None:
             self.room_id = config.room_id
 
+        self.hud_controller: HudController = HudController(
+            initial_room_id=self.room_id,
+            sessdata=self.sessdata,
+            auth_service=self.auth_service,
+            client_factory=self.services.hud_client_factory,
+            config_store=self.config_store,
+            task_scope=self._task_scope.child("hud-controller"),
+        )
+        self._hud_state: HudState = self.hud_controller.state
+        self.hud_controller.subscribe(self._on_hud_event)
+
         # 初始化房间号
         self.room_id_input.setText(str(self.room_id))
+        self._bind_hud_state(self._hud_state)
 
         # Try to activate Layer Shell initially
         QTimer.singleShot(100, self.activate_layer_shell)
@@ -1253,19 +1267,8 @@ class DanmakuWidget(QWidget):
             self.tray_gaming_action.setToolTip("GNOME Wayland 不支持全屏浮窗/锁定穿透，也不保证普通窗口置顶")
 
     async def _send_danmaku_task(self, text: str):
-        """实际执行发送弹幕的Task"""
-        if self.danmaku_client:
-            success, msg = await self.danmaku_client.send_danmaku(text)
-            if success:
-                # print(f"弹幕发送成功: {text}")
-                # 可选：发送成功也显示一条本地回显，或者直接等服务器下发
-                pass
-            else:
-                self.add_system_message(f"发送失败: {msg}", SystemMessageLevel.ERROR)
-                print(f"弹幕发送失败: {msg}")
-        else:
-              self.add_system_message("未连接直播间，无法发送", SystemMessageLevel.ERROR)
-              print("未连接，无法发送")
+        """Execute a text-send command through the application controller."""
+        await self.hud_controller.send_danmaku(text)
 
     def trigger_send(self, text: str):
         """处理发送弹幕请求"""
@@ -1284,7 +1287,7 @@ class DanmakuWidget(QWidget):
         )
 
     async def _open_emoticon_picker(self) -> None:
-        if not self.danmaku_client or not self.danmaku_client.session:
+        if not self.hud_controller.state.is_connected:
             self.add_system_message("未连接直播间，无法加载表情", SystemMessageLevel.ERROR)
             return
 
@@ -1296,9 +1299,11 @@ class DanmakuWidget(QWidget):
         )
         self.emoticon_picker.show()
         try:
-            packages = await self.danmaku_client.fetch_live_emoticons()
-        except Exception as e:
-            self.emoticon_picker.set_error(str(e))
+            packages = await self.hud_controller.fetch_live_emoticons()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.emoticon_picker.set_error(str(exc))
             return
         self.emoticon_picker.set_packages(packages)
 
@@ -1311,12 +1316,8 @@ class DanmakuWidget(QWidget):
         )
 
     async def _send_live_emoticon_task(self, emoticon: LiveEmoticon):
-        if not self.danmaku_client:
-            self.add_system_message("未连接直播间，无法发送", SystemMessageLevel.ERROR)
-            return
-        success, msg = await self.danmaku_client.send_live_emoticon(emoticon)
-        if not success:
-            self.add_system_message(f"发送失败: {msg}", SystemMessageLevel.ERROR)
+        """Execute a live-emoticon send command through the application controller."""
+        await self.hud_controller.send_live_emoticon(emoticon)
 
     def open_input_dialog(self):
         """打开全局输入框"""
@@ -1382,9 +1383,9 @@ class DanmakuWidget(QWidget):
                 shutdown_errors.append(exc)
             self._mirror_start_task = None
             try:
-                await self._stop_audience_refresh()
+                await self.hud_controller.shutdown()
             except Exception as exc:
-                logger.exception("Failed to stop audience refresh")
+                logger.exception("Failed to close HUD controller")
                 shutdown_errors.append(exc)
             try:
                 await self._task_scope.cancel_all()
@@ -1397,16 +1398,6 @@ class DanmakuWidget(QWidget):
             except Exception as exc:
                 logger.exception("Failed to close Mirror server")
                 shutdown_errors.append(exc)
-
-            client = self.danmaku_client
-            if client is not None:
-                try:
-                    await client.stop()
-                except Exception as exc:
-                    logger.exception("Failed to close danmaku client")
-                    shutdown_errors.append(exc)
-                else:
-                    self.danmaku_client = None
         finally:
             if self._owns_task_supervisor:
                 try:
@@ -1694,9 +1685,6 @@ class DanmakuWidget(QWidget):
         # Delayed to ensure window is mapped
         QTimer.singleShot(100, self.activate_layer_shell)
 
-    def setup_danmaku_client(self):
-        self.danmaku_client = None
-
     def _persist_config(self, config: AppConfig) -> bool:
         """Persist one complete typed configuration value through the injected store."""
         return self.config_store.save(config)
@@ -1713,76 +1701,62 @@ class DanmakuWidget(QWidget):
         return self._persist_config(updated)
 
     def open_audience_popup(self):
-        if self._audience_snapshot is None or self.is_gaming_mode:
+        snapshot = self._hud_state.audience_snapshot
+        if snapshot is None or self.is_gaming_mode:
             return
-        self.audience_popup.set_snapshot(self._audience_snapshot)
+        self.audience_popup.set_snapshot(snapshot)
         self.audience_popup.show_below(self.audience_status.online_button, self)
 
-    async def _refresh_audience_once(
-        self,
-        client: DanmakuClient,
-        generation: int,
-    ) -> bool:
-        try:
-            snapshot = await client.fetch_audience_snapshot()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.info("Failed to refresh room audience data: %s", exc)
-            return False
-
-        if (
-            generation != self._audience_generation
-            or self.danmaku_client is not client
-            or self.room_id != snapshot.room_id
-        ):
-            return False
-
-        self._audience_snapshot = snapshot
-        self.audience_status.set_snapshot(snapshot)
-        self.audience_popup.set_snapshot(snapshot)
-        self._sync_audience_visibility()
-        return True
-
-    async def _audience_refresh_loop(
-        self,
-        client: DanmakuClient,
-        generation: int,
-    ) -> None:
-        while True:
-            await self._refresh_audience_once(client, generation)
-            await asyncio.sleep(AUDIENCE_REFRESH_INTERVAL_SECONDS)
-
-    async def _start_audience_refresh(self, client: DanmakuClient) -> None:
-        await self._stop_audience_refresh()
-        generation = self._audience_generation
-        self._audience_refresh_task = self._task_scope.create_task(
-            self._audience_refresh_loop(client, generation),
-            name="audience-refresh",
-        )
-
-    async def _stop_audience_refresh(self) -> None:
-        self._audience_generation += 1
-        task = self._audience_refresh_task
-        self._audience_refresh_task = None
-        if task is not None:
-            await cancel_task(task)
-        self._audience_snapshot = None
-        self.audience_popup.hide()
-        self.audience_status.clear()
-
     def _sync_audience_visibility(self) -> None:
-        visible = self._audience_snapshot is not None and not self.is_gaming_mode
+        visible = self._hud_state.audience_snapshot is not None and not self.is_gaming_mode
         self.audience_status.setVisible(visible)
         if not visible:
             self.audience_popup.hide()
 
-    def _wire_danmaku_client(self, client: DanmakuClient) -> None:
-        client.set_message_callback(self.on_message_received)
-        client.set_login_failed_callback(self.on_login_failed)
+    def _on_hud_event(self, event: HudEvent) -> None:
+        """Bind typed controller events to Qt rendering and user notifications."""
+        if isinstance(event, HudStateChanged):
+            self._bind_hud_state(event.state)
+        elif isinstance(event, HudMessageReceived):
+            self.on_message_received(event.message)
+        elif isinstance(event, HudLoginFailed):
+            self.on_login_failed(event.message)
+        elif isinstance(event, HudOperationFailed):
+            self.add_system_message(event.message, SystemMessageLevel.ERROR)
+
+    def _bind_hud_state(self, state: HudState) -> None:
+        """Render one complete controller snapshot without reading network objects."""
+        previous_room_id = self._hud_state.room_id
+        self._hud_state = state
+        if state.room_id is not None and state.room_id != previous_room_id:
+            self.room_id = state.room_id
+            self.room_id_input.setText(str(state.room_id))
+
+        if state.connection is HudConnectionStatus.CONNECTING:
+            self._set_connecting_ui()
+        elif state.connection is HudConnectionStatus.DISCONNECTING:
+            self._set_disconnecting_ui()
+        elif state.connection is HudConnectionStatus.CONNECTED:
+            self._set_connected_ui()
+        else:
+            self._set_disconnected_ui()
+
+        snapshot = state.audience_snapshot
+        if snapshot is None:
+            self.audience_popup.hide()
+            self.audience_status.clear()
+        else:
+            self.audience_status.set_snapshot(snapshot)
+            self.audience_popup.set_snapshot(snapshot)
+        self._sync_audience_visibility()
 
     def _set_connecting_ui(self):
         self.connect_button.setText("连接中...")
+        self.connect_button.setEnabled(False)
+
+    def _set_disconnecting_ui(self):
+        self.connect_button.setText("断开中...")
+        self.connect_button.setChecked(True)
         self.connect_button.setEnabled(False)
 
     def _set_connected_ui(self):
@@ -1815,72 +1789,6 @@ class DanmakuWidget(QWidget):
             QPushButton:checked { background-color: rgba(76, 175, 80, 150); }
         """)
 
-    def _has_active_danmaku_connection(self) -> bool:
-        client = self.danmaku_client
-        return client is not None and client.is_running
-
-    async def _connect_to_room_id(self, room_id: int):
-        if room_id <= 0:
-            raise ValueError("直播间号无效")
-
-        if self._has_active_danmaku_connection() and self.room_id == room_id:
-            self.room_id_input.setText(str(room_id))
-            self._set_connected_ui()
-            client = self.danmaku_client
-            if client is None:
-                return
-            if self._audience_refresh_task is None:
-                await self._start_audience_refresh(client)
-            return
-
-        if self.danmaku_client is not None and self.danmaku_client.client:
-            await self._disconnect_current_room()
-
-        self.room_id = room_id
-        self.room_id_input.setText(str(room_id))
-        client = DanmakuClient(room_id, self.sessdata, auth_service=self.auth_service)
-        self.danmaku_client = client
-        self._wire_danmaku_client(client)
-        self._update_persisted_config(room_id=room_id)
-        self._set_connecting_ui()
-        try:
-            await client.start()
-        except BaseException:
-            try:
-                await client.stop()
-            except BaseException:
-                logger.exception("Failed to clean up danmaku client after connection failure")
-            else:
-                if self.danmaku_client is client:
-                    self.danmaku_client = None
-            self._set_disconnected_ui()
-            raise
-        self._set_connected_ui()
-        await self._start_audience_refresh(client)
-
-    async def _disconnect_current_room(self):
-        self.connect_button.setEnabled(False)
-        client = self.danmaku_client
-        previous_snapshot = self._audience_snapshot
-        await self._stop_audience_refresh()
-        try:
-            if client is not None:
-                await client.stop()
-        except Exception as e:
-            self._set_connected_ui()
-            if client is not None:
-                await self._start_audience_refresh(client)
-            if previous_snapshot is not None:
-                self._audience_snapshot = previous_snapshot
-                self.audience_status.set_snapshot(previous_snapshot)
-                self.audience_popup.set_snapshot(previous_snapshot)
-                self._sync_audience_visibility()
-            self.add_system_message(f"断开失败: {e}", SystemMessageLevel.ERROR)
-            print(f"Disconnect failed: {e}")
-            raise
-        self.danmaku_client = None
-        self._set_disconnected_ui()
-
     @pyqtSlot()
     def toggle_connection(self) -> asyncio.Task[None] | None:
         """Schedule the room connection workflow under the widget owner."""
@@ -1889,22 +1797,20 @@ class DanmakuWidget(QWidget):
         return self._create_action_task(self._toggle_connection(), name="toggle-connection")
 
     async def _toggle_connection(self) -> None:
-        """切换连接状态"""
+        """Convert the room input into a typed controller toggle command."""
         if self._shutting_down:
             return
-        if not self._has_active_danmaku_connection():
-            # 连接
-            try:
-                await self._connect_to_room_id(int(self.room_id_input.text()))
-            except Exception as e:
-                self._set_disconnected_ui()
-                print(f"Connection failed: {e}")
-        else:
-            # 断开
-            try:
-                await self._disconnect_current_room()
-            except Exception:
-                return
+        try:
+            room_id = int(self.room_id_input.text().strip())
+        except ValueError:
+            self.add_system_message("直播间号无效", SystemMessageLevel.ERROR)
+            return
+        try:
+            await self.hud_controller.toggle_connection(room_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return
 
     def save_room_id(self):
         try:
@@ -1952,7 +1858,7 @@ class DanmakuWidget(QWidget):
             if session is not None and not session.closed:
                 await session.close()
 
-        await self._connect_to_room_id(anchor_room_id)
+        await self.hud_controller.connect(anchor_room_id)
         return anchor_room_id
 
     @pyqtSlot()
@@ -2152,11 +2058,6 @@ class DanmakuWidget(QWidget):
             2000
         )
         self.add_system_message("登录成功！请断开并重新连接以应用新的登录信息。")
-
-        # 自动重连逻辑 (如果已连接)
-        if self.danmaku_client and self.danmaku_client.session:
-            # 简单处理：提示用户
-            pass
 
     def on_login_failed(self, msg: str):
         """登录失效回调"""

@@ -169,8 +169,8 @@ def test_danmaku_widget_shutdown_cancels_work_before_closing_resources():
             started.set()
             await asyncio.Event().wait()
 
-        class Client:
-            async def stop(self):
+        class HudController:
+            async def shutdown(self):
                 events.append("client-stop")
 
         widget = DanmakuWidget.__new__(DanmakuWidget)
@@ -184,7 +184,7 @@ def test_danmaku_widget_shutdown_cancels_work_before_closing_resources():
         widget._qr_login_dialog = None
         widget._shutdown_complete = False
         widget._shutting_down = False
-        widget.danmaku_client = Client()
+        widget.hud_controller = HudController()
 
         send_task = DanmakuWidget._create_action_task(
             widget,
@@ -193,20 +193,16 @@ def test_danmaku_widget_shutdown_cancels_work_before_closing_resources():
         )
         await started.wait()
 
-        async def stop_audience_refresh():
-            events.append("audience-stop")
-
         async def shutdown_mirror_server():
             events.append("mirror-stop")
 
-        widget._stop_audience_refresh = stop_audience_refresh
         widget.shutdown_mirror_server = shutdown_mirror_server
 
         await DanmakuWidget.shutdown(widget)
         await DanmakuWidget.shutdown(widget)
 
         assert send_task.cancelled()
-        assert events == ["audience-stop", "mirror-stop", "client-stop"]
+        assert events == ["client-stop", "mirror-stop"]
 
     asyncio.run(run_test())
 
