@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import keyring
 
-from bilihud.auth import AuthManager
+from bilihud.auth import AuthManager, BilibiliAuthService
 
 
 @dataclass
@@ -101,3 +101,43 @@ def test_qr_login_poll_returns_session_cookies(monkeypatch):
 
     assert (code, message) == (0, "登录成功")
     assert cookies == {"SESSDATA": "qr-sess", "bili_jct": "qr-csrf"}
+
+
+def test_auth_service_uses_replaceable_session_store():
+    class FakeSessionStore:
+        def __init__(self):
+            self.cookies = None
+            self.obs_password = None
+
+        def load_cookies(self):
+            return self.cookies
+
+        def save_cookies(self, cookies):
+            self.cookies = dict(cookies)
+            return True
+
+        def clear_cookies(self):
+            self.cookies = None
+
+        def load_obs_password(self):
+            return self.obs_password
+
+        def save_obs_password(self, password):
+            self.obs_password = password
+            return True
+
+        def clear_obs_password(self):
+            self.obs_password = None
+
+    store = FakeSessionStore()
+    service = BilibiliAuthService(store)
+
+    assert service.save_cookies({"SESSDATA": "session"}) is True
+    assert service.load_auth_cookies() == ({"SESSDATA": "session"}, True)
+    assert service.save_obs_password("obs-secret") is True
+    assert service.load_obs_password() == "obs-secret"
+
+    service.clear_credentials()
+
+    assert service.load_auth_cookies() == ({}, False)
+    assert service.load_obs_password() is None

@@ -66,6 +66,14 @@ Strong typing is a continuous requirement for all new and modified code.
 - Use the type checker configured by the repository; do not hide errors by expanding exclusions.
 - Every type suppression must document its reason, impact, and follow-up path.
 
+## Documentation and Comments
+
+- Public modules, classes, protocols, functions, and methods must have concise docstrings that explain their responsibility and relevant input, output, side effect, ownership, or failure contract.
+- Key class fields must have a nearby comment or class-level field documentation when their role, default, sensitivity, lifecycle, or ownership is not obvious from the type alone.
+- Document configuration fields, injected services, sessions, tasks, credentials, and other state that crosses a layer or has a non-trivial lifecycle.
+- Private helpers need documentation when they enforce an invariant, normalize external data, handle security-sensitive values, or coordinate cancellation and resource cleanup.
+- Comments should explain intent and constraints rather than repeat the code. Keep them short and update them with the behavior they describe.
+
 ## Python Quality
 
 - Use explicit resource ownership and context management.

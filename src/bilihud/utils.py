@@ -1,69 +1,65 @@
-import os
-import json
+from __future__ import annotations
+
+import logging
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Dict, Any
+from typing import Protocol
 
-def get_config_path() -> Path:
-    """获取配置文件路径 (遵循XDG规范)"""
-    xdg_config_home = os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config')
-    config_dir = Path(xdg_config_home) / 'bilihud'
-    config_dir.mkdir(parents=True, exist_ok=True)
-    return config_dir / 'config.json'
+from .auth import KeyringSessionStore
+from .config import AppConfig, JsonConfigStore, default_config_path
+from .config import validate_room_id as _validate_room_id
 
-def load_config() -> Dict[str, Any]:
-    """加载配置"""
-    config_path = get_config_path()
-    if not config_path.exists():
-        return {}
-    
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Failed to load config: {e}")
-        return {}
+logger = logging.getLogger(__name__)
 
-def save_config(data: Dict[str, Any]) -> bool:
-    """保存配置"""
-    try:
-        config_path = get_config_path()
-        
-        # 读取现有配置以进行合并，防止覆盖其他配置项
-        current_config = load_config()
-        current_config.update(data)
-        
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(current_config, f, indent=4, ensure_ascii=False)
-        return True
-    except Exception as e:
-        print(f"Failed to save config: {e}")
-        return False
 
 def validate_room_id(room_id_str: str) -> bool:
-    """
-    验证直播间ID是否有效
-
-    Args:
-        room_id_str: 直播间ID字符串
-
-    Returns:
-        bool: 如果有效返回True，否则返回False
-    """
-    try:
-        room_id = int(room_id_str)
-        return room_id > 0
-    except ValueError:
-        return False
+    """Return whether a user-entered room identifier is a positive integer."""
+    return _validate_room_id(room_id_str)
 
 
-def format_danmaku_message(danmaku_msg) -> str:
-    """
-    格式化弹幕消息用于显示
+class DanmakuMessageLike(Protocol):
+    """Minimal message shape required by the legacy formatter."""
 
-    Args:
-        danmaku_msg: 弹幕消息对象
+    uname: str  # Display name shown before the message text.
+    msg: str  # User-authored danmaku content.
 
-    Returns:
-        str: 格式化后的弹幕消息
-    """
+
+def get_config_path() -> Path:
+    """Return the XDG configuration path without creating it."""
+    return default_config_path()
+
+
+def _default_config_store() -> JsonConfigStore:
+    """Create the compatibility store with secure OBS-password storage."""
+    return JsonConfigStore(secret_store=KeyringSessionStore())
+
+
+# Transitional compatibility for external callers; remove after all callers use ConfigStore.
+def load_config() -> dict[str, object]:
+    """Return a legacy mapping view backed by the typed configuration store."""
+    return _default_config_store().load().to_mapping()
+
+
+# Transitional compatibility for external callers; remove after all callers use ConfigStore.
+def save_config(data: Mapping[str, object]) -> bool:
+    """Merge legacy settings through typed storage without writing OBS passwords to JSON."""
+    secret_store = KeyringSessionStore()
+    store = JsonConfigStore(secret_store=secret_store)
+    current = store.load()
+    merged = current.to_mapping()
+    merged.update(data)
+
+    if "obs_password" in data:
+        password = data["obs_password"]
+        if isinstance(password, str):
+            if not secret_store.save_obs_password(password):
+                logger.error("Failed to save OBS password through compatibility API")
+                return False
+        merged.pop("obs_password", None)
+
+    return store.save(AppConfig.from_mapping(merged))
+
+
+def format_danmaku_message(danmaku_msg: DanmakuMessageLike) -> str:
+    """Format the minimal danmaku message shape for display."""
     return f"{danmaku_msg.uname}: {danmaku_msg.msg}"

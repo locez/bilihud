@@ -9,7 +9,7 @@ import aiohttp
 import blivedm
 import blivedm.models.web as web_models
 
-from .auth import AuthManager
+from .auth import AuthenticationService, AuthManager
 from .live_audience import AudienceSnapshot, parse_anchor_uid, parse_audience_snapshot
 from .live_emoticons import (
     LiveEmoticon,
@@ -41,44 +41,54 @@ logger = logging.getLogger(__name__)
 
 
 class DanmakuClient:
-    """
-    弹幕客户端，用于获取B站直播弹幕
+    """Receive and send live-room messages through one owned network session.
+
+    Authentication is supplied through ``auth_service`` when the application
+    composition root is available. The client owns the session created during
+    ``start`` and closes it during ``stop``.
     """
 
-    def __init__(self, room_id: int, sessdata: str = ''):
+    def __init__(
+        self,
+        room_id: int,
+        sessdata: str = "",
+        auth_service: AuthenticationService | None = None,
+    ) -> None:
+        """Create a client for one room with an optional injected auth service."""
         self.room_id = room_id
-        self.sessdata = sessdata
-        self.session: aiohttp.ClientSession | None = None
-        self.client: blivedm.BLiveClient | None = None
-        self.handler: DanmakuHandler | None = None
+        self.sessdata = sessdata  # Optional one-off SESSDATA override for this connection.
+        self.auth_service = auth_service  # Shared authentication boundary from the app.
+        self.session: aiohttp.ClientSession | None = None  # Owned and closed by this client.
+        self.client: blivedm.BLiveClient | None = None  # Underlying blivedm lifecycle handle.
+        self.handler: DanmakuHandler | None = None  # Callback bridge owned by the client.
         self.on_danmaku_received: Callable[[web_models.DanmakuMessage], None] | None = None
         self.on_gift_received: Callable[[web_models.GiftMessage], None] | None = None
         self.on_interact_received: Callable[[web_models.InteractWordV2Message], None] | None = None
         self.on_login_failed: Callable[[str], None] | None = None # callback(message)
-        self._wbi_mixin_key: str | None = None
-        self._live_emoticon_cache: list[LiveEmoticonPackage] | None = None
-        self._live_emoticon_cache_at = 0.0
+        self._wbi_mixin_key: str | None = None  # Cached signing key for authenticated sends.
+        self._live_emoticon_cache: list[LiveEmoticonPackage] | None = None  # Short-lived room cache.
+        self._live_emoticon_cache_at = 0.0  # Monotonic timestamp for the emoticon cache.
 
-    def set_danmaku_callback(self, callback: Callable[[web_models.DanmakuMessage], None]):
+    def set_danmaku_callback(self, callback: Callable[[web_models.DanmakuMessage], None]) -> None:
         """设置弹幕接收回调函数"""
         self.on_danmaku_received = callback
 
-    def set_gift_callback(self, callback: Callable[[web_models.GiftMessage], None]):
+    def set_gift_callback(self, callback: Callable[[web_models.GiftMessage], None]) -> None:
         """设置礼物接收回调函数"""
         self.on_gift_received = callback
 
-    def set_interact_callback(self, callback: Callable[[web_models.InteractWordV2Message], None]):
+    def set_interact_callback(self, callback: Callable[[web_models.InteractWordV2Message], None]) -> None:
         """设置互动接收回调函数 (进房/关注)"""
         self.on_interact_received = callback
 
-    def set_login_failed_callback(self, callback: Callable[[str], None]):
+    def set_login_failed_callback(self, callback: Callable[[str], None]) -> None:
         """设置登录失效回调"""
         self.on_login_failed = callback
 
     async def start(self) -> None:
-        """在事件循环中启动弹幕客户端"""
+        """Load authentication, create owned network resources, and start receiving messages."""
         loop = asyncio.get_running_loop()
-        auth_manager = AuthManager()
+        auth_manager = self.auth_service if self.auth_service is not None else AuthManager()
         login_failure_message: str | None = None
 
         try:
@@ -158,6 +168,7 @@ class DanmakuClient:
             return False, f"发送异常: {str(e)}"
 
     async def fetch_audience_snapshot(self) -> AudienceSnapshot:
+        """Fetch and normalize the room's current audience and ranking state."""
         if not self.session:
             raise RuntimeError("弹幕会话未初始化")
 
@@ -291,7 +302,7 @@ class DanmakuClient:
         return mixin_key
 
     async def stop(self, normal_timeout: float = 3.0, forced_timeout: float = 3.0):
-        """停止弹幕客户端，并确认底层网络任务和会话都已关闭。"""
+        """Stop the underlying client and close all network resources it owns."""
         client = self.client
         session = self.session
         join_task: asyncio.Task | None = None
@@ -337,6 +348,7 @@ class DanmakuClient:
 
 
 class DanmakuShutdownError(RuntimeError):
+    """Raised when the underlying danmaku client ignores forced shutdown."""
     pass
 
 

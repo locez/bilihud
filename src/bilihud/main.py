@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-import sys
 import os
+import sys
 
 # [Security] Prevent accidental loading of PyQt5 which causes conflicts
 sys.modules["PyQt5"] = None
@@ -8,20 +8,28 @@ sys.modules["PyQt5"] = None
 # [Environment] Force Qt6
 os.environ["QT_API"] = "pyqt6"
 
-import signal
 import asyncio
+import signal
+
 import qasync
-from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication
 
 from .danmaku_widget import DanmakuWidget
+from .services import AppServices, create_default_services
 
-async def main(app, room_id: int):
+
+async def main(
+    app: QApplication,
+    room_id: int,
+    services: AppServices | None = None,
+) -> None:
+    """Run the top-level widget until Qt requests application shutdown."""
     app_close_event = asyncio.Event()
     app.aboutToQuit.connect(app_close_event.set)
 
-    # Create Danmaku Widget directly as top-level
-    danmaku_widget = DanmakuWidget(room_id)
+    app_services = services if services is not None else create_default_services()
+    danmaku_widget = DanmakuWidget(room_id, services=app_services)
     
     # Try to activate Layer Shell BEFORE showing
     # This ensures the window is mapped as a Layer Shell surface from the start
@@ -33,6 +41,7 @@ async def main(app, room_id: int):
     await app_close_event.wait()
 
 async def cancel_pending_tasks(loop, exclude=None):
+    """Cancel and await outstanding asyncio tasks during application shutdown."""
     exclude = set(exclude or ())
     current_task = asyncio.current_task(loop=loop)
     if current_task is not None:
@@ -47,6 +56,7 @@ async def cancel_pending_tasks(loop, exclude=None):
     await asyncio.gather(*pending, return_exceptions=True)
 
 def entry_point():
+    """Parse CLI options, start the Qt/asyncio event loop, and shut it down cleanly."""
     import argparse
 
     parser = argparse.ArgumentParser(description="B station Danmaku Reader")

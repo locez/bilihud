@@ -1,58 +1,216 @@
+from __future__ import annotations
+
 import http.cookies
 import json
 import logging
 from collections.abc import Mapping
 from io import BytesIO
+from typing import Protocol
 
 import aiohttp
+import keyring
+import keyring.errors as keyring_errors
 import qrcode
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 SERVICE_ID = "bilihud"
 USERNAME_KEY = "bilibili_cookies"
+OBS_PASSWORD_KEY = "obs_websocket_password"
 COMMON_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+ESSENTIAL_COOKIE_KEYS = frozenset({"SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5"})
+AuthCookies = dict[str, str]  # Normalized cookie names and values kept in secure storage.
 
 
-class AuthManager:
-    """
-    Manage Bilibili Authentication via QR Code
-    """
+class SessionStore(Protocol):
+    """Secure storage boundary for authentication and OBS credentials."""
+
+    def load_cookies(self) -> AuthCookies | None:
+        """Load saved Bilibili cookies, or return ``None`` when no session exists."""
+        ...
+
+    def save_cookies(self, cookies: Mapping[str, str]) -> bool:
+        """Persist normalized Bilibili cookies without exposing them to callers."""
+        ...
+
+    def clear_cookies(self) -> None:
+        """Remove the saved Bilibili session from secure storage."""
+        ...
+
+    def load_obs_password(self) -> str | None:
+        """Load the OBS WebSocket password, or return ``None`` when absent."""
+        ...
+
+    def save_obs_password(self, password: str) -> bool:
+        """Persist the OBS WebSocket password in secure storage."""
+        ...
+
+    def clear_obs_password(self) -> None:
+        """Remove the saved OBS WebSocket password from secure storage."""
+        ...
+
+
+class AuthenticationService(Protocol):
+    """Authentication use cases exposed to application and presentation code."""
+
+    async def get_qrcode(self) -> tuple[str | None, str | None]:
+        """Request a Bilibili QR-login URL and its polling key."""
+        ...
+
+    def generate_qr_image(self, url: str) -> BytesIO | None:
+        """Render a QR-login URL into PNG bytes for the presentation layer."""
+        ...
+
+    async def poll_status(self, qrcode_key: str) -> tuple[int, str, AuthCookies | None]:
+        """Poll QR-login state and return an authenticated cookie set on success."""
+        ...
+
+    def save_cookies(self, cookies: Mapping[str, str]) -> bool:
+        """Store cookies obtained from a successful login."""
+        ...
+
+    def load_auth_cookies(self) -> tuple[AuthCookies, bool]:
+        """Load cookies and indicate whether they came from secure storage."""
+        ...
+
+    def create_session_from_cookies(self, cookies: Mapping[str, str]) -> aiohttp.ClientSession:
+        """Create an aiohttp session whose caller owns and closes the resource."""
+        ...
+
+    async def create_authenticated_session(self, validate_keyring: bool = True) -> tuple[aiohttp.ClientSession, bool]:
+        """Create a session from saved cookies, optionally validating the stored login."""
+        ...
+
+    async def validate_session(self, cookies: Mapping[str, str]) -> bool:
+        """Check whether a Bilibili cookie set still represents a logged-in user."""
+        ...
+
+    def load_obs_password(self) -> str | None:
+        """Load the OBS password through the same secure boundary as Bilibili auth."""
+        ...
+
+    def save_obs_password(self, password: str) -> bool:
+        """Save the OBS password without involving ordinary configuration storage."""
+        ...
+
+    def clear_obs_password(self) -> None:
+        """Clear the stored OBS password."""
+        ...
+
+    def clear_credentials(self) -> None:
+        """Clear both Bilibili cookies and the OBS password."""
+        ...
+
+
+class KeyringSessionStore:
+    """Keyring-backed implementation of the authentication storage boundary."""
+
+    def __init__(self, service_id: str = SERVICE_ID) -> None:
+        """Create a keyring adapter under the given service namespace."""
+        self.service_id = service_id  # Shared keyring namespace for all credential kinds.
+
+    def load_cookies(self) -> AuthCookies | None:
+        """Load and validate the JSON-encoded Bilibili cookie set from keyring."""
+        try:
+            cookie_json = keyring.get_password(self.service_id, USERNAME_KEY)
+            if not cookie_json:
+                return None
+            stored_cookies = json.loads(cookie_json)
+            if not isinstance(stored_cookies, dict):
+                logger.error("Stored keyring cookies are not a JSON object")
+                return None
+            if not all(
+                isinstance(name, str) and isinstance(value, str)
+                for name, value in stored_cookies.items()
+            ):
+                logger.error("Stored keyring cookies contain invalid values")
+                return None
+            return dict(stored_cookies)
+        except (keyring_errors.KeyringError, OSError, TypeError, ValueError) as exc:
+            logger.error("Failed to load cookies from keyring: %s", exc)
+            return None
+
+    def save_cookies(self, cookies: Mapping[str, str]) -> bool:
+        """Validate and save Bilibili cookies as one keyring entry."""
+        if not all(isinstance(name, str) and isinstance(value, str) for name, value in cookies.items()):
+            logger.error("Refusing to save invalid authentication cookies")
+            return False
+        try:
+            keyring.set_password(self.service_id, USERNAME_KEY, json.dumps(dict(cookies)))
+            return True
+        except (keyring_errors.KeyringError, OSError, TypeError, ValueError) as exc:
+            logger.error("Failed to save cookies to keyring: %s", exc)
+            return False
+
+    def clear_cookies(self) -> None:
+        """Delete the Bilibili cookie entry when it exists."""
+        try:
+            keyring.delete_password(self.service_id, USERNAME_KEY)
+        except (keyring_errors.KeyringError, OSError) as exc:
+            logger.info("Failed to delete cookies from keyring: %s", exc)
+
+    def load_obs_password(self) -> str | None:
+        """Load the OBS WebSocket password from keyring."""
+        try:
+            password = keyring.get_password(self.service_id, OBS_PASSWORD_KEY)
+            return password if password else None
+        except (keyring_errors.KeyringError, OSError, TypeError) as exc:
+            logger.error("Failed to load OBS credentials from keyring: %s", exc)
+            return None
+
+    def save_obs_password(self, password: str) -> bool:
+        """Save a non-empty OBS password or clear it when empty."""
+        if not password:
+            self.clear_obs_password()
+            return True
+        try:
+            keyring.set_password(self.service_id, OBS_PASSWORD_KEY, password)
+            return True
+        except (keyring_errors.KeyringError, OSError, TypeError, ValueError) as exc:
+            logger.error("Failed to save OBS credentials to keyring: %s", exc)
+            return False
+
+    def clear_obs_password(self) -> None:
+        """Delete the OBS password entry when it exists."""
+        try:
+            keyring.delete_password(self.service_id, OBS_PASSWORD_KEY)
+        except (keyring_errors.KeyringError, OSError) as exc:
+            logger.info("Failed to delete OBS credentials from keyring: %s", exc)
+
+
+class BilibiliAuthService:
+    """Bilibili QR authentication and authenticated-session service."""
 
     BASE_URL = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
     POLL_URL = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll"
 
-    def __init__(self):
-        self.session: aiohttp.ClientSession | None = None
+    def __init__(self, session_store: SessionStore | None = None) -> None:
+        """Create the service with an injectable secure storage adapter."""
+        self.session_store = (
+            session_store if session_store is not None else KeyringSessionStore()
+        )  # Owns credential access; returned network sessions remain caller-owned.
 
     async def get_qrcode(self) -> tuple[str | None, str | None]:
-        """
-        Get QR code URL and Key
-        Returns: (url, qrcode_key)
-        """
+        """Request a fresh QR-login URL and polling key from Bilibili."""
         headers = {"User-Agent": COMMON_USER_AGENT}
         async with aiohttp.ClientSession(headers=headers) as session:
             try:
                 async with session.get(self.BASE_URL) as response:
-                    data = await response.json()
-                    if data["code"] == 0:
-                        return data["data"]["url"], data["data"]["qrcode_key"]
-                    else:
-                        logger.error(f"Failed to get QR code: {data}")
-                        return None, None
-            except Exception as e:
-                logger.error(f"Exception requesting QR code: {e}")
+                    payload = _as_mapping(await response.json())
+                    if _int_value(payload.get("code")) == 0:
+                        data = _as_mapping(payload.get("data"))
+                        return _string_or_none(data.get("url")), _string_or_none(data.get("qrcode_key"))
+                    logger.error("Failed to get QR code: %s", payload)
+                    return None, None
+            except (aiohttp.ClientError, OSError, TimeoutError, TypeError, ValueError) as exc:
+                logger.error("Exception requesting QR code: %s", exc)
                 return None, None
 
     def generate_qr_image(self, url: str) -> BytesIO | None:
-        """
-        Generate QR code image from URL
-        Returns: BytesIO object containing PNG image
-        """
+        """Generate PNG bytes for a QR-login URL, returning ``None`` on failure."""
         try:
             qr = qrcode.QRCode(
                 version=1,
@@ -63,106 +221,62 @@ class AuthManager:
             qr.add_data(url)
             qr.make(fit=True)
 
-            img = qr.make_image(fill_color="black", back_color="white")
+            image = qr.make_image(fill_color="black", back_color="white")
             bio = BytesIO()
-            img.save(bio, format="PNG")
+            image.save(bio, format="PNG")
             bio.seek(0)
             return bio
-        except Exception as e:
-            logger.error(f"Failed to generate QR image: {e}")
+        except (OSError, TypeError, ValueError) as exc:
+            logger.error("Failed to generate QR image: %s", exc)
             return None
 
-    async def poll_status(self, qrcode_key: str) -> tuple[int, str, dict[str, str] | None]:
-        """
-        Poll login status
-        Returns: (code, message, cookies_dict)
-        code: 0=Success, 86101=Scanned, 86090=Not Scanned, 86038=Expired
-        """
+    async def poll_status(self, qrcode_key: str) -> tuple[int, str, AuthCookies | None]:
+        """Poll QR-login state and extract only the cookies needed by the app."""
         headers = {"User-Agent": COMMON_USER_AGENT}
         async with aiohttp.ClientSession(headers=headers) as session:
             try:
-                params = {"qrcode_key": qrcode_key}
-                async with session.get(self.POLL_URL, params=params) as response:
-                    data = await response.json()
+                async with session.get(self.POLL_URL, params={"qrcode_key": qrcode_key}) as response:
+                    payload = _as_mapping(await response.json())
+                    if _int_value(payload.get("code")) != 0:
+                        return -1, f"API Error: {payload.get('code')}", None
 
-                    if data["code"] == 0:
-                        code = data["data"]["code"]
-                        msg = data["data"]["message"]
+                    data = _as_mapping(payload.get("data"))
+                    code = _int_value(data.get("code"), default=-1)
+                    message = _string_or_none(data.get("message")) or ""
+                    if code != 0:
+                        return code, message, None
 
-                        if code == 0:
-                            # Login success, extract cookies
-                            cookies = {}
-                            for cookie in session.cookie_jar:
-                                cookies[cookie.key] = cookie.value
+                    cookies = {
+                        cookie.key: cookie.value
+                        for cookie in session.cookie_jar
+                        if cookie.key in ESSENTIAL_COOKIE_KEYS
+                    }
+                    return 0, "登录成功", cookies
+            except (aiohttp.ClientError, OSError, TimeoutError, TypeError, ValueError) as exc:
+                logger.error("Exception polling status: %s", exc)
+                return -1, str(exc), None
 
-                            # Also check Set-Cookie headers directly if needed, usually cookie_jar has them
-                            # Filter for essential cookies
-                            essential_keys = ["SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5"]
-                            filtered_cookies = {k: v for k, v in cookies.items() if k in essential_keys}
+    def save_cookies(self, cookies: Mapping[str, str]) -> bool:
+        """Persist cookies through the injected secure storage adapter."""
+        return self.session_store.save_cookies(cookies)
 
-                            return 0, "登录成功", filtered_cookies
-
-                        return code, msg, None
-                    else:
-                        return -1, f"API Error: {data['code']}", None
-            except Exception as e:
-                logger.error(f"Exception polling status: {e}")
-                return -1, str(e), None
-
-    def save_cookies(self, cookies: dict[str, str]) -> bool:
-        """
-        Save cookies securely using keyring
-        """
-        try:
-            import keyring
-            cookie_json = json.dumps(cookies)
-            keyring.set_password(SERVICE_ID, USERNAME_KEY, cookie_json)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save cookies to keyring: {e}")
-            return False
-
-    def load_cookies(self) -> dict[str, str] | None:
-        """
-        Load cookies from keyring
-        """
-        try:
-            import keyring
-            cookie_json = keyring.get_password(SERVICE_ID, USERNAME_KEY)
-            if cookie_json:
-                stored_cookies = json.loads(cookie_json)
-                if not isinstance(stored_cookies, dict):
-                    logger.error("Stored keyring cookies are not a JSON object")
-                    return None
-                if not all(
-                    isinstance(name, str) and isinstance(value, str)
-                    for name, value in stored_cookies.items()
-                ):
-                    logger.error("Stored keyring cookies contain invalid values")
-                    return None
-                return dict(stored_cookies)
-            return None
-        except Exception as e:
-            logger.error(f"Failed to load cookies from keyring: {e}")
-            return None
+    def load_cookies(self) -> AuthCookies | None:
+        """Load cookies through the injected secure storage adapter."""
+        return self.session_store.load_cookies()
 
     def clear_cookies(self) -> None:
-        """Clear stored cookies"""
-        try:
-            import keyring
-            keyring.delete_password(SERVICE_ID, USERNAME_KEY)
-        except Exception as e:
-            logger.error(f"Failed to delete cookies: {e}")
+        """Clear Bilibili cookies through the injected secure storage adapter."""
+        self.session_store.clear_cookies()
 
-    def load_auth_cookies(self) -> tuple[dict[str, str], bool]:
-        """Load authenticated cookies from the keyring."""
+    def load_auth_cookies(self) -> tuple[AuthCookies, bool]:
+        """Return saved cookies and whether a secure saved session was available."""
         saved_cookies = self.load_cookies()
         if saved_cookies:
             return dict(saved_cookies), True
         return {}, False
 
     def create_session_from_cookies(self, cookies: Mapping[str, str]) -> aiohttp.ClientSession:
-        """Create an aiohttp session configured with Bilibili auth cookies."""
+        """Create a session; the caller owns and must close the returned session."""
         cookie_jar = http.cookies.SimpleCookie()
         for name, value in cookies.items():
             cookie_jar[name] = value
@@ -177,7 +291,7 @@ class AuthManager:
     async def create_authenticated_session(
         self, validate_keyring: bool = True
     ) -> tuple[aiohttp.ClientSession, bool]:
-        """Create an aiohttp session from the stored keyring cookies."""
+        """Create a caller-owned session from saved cookies and optional validation."""
         cookies, from_keyring = self.load_auth_cookies()
         if from_keyring and validate_keyring and not await self.validate_session(cookies):
             logger.info("Keyring cookies expired")
@@ -185,19 +299,62 @@ class AuthManager:
 
         return self.create_session_from_cookies(cookies), from_keyring
 
-    async def validate_session(self, cookies: dict[str, str]) -> bool:
-        """
-        Validate if the current cookies are logged in
-        """
+    async def validate_session(self, cookies: Mapping[str, str]) -> bool:
+        """Validate a cookie set using Bilibili's logged-in navigation endpoint."""
         url = "https://api.bilibili.com/x/web-interface/nav"
         headers = {"User-Agent": COMMON_USER_AGENT}
         try:
             async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
-                async with session.get(url) as resp:
-                    data = await resp.json()
-                    if data["code"] == 0:
-                        return data["data"].get("isLogin", False)
-                    return False
-        except Exception as e:
-            logger.error(f"Session validation failed: {e}")
+                async with session.get(url) as response:
+                    payload = _as_mapping(await response.json())
+                    if _int_value(payload.get("code")) != 0:
+                        return False
+                    data = _as_mapping(payload.get("data"))
+                    return data.get("isLogin") is True
+        except (aiohttp.ClientError, OSError, TimeoutError, TypeError, ValueError) as exc:
+            logger.error("Session validation failed: %s", exc)
             return False
+
+    def load_obs_password(self) -> str | None:
+        """Load the OBS password through secure storage."""
+        return self.session_store.load_obs_password()
+
+    def save_obs_password(self, password: str) -> bool:
+        """Save the OBS password through secure storage."""
+        return self.session_store.save_obs_password(password)
+
+    def clear_obs_password(self) -> None:
+        """Clear the OBS password through secure storage."""
+        self.session_store.clear_obs_password()
+
+    def clear_credentials(self) -> None:
+        """Clear all credentials owned by the application."""
+        self.clear_cookies()
+        self.clear_obs_password()
+
+
+def _as_mapping(value: object) -> Mapping[str, object]:
+    """Convert an external JSON object to a string-keyed mapping."""
+    if not isinstance(value, dict):
+        return {}
+    return {key: item for key, item in value.items() if isinstance(key, str)}
+
+
+def _int_value(value: object, default: int = -1) -> int:
+    """Read an integer API field without accepting booleans as integers."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    return default
+
+
+def _string_or_none(value: object) -> str | None:
+    """Return a string API field or ``None`` when its type is unexpected."""
+    return value if isinstance(value, str) else None
+
+
+# Public aliases keep the boundary name concise while preserving the legacy manager name.
+AuthSessionStore = SessionStore
+AuthService = AuthenticationService
+AuthManager = BilibiliAuthService

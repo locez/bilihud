@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 from ctypes import c_int, c_ulong, c_void_p
+from dataclasses import replace
 from typing import Optional
 
 import blivedm.models.web as web_models
@@ -51,7 +52,8 @@ from PyQt6.QtWidgets import (
 )
 
 from .audience_widgets import AudiencePopup, AudienceStatusWidget
-from .auth import AuthManager
+from .auth import AuthenticationService
+from .config import AppConfig, ConfigStore
 from .danmaku_client import DanmakuClient
 from .danmaku_format import (
     danmaku_author_badges_html,
@@ -70,9 +72,9 @@ from .live_control_dialog import LiveControlDialog
 from .live_emoticons import LiveEmoticon, LiveEmoticonPackage
 from .mirror_server import MirrorServer
 from .mirror_settings_dialog import MirrorSettingsDialog
-from .mirror_state import MIRROR_DEFAULT_PORT, MIRROR_ROUTE, MirrorState
+from .mirror_state import MIRROR_ROUTE, MirrorState
 from .qr_login_dialog import QRLoginDialog
-from .utils import load_config, save_config
+from .services import AppServices, create_default_services
 
 logger = logging.getLogger(__name__)
 AUDIENCE_REFRESH_INTERVAL_SECONDS = 30.0
@@ -731,29 +733,38 @@ class CustomSizeGrip(QWidget):
 
 
 class DanmakuWidget(QWidget):
-    """弹幕显示窗口"""
+    """Presentation shell for danmaku, Mirror, login, and live-control workflows."""
 
     danmaku_received = pyqtSignal(web_models.DanmakuMessage)
     gift_received = pyqtSignal(web_models.GiftMessage)
     interact_received = pyqtSignal(web_models.InteractWordV2Message)
 
-    def __init__(self, room_id: int = 0, sessdata: str = ''):
+    def __init__(
+        self,
+        room_id: int = 0,
+        sessdata: str = "",
+        services: AppServices | None = None,
+    ) -> None:
+        """Create the widget and load its shared typed services and saved settings."""
         super().__init__()
-        self.room_id = room_id
-        self.sessdata = sessdata
-        self.danmaku_client: Optional[DanmakuClient] = None
-        self._audience_refresh_task: asyncio.Task[None] | None = None
+        self.room_id = room_id  # Current room displayed and used by the client.
+        self.sessdata = sessdata  # Optional session override supplied by the caller.
+        self.services = services if services is not None else create_default_services()
+        self.config_store: ConfigStore = self.services.config_store  # Typed settings boundary.
+        self.auth_service: AuthenticationService = self.services.auth_service  # Shared auth boundary.
+        self.danmaku_client: Optional[DanmakuClient] = None  # Client owned by this widget.
+        self._audience_refresh_task: asyncio.Task[None] | None = None  # Cancelled on disconnect.
         self._audience_generation = 0
         self._audience_snapshot: AudienceSnapshot | None = None
         self.is_gaming_mode = False
         self.layer_shell_lib = None
         self.layer_shell_disabled_reason = ""
-        config = load_config()
+        config = self.config_store.load()
         self.mirror_state = MirrorState()
-        self.mirror_server: MirrorServer | None = None
-        self.mirror_enabled = bool(config.get("mirror_enabled", False))
+        self.mirror_server: MirrorServer | None = None  # Server lifecycle is owned by the widget.
+        self.mirror_enabled = config.mirror_enabled  # Persisted startup preference.
         self.mirror_error = ""
-        self.mirror_port = int(config.get("mirror_port", MIRROR_DEFAULT_PORT))
+        self.mirror_port = config.mirror_port  # Local port used by the Mirror server.
         # Track Layer Shell position manually because Qt frameGeometry() is unreliable (returns 0,0)
         self.layer_pos = QPoint(0, 0)
         
@@ -775,8 +786,8 @@ class DanmakuWidget(QWidget):
             asyncio.create_task(self.start_mirror_server())
         
         # 加载保存的配置
-        if 'room_id' in config:
-            self.room_id = config['room_id']
+        if config.room_id is not None:
+            self.room_id = config.room_id
         
         # 初始化房间号
         self.room_id_input.setText(str(self.room_id))
@@ -1550,6 +1561,21 @@ class DanmakuWidget(QWidget):
     def setup_danmaku_client(self):
         self.danmaku_client = None
 
+    def _persist_config(self, config: AppConfig) -> bool:
+        """Persist one complete typed configuration value through the injected store."""
+        return self.config_store.save(config)
+
+    def _update_persisted_config(self, *, room_id: int | None = None, mirror_enabled: bool | None = None) -> bool:
+        """Update room or Mirror settings without dropping unrelated saved fields."""
+        current = self.config_store.load()
+        updated = replace(
+            current,
+            room_id=current.room_id if room_id is None else room_id,
+            mirror_enabled=current.mirror_enabled if mirror_enabled is None else mirror_enabled,
+            mirror_port=self.mirror_port,
+        )
+        return self._persist_config(updated)
+
     def open_audience_popup(self):
         if self._audience_snapshot is None or self.is_gaming_mode:
             return
@@ -1678,10 +1704,10 @@ class DanmakuWidget(QWidget):
 
         self.room_id = room_id
         self.room_id_input.setText(str(room_id))
-        client = DanmakuClient(room_id, self.sessdata)
+        client = DanmakuClient(room_id, self.sessdata, auth_service=self.auth_service)
         self.danmaku_client = client
         self._wire_danmaku_client(client)
-        save_config({'room_id': room_id})
+        self._update_persisted_config(room_id=room_id)
         self._set_connecting_ui()
         try:
             await client.start()
@@ -1780,10 +1806,10 @@ class DanmakuWidget(QWidget):
             self.mirror_server.publish_append(entry)
 
     async def _ensure_live_control_room(self) -> int:
-        auth_manager = AuthManager()
+        """Resolve the authenticated anchor room and close the temporary session."""
         session = None
         try:
-            session, _from_keyring = await auth_manager.create_authenticated_session()
+            session, _from_keyring = await self.auth_service.create_authenticated_session()
             anchor_room_id = await get_anchor_live_room_id(session)
         finally:
             if session is not None and not session.closed:
@@ -1803,7 +1829,7 @@ class DanmakuWidget(QWidget):
             return
 
         if not hasattr(self, '_live_control_dialog'):
-            self._live_control_dialog = LiveControlDialog(self)
+            self._live_control_dialog = LiveControlDialog(self, services=self.services)
             self._live_control_dialog.live_status_changed.connect(self.set_live_status_indicator)
         self._live_control_dialog.set_room_id(anchor_room_id)
         self._live_control_dialog.show()
@@ -1831,12 +1857,12 @@ class DanmakuWidget(QWidget):
         if enabled:
             self.mirror_enabled = True
             self.mirror_error = ""
-            save_config({"mirror_enabled": True, "mirror_port": self.mirror_port})
+            self._update_persisted_config(mirror_enabled=True)
             await self.start_mirror_server()
         else:
             self.mirror_enabled = False
             self.mirror_error = ""
-            save_config({"mirror_enabled": False, "mirror_port": self.mirror_port})
+            self._update_persisted_config(mirror_enabled=False)
             await self.shutdown_mirror_server()
             self.add_system_message("BiliHUD Mirror 已停止。")
         self.refresh_mirror_settings()
@@ -1892,7 +1918,7 @@ class DanmakuWidget(QWidget):
 
     def open_qr_login(self):
         """打开扫码登录窗口"""
-        dialog = QRLoginDialog(self)
+        dialog = QRLoginDialog(self, auth_service=self.auth_service)
         dialog.login_success.connect(self.on_login_success)
         dialog.exec()
 
