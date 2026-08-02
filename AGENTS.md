@@ -102,6 +102,13 @@ Strong typing is a continuous requirement for all new and modified code.
 - Prefer the standard library and existing project tools before adding dependencies.
 - Do not modify third-party vendored code unless the task explicitly requires it.
 
+## File Size
+
+- New or modified Python source files should normally stay within 500 lines.
+- Files over 800 lines should be split by responsibility; document the reason in the PR when that is not practical.
+- Splitting must follow responsibility and dependency boundaries; do not split mechanically just to reduce line count.
+- Generated and third-party code are exempt.
+
 ## Async and Lifecycle
 
 - Every asynchronous task must have a clear creator and owner.
