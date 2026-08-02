@@ -69,6 +69,12 @@ class DanmakuClient:
         self._live_emoticon_cache: list[LiveEmoticonPackage] | None = None  # Short-lived room cache.
         self._live_emoticon_cache_at = 0.0  # Monotonic timestamp for the emoticon cache.
 
+    @property
+    def is_running(self) -> bool:
+        """Report the underlying BLive connection state through this client boundary."""
+        client = self.client
+        return client is not None and client.is_running
+
     def set_danmaku_callback(self, callback: Callable[[web_models.DanmakuMessage], None]) -> None:
         """设置弹幕接收回调函数"""
         self.on_danmaku_received = callback
@@ -310,17 +316,17 @@ class DanmakuClient:
 
         if client:
             try:
-                if getattr(client, "is_running", False):
+                if client.is_running:
                     client.stop()
                     join_task = asyncio.create_task(client.join())
                     try:
                         await asyncio.wait_for(asyncio.shield(join_task), timeout=normal_timeout)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         if session and not session.closed:
                             await session.close()
                         try:
                             await asyncio.wait_for(asyncio.shield(join_task), timeout=forced_timeout)
-                        except asyncio.TimeoutError as exc:
+                        except TimeoutError as exc:
                             stop_error = DanmakuShutdownError(
                                 f"弹幕连接未能在强制关闭后停止，room_id={self.room_id}"
                             )

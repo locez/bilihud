@@ -7,6 +7,7 @@ from PyQt6.QtGui import QColor, QImage, QPixmap
 from PyQt6.QtWidgets import QDialog, QGraphicsDropShadowEffect, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from .auth import QR_LOGIN_STATUS_NAMES, AuthenticationService
+from .lifecycle import TaskScope, TaskSupervisor, cancel_task
 from .services import create_default_services
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ class QRLoginDialog(QDialog):
         self,
         parent: QWidget | None = None,
         auth_service: AuthenticationService | None = None,
+        task_scope: TaskScope | None = None,
     ) -> None:
         """Create the dialog and start polling only after it becomes visible."""
         super().__init__(parent)
@@ -34,7 +36,20 @@ class QRLoginDialog(QDialog):
         self.auth_service = (  # Shared authentication boundary supplied by the app.
             auth_service if auth_service is not None else create_default_services().auth_service
         )
+        if task_scope is None:
+            task_supervisor = TaskSupervisor()
+            self._task_supervisor: TaskSupervisor | None = task_supervisor
+            self._owns_task_supervisor = True
+            self._task_scope = task_supervisor.create_scope("qr-login")
+        else:
+            self._task_supervisor = None
+            self._owns_task_supervisor = False
+            self._task_scope = task_scope
         self.qrcode_key: str | None = None  # Key associated with the currently displayed QR code.
+        self._load_task: asyncio.Task[None] | None = None  # Current QR image request.
+        self._poll_task: asyncio.Task[None] | None = None  # Current QR status request.
+        self._shutting_down = False  # Prevent new requests after application shutdown.
+        self._shutdown_complete = False  # Makes application shutdown idempotent.
         
         self.init_ui()
         
@@ -140,22 +155,52 @@ class QRLoginDialog(QDialog):
     def showEvent(self, event):
         """Refresh the QR code whenever the dialog is shown."""
         super().showEvent(event)
+        if self._shutting_down:
+            return
         self.refresh_qrcode()
         
     def closeEvent(self, event):
         """Stop status polling before the dialog is destroyed or hidden."""
         self.poll_timer.stop()
+        self.qrcode_key = None
+        if self._load_task is not None and not self._load_task.done():
+            self._load_task.cancel()
+        if self._poll_task is not None and not self._poll_task.done():
+            self._poll_task.cancel()
         super().closeEvent(event)
+
+    async def shutdown(self) -> None:
+        """Cancel QR requests and await their completion before application exit."""
+        if self._shutdown_complete:
+            return
+
+        self._shutting_down = True
+        self.poll_timer.stop()
+        self.qrcode_key = None
+        await cancel_task(self._load_task)
+        await cancel_task(self._poll_task)
+        try:
+            await self._task_scope.cancel_all()
+        finally:
+            if self._owns_task_supervisor and self._task_supervisor is not None:
+                await self._task_supervisor.shutdown()
+        self._shutdown_complete = True
         
     def refresh_qrcode(self):
         """Start one asynchronous QR-code request and reset stale polling state."""
+        if self._shutting_down:
+            return
         self.status_label.setText("正在获取二维码...")
         self.status_label.setStyleSheet("color: #aaaaaa;")
         self.refresh_btn.setVisible(False)
         self.poll_timer.stop()
+        self.qrcode_key = None
+        if self._load_task is not None and not self._load_task.done():
+            self._load_task.cancel()
+        if self._poll_task is not None and not self._poll_task.done():
+            self._poll_task.cancel()
         
-        # Async call to get QR code
-        asyncio.create_task(self._load_qrcode())
+        self._load_task = self._task_scope.create_task(self._load_qrcode(), name="load-qrcode")
         
     async def _load_qrcode(self):
         """Fetch a QR URL, render it, and start polling after a successful render."""
@@ -190,13 +235,18 @@ class QRLoginDialog(QDialog):
 
     def check_status(self):
         """Schedule one status poll when a QR-login key is available."""
-        if not self.qrcode_key:
+        if not self.qrcode_key or self._shutting_down:
             return
-        asyncio.create_task(self._poll_status())
+        if self._poll_task is not None and not self._poll_task.done():
+            return
+        self._poll_task = self._task_scope.create_task(
+            self._poll_status(self.qrcode_key),
+            name="poll-qrcode",
+        )
             
-    async def _poll_status(self):
+    async def _poll_status(self, qrcode_key: str) -> None:
         """Persist cookies after successful scanning and update visible failure states."""
-        code, msg, cookies = await self.auth_service.poll_status(self.qrcode_key)
+        code, msg, cookies = await self.auth_service.poll_status(qrcode_key)
         status_name = QR_LOGIN_STATUS_NAMES.get(code, "Unknown")
         logger.info("QR login poll status: code=%s (%s), message=%s", code, status_name, msg)
         
@@ -210,8 +260,6 @@ class QRLoginDialog(QDialog):
             if cookies:
                 self.auth_service.save_cookies(cookies)
                 self.login_success.emit()
-                # Wait a bit before closing
-                await asyncio.sleep(1)
                 self.accept()
                 
         elif code == 86101:

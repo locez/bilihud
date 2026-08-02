@@ -10,13 +10,72 @@ os.environ["QT_API"] = "pyqt6"
 
 import asyncio
 import signal
+from collections.abc import Iterable
+from typing import Any
 
 import qasync
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from .danmaku_widget import DanmakuWidget
+from .lifecycle import TaskSupervisor
 from .services import AppServices, create_default_services
+
+
+class ApplicationRuntime:
+    """Own the top-level widget and the application-wide async lifecycle."""
+
+    def __init__(
+        self,
+        app: QApplication,
+        room_id: int,
+        services: AppServices | None = None,
+        task_supervisor: TaskSupervisor | None = None,
+    ) -> None:
+        """Create a runtime that will assemble and own one application window."""
+        self.app = app
+        self.room_id = room_id
+        self.services = services
+        self.task_supervisor = task_supervisor if task_supervisor is not None else TaskSupervisor()
+        self.widget: DanmakuWidget | None = None
+        self._stop_lock = asyncio.Lock()
+        self._stopped = False
+
+    async def start(self) -> None:
+        """Create, configure, and show the top-level window exactly once."""
+        if self._stopped:
+            raise RuntimeError("应用运行时已关闭")
+        if self.widget is not None:
+            return
+
+        widget = DanmakuWidget(
+            self.room_id,
+            services=self.services,
+            task_supervisor=self.task_supervisor,
+        )
+        self.widget = widget
+        try:
+            widget.activate_layer_shell()
+            widget.show()
+            await widget.start()
+        except BaseException:
+            try:
+                await widget.shutdown()
+            finally:
+                await self.task_supervisor.shutdown()
+            raise
+
+    async def stop(self) -> None:
+        """Stop the window-owned workflows and await all supervised tasks."""
+        async with self._stop_lock:
+            if self._stopped:
+                return
+            try:
+                if self.widget is not None:
+                    await self.widget.shutdown()
+            finally:
+                await self.task_supervisor.shutdown()
+            self._stopped = True
 
 
 async def main(
@@ -29,24 +88,24 @@ async def main(
     app.aboutToQuit.connect(app_close_event.set)
 
     app_services = services if services is not None else create_default_services()
-    danmaku_widget = DanmakuWidget(room_id, services=app_services)
-    
-    # Try to activate Layer Shell BEFORE showing
-    # This ensures the window is mapped as a Layer Shell surface from the start
-    danmaku_widget.activate_layer_shell()
+    runtime = ApplicationRuntime(app, room_id, services=app_services)
+    try:
+        await runtime.start()
+        await app_close_event.wait()
+    finally:
+        await runtime.stop()
 
-    # Show window
-    danmaku_widget.show()
 
-    await app_close_event.wait()
-
-async def cancel_pending_tasks(loop, exclude=None):
+async def cancel_pending_tasks(
+    loop: asyncio.AbstractEventLoop,
+    exclude: Iterable[asyncio.Task[Any]] | None = None,
+) -> None:
     """Cancel and await outstanding asyncio tasks during application shutdown."""
-    exclude = set(exclude or ())
+    excluded_tasks = set(exclude or ())
     current_task = asyncio.current_task(loop=loop)
     if current_task is not None:
-        exclude.add(current_task)
-    pending = [task for task in asyncio.all_tasks(loop) if task not in exclude and not task.done()]
+        excluded_tasks.add(current_task)
+    pending = [task for task in asyncio.all_tasks(loop) if task not in excluded_tasks and not task.done()]
     if not pending:
         return
 
@@ -80,13 +139,18 @@ def entry_point():
     
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
-    _main_task = loop.create_task(main(app, args.room_id))
+    main_task = loop.create_task(main(app, args.room_id), name="application-main")
     
     try:
         loop.run_forever()
     finally:
-        loop.run_until_complete(cancel_pending_tasks(loop))
-        loop.close()
+        try:
+            if not main_task.done():
+                loop.run_until_complete(main_task)
+        finally:
+            # ApplicationRuntime performs the owned shutdown first; this is the last-resort fallback.
+            loop.run_until_complete(cancel_pending_tasks(loop, exclude={main_task}))
+            loop.close()
 
 if __name__ == "__main__":
     entry_point()

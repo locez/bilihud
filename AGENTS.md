@@ -66,6 +66,16 @@ Strong typing is a continuous requirement for all new and modified code.
 - Use the type checker configured by the repository; do not hide errors by expanding exclusions.
 - Every type suppression must document its reason, impact, and follow-up path.
 
+## Explicit Contracts and Dynamic Access
+
+- Initialize every instance attribute in `__init__` or an explicit factory, with a declared type. Optional state must be initialized to `None`; callers should use direct attribute access and explicit `is None` checks.
+- Do not use reflection-style access (`getattr`, `hasattr`, `setattr`, `delattr`, `__dict__`, `globals()`, or `locals()`) to model application or domain state, discover fields, or hide incomplete initialization. Do not add trivial getter/setter methods or generic `get(name)` APIs for ordinary fields; use typed attributes or properties. Use a method when it performs computation, validation, a meaningful side effect, or protects an invariant.
+- Dynamic access is allowed only at an external compatibility boundary, such as a Qt/plugin/third-party version probe. Isolate it in a typed adapter or small helper, document why it is unavoidable, validate the result, and test both supported and unavailable cases. Do not scatter capability checks through business or presentation logic.
+- Do not use `value or default` or missing-key fallbacks when `False`, `0`, an empty value, or an explicitly missing value have different meanings. Use explicit `None` checks and validation.
+- Do not use `cast`, `# type: ignore`, or `assert` to conceal a missing contract. Narrow types through explicit checks or adapters; use `assert` only for an internal invariant that cannot be supplied by external input and whose failure is a programming error.
+- Do not use `eval`, `exec`, string-based dispatch, or dynamic imports for ordinary control flow. Prefer explicit maps, protocols, registries, or adapters. Isolate and review any plugin boundary that genuinely requires dynamic loading.
+- Dependencies and ownership must be explicit constructor or function inputs. Do not locate services through global state, service factories deep inside a component, widget parent traversal, or reflective lookup; wire them at the composition root.
+
 ## Documentation and Comments
 
 - Public modules, classes, protocols, functions, and methods must have concise docstrings that explain their responsibility and relevant input, output, side effect, ownership, or failure contract.
@@ -82,7 +92,10 @@ Strong typing is a continuous requirement for all new and modified code.
 
 - Use explicit resource ownership and context management.
 - Avoid mutable default arguments, implicit global state, and duplicated business logic.
+- Constructors may build in-memory/UI state, but must not perform network I/O, spawn background tasks or subprocesses, or register process-global hooks. Expose explicit start/initialize and stop/close/shutdown operations for resources and workflows.
 - Catch only exceptions that can be handled; avoid blanket `except Exception` blocks.
+- Never use `except Exception: pass`, convert an unknown failure into success, or log an error while leaving ownership/state ambiguous. Catch expected failures at the boundary, preserve useful context, and make cleanup failures observable.
+- Do not use blocking I/O or `time.sleep` on an event-loop/UI thread. Use an async API or an explicitly owned worker, with a timeout and a cleanup path.
 - Use the repository's logging mechanism instead of `print()` for production diagnostics.
 - Represent failures with explicit error types or result values.
 - Keep functions focused and avoid unnecessary complexity.
@@ -94,9 +107,13 @@ Strong typing is a continuous requirement for all new and modified code.
 - Every asynchronous task must have a clear creator and owner.
 - Keep task handles and cancel, await, and inspect them at the appropriate lifecycle boundary.
 - Do not create unowned fire-and-forget tasks.
+- Treat tasks created by callbacks, Qt signals, timers, `qasync`, `asyncio.create_task`, or `ensure_future` the same way: retain the handle under the owning component or supervisor and provide a cancellation/await path.
+- Treat `run_in_executor`, `asyncio.to_thread`, and subprocess work as owned resources too. Define timeout, cancellation, and shutdown behavior; cancellation of the wrapper must not be mistaken for cancellation of the underlying blocking operation.
+- Handle `asyncio.CancelledError` as control flow: release owned resources and re-raise unless the caller explicitly owns cancellation recovery. Use `BaseException` catches only for narrowly scoped cleanup that re-raises or records the failure.
 - Start, stop, retry, and shutdown operations should be predictable and as idempotent as practical.
 - Network sessions, files, servers, threads, and subprocesses must have explicit cleanup paths.
 - Do not rely on object destruction or process exit to release critical resources.
+- Do not use nested event loops such as `exec()` to make an asynchronous workflow appear synchronous. Keep modal behavior at the presentation boundary; prefer non-blocking `open()`/`show()` plus an explicit completion or shutdown contract. If a platform API requires a nested loop, document its ownership and cancellation limitations.
 - Test cancellation, timeouts, repeated calls, and exceptional shutdown paths.
 
 ## Security
@@ -106,6 +123,7 @@ Strong typing is a continuous requirement for all new and modified code.
 - Do not bypass authentication, TLS, validation, or permission checks for convenience.
 - Validate every external input.
 - Treat external URLs, file paths, redirects, and subprocess arguments as security boundaries.
+- Pass subprocess arguments as an explicit argument list; do not use `os.system`, shell string concatenation, or `shell=True` unless the boundary is deliberate, validated, and documented.
 - Apply reasonable timeouts and response-size limits to network requests.
 - Security behavior must be covered by automated tests rather than relying on callers to use an API correctly.
 
@@ -139,6 +157,8 @@ changed lines or restate the implementation.
   file.
 - Use fakes, stubs, or adapters for external services.
 - Cover normal, failure, cancellation, timeout, and repeated-call paths.
+- Exercise behavior through public construction and interfaces. Do not use `__new__` or manually populate private fields to bypass initialization for ordinary behavior tests; an isolated lifecycle/Qt harness may do so only when full construction invokes unavailable platform resources, and it must initialize the tested contract explicitly.
+- Synchronize asynchronous tests with events, futures, or task handles. Do not rely on arbitrary sleeps or wall-clock timing except for an explicit timeout contract.
 - Run the full test suite when changing public behavior, lifecycle management, or cross-module contracts.
 - Run the relevant build, packaging, or CI checks when changing dependencies or build configuration.
 - Never solve a failing test by deleting coverage, weakening assertions, or expanding exclusions without documenting the reason.

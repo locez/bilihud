@@ -1,11 +1,11 @@
 import asyncio
 import logging
+from collections.abc import Coroutine
 from dataclasses import replace
 from typing import Any
 
 import aiohttp
-import qasync
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 from .auth import AuthenticationService
 from .config import ConfigStore
 from .helpers import validate_room_id
+from .lifecycle import TaskScope, TaskSupervisor, cancel_task
 from .live_api import (
     LiveApiError,
     RoomInfo,
@@ -81,6 +82,7 @@ class LiveControlDialog(QDialog):
         self,
         parent: QWidget | None = None,
         services: AppServices | None = None,
+        task_scope: TaskScope | None = None,
     ) -> None:
         """Create the dialog with shared configuration and authentication boundaries."""
         super().__init__(parent)
@@ -90,6 +92,15 @@ class LiveControlDialog(QDialog):
         self.services = services if services is not None else create_default_services()
         self.config_store: ConfigStore = self.services.config_store  # Non-sensitive settings boundary.
         self.auth_service: AuthenticationService = self.services.auth_service  # Auth and OBS secret boundary.
+        if task_scope is None:
+            task_supervisor = TaskSupervisor()
+            self._task_supervisor: TaskSupervisor | None = task_supervisor
+            self._owns_task_supervisor = True
+            self._task_scope = task_supervisor.create_scope("live-control")
+        else:
+            self._task_supervisor = None
+            self._owns_task_supervisor = False
+            self._task_scope = task_scope
         self.session: aiohttp.ClientSession | None = None  # Session owned and closed by this dialog.
         self.area_list: list[dict[str, Any]] = []
         self.credentials: list[StreamCredential] = []
@@ -106,6 +117,9 @@ class LiveControlDialog(QDialog):
         self._obs_busy = False
         self._obs_connected = False
         self._obs_streaming_started = False
+        self._action_tasks: set[asyncio.Task[Any]] = set()  # Qt-triggered workflows owned by this dialog.
+        self._shutting_down = False  # Blocks new dialog work during application shutdown.
+        self._shutdown_complete = False  # Makes application shutdown idempotent.
 
         self._init_ui()
         self._load_config_values()
@@ -312,8 +326,39 @@ class LiveControlDialog(QDialog):
         if room_id > 0:
             self.room_id_input.setText(str(room_id))
 
+    def _create_action_task(
+        self,
+        coroutine: Coroutine[Any, Any, None],
+        *,
+        name: str,
+    ) -> asyncio.Task[None]:
+        """Create and retain one dialog action under the dialog task owner."""
+        task = self._task_scope.create_task(coroutine, name=name)
+        self._action_tasks.add(task)
+        task.add_done_callback(self._discard_action_task)
+        return task
+
+    def _discard_action_task(self, task: asyncio.Task[Any]) -> None:
+        """Remove a completed dialog action from the local registry."""
+        self._action_tasks.discard(task)
+
+    async def _cancel_action_tasks(self) -> None:
+        """Cancel and await every Qt-triggered dialog action."""
+        current_task = asyncio.current_task()
+        pending = tuple(
+            task
+            for task in self._action_tasks
+            if not task.done() and task is not current_task
+        )
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        if self._shutting_down:
+            return
         if self._initial_load_task and not self._initial_load_task.done():
             return
         if self.session and not self.session.closed:
@@ -321,8 +366,10 @@ class LiveControlDialog(QDialog):
             return
 
         self._load_generation += 1
-        self._initial_load_task = asyncio.create_task(self.load_initial_state(self._load_generation))
-        self._initial_load_task.add_done_callback(self._consume_task_exception)
+        self._initial_load_task = self._task_scope.create_task(
+            self.load_initial_state(self._load_generation),
+            name="initial-load",
+        )
 
     def closeEvent(self, event) -> None:
         """Cancel owned work and schedule all aiohttp sessions for cleanup."""
@@ -334,12 +381,56 @@ class LiveControlDialog(QDialog):
             self._room_info_task.cancel()
         if self._obs_write_task and not self._obs_write_task.done():
             self._obs_write_task.cancel()
+        for task in tuple(self._action_tasks):
+            if not task.done():
+                task.cancel()
         self._clear_credentials()
         self._schedule_session_cleanup(self.session)
         self.session = None
         self._busy = False
         self._update_action_state()
         super().closeEvent(event)
+
+    async def shutdown(self) -> None:
+        """Cancel dialog work and await cleanup of every owned HTTP session."""
+        if self._shutdown_complete:
+            return
+
+        self._shutting_down = True
+        self._load_generation += 1
+        self._action_generation += 1
+        await cancel_task(self._initial_load_task)
+        await cancel_task(self._room_info_task)
+        await cancel_task(self._obs_write_task)
+        await self._cancel_action_tasks()
+        self._clear_credentials()
+
+        if self.session is not None and not self.session.closed:
+            if self.session not in self._sessions_pending_close:
+                self._sessions_pending_close.append(self.session)
+        self.session = None
+
+        cleanup_errors: list[Exception] = []
+        cleanup_task = self._session_cleanup_task
+        if cleanup_task is not None and not cleanup_task.done():
+            try:
+                await cleanup_task
+            except Exception as exc:
+                cleanup_errors.append(exc)
+        try:
+            await self._close_pending_sessions()
+        except Exception as exc:
+            cleanup_errors.append(exc)
+        try:
+            await self._task_scope.cancel_all()
+            self._busy = False
+            self._update_action_state()
+            if cleanup_errors:
+                raise cleanup_errors[0]
+        finally:
+            if self._owns_task_supervisor and self._task_supervisor is not None:
+                await self._task_supervisor.shutdown()
+        self._shutdown_complete = True
 
     async def load_initial_state(self, generation: int) -> None:
         """Create a dialog-owned session and discard it if loading becomes stale."""
@@ -375,34 +466,29 @@ class LiveControlDialog(QDialog):
             if generation == self._load_generation:
                 self._set_busy(False)
 
-    @staticmethod
-    def _consume_task_exception(task: asyncio.Task[None]) -> None:
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            logger.exception("Unhandled live control dialog task error")
-
     def _schedule_session_cleanup(self, session: aiohttp.ClientSession | None) -> None:
         if session and not session.closed and session not in self._sessions_pending_close:
             self._sessions_pending_close.append(session)
 
+        if self._shutting_down:
+            return
+
         if self._sessions_pending_close and (
             self._session_cleanup_task is None or self._session_cleanup_task.done()
         ):
-            self._session_cleanup_task = asyncio.create_task(self._close_pending_sessions())
-            self._session_cleanup_task.add_done_callback(self._consume_task_exception)
+            self._session_cleanup_task = self._task_scope.create_task(
+                self._close_pending_sessions(),
+                name="session-cleanup",
+            )
 
     async def _close_pending_sessions(self) -> None:
         while self._sessions_pending_close:
-            session = self._sessions_pending_close.pop(0)
+            session = self._sessions_pending_close[0]
             if session.closed:
+                self._sessions_pending_close.pop(0)
                 continue
-            try:
-                await session.close()
-            except Exception:
-                logger.exception("Failed to close live control session")
+            await session.close()
+            self._sessions_pending_close.pop(0)
 
     def _populate_parent_areas(self) -> None:
         self.parent_area_combo.blockSignals(True)
@@ -442,8 +528,20 @@ class LiveControlDialog(QDialog):
             self.set_status("已加载直播间当前标题和分区。")
         return True
 
-    @qasync.asyncSlot()
-    async def reload_room_info(self) -> None:
+    @pyqtSlot()
+    def reload_room_info(self) -> asyncio.Task[None] | None:
+        """Schedule a room-info refresh under the dialog task owner."""
+        if self._shutting_down:
+            return None
+        if self._room_info_task is not None and not self._room_info_task.done():
+            return self._room_info_task
+        task = self._create_action_task(self._reload_room_info(), name="reload-room-info")
+        self._room_info_task = task
+        return task
+
+    async def _reload_room_info(self) -> None:
+        if self._shutting_down:
+            return
         if self._busy or not self.area_list or not self.session or self.session.closed:
             return
         if self._room_id() is None:
@@ -453,8 +551,6 @@ class LiveControlDialog(QDialog):
             self._update_action_state()
             return
         task = asyncio.current_task()
-        if task is not None:
-            self._room_info_task = task
         has_csrf = self._has_csrf()
         if has_csrf:
             self.set_status("正在加载直播间当前标题和分区...")
@@ -718,8 +814,16 @@ class LiveControlDialog(QDialog):
                 return
             raise
 
-    @qasync.asyncSlot()
-    async def handle_update_title(self) -> None:
+    @pyqtSlot()
+    def handle_update_title(self) -> asyncio.Task[None] | None:
+        """Schedule the title update workflow under the dialog task owner."""
+        if self._shutting_down:
+            return None
+        return self._create_action_task(self._handle_update_title(), name="update-title")
+
+    async def _handle_update_title(self) -> None:
+        if self._shutting_down:
+            return
         session = self.session
         if not session:
             return
@@ -745,8 +849,16 @@ class LiveControlDialog(QDialog):
             if self._is_current_action(action_generation, session):
                 self._set_busy(False)
 
-    @qasync.asyncSlot()
-    async def handle_update_area(self) -> None:
+    @pyqtSlot()
+    def handle_update_area(self) -> asyncio.Task[None] | None:
+        """Schedule the area update workflow under the dialog task owner."""
+        if self._shutting_down:
+            return None
+        return self._create_action_task(self._handle_update_area(), name="update-area")
+
+    async def _handle_update_area(self) -> None:
+        if self._shutting_down:
+            return
         session = self.session
         if not session:
             return
@@ -772,8 +884,16 @@ class LiveControlDialog(QDialog):
             if self._is_current_action(action_generation, session):
                 self._set_busy(False)
 
-    @qasync.asyncSlot()
-    async def handle_start_live(self) -> None:
+    @pyqtSlot()
+    def handle_start_live(self) -> asyncio.Task[None] | None:
+        """Schedule the start-live workflow under the dialog task owner."""
+        if self._shutting_down:
+            return None
+        return self._create_action_task(self._handle_start_live(), name="start-live")
+
+    async def _handle_start_live(self) -> None:
+        if self._shutting_down:
+            return
         session = self.session
         if not session:
             return
@@ -809,7 +929,7 @@ class LiveControlDialog(QDialog):
             result = await start_live(session, room_id, area_id, version.curr_version, str(version.build))
             if not self._is_current_action(action_generation, session):
                 return
-            self._handle_start_live_result(result.code, result.message, result.data)
+            await self._handle_start_live_result(result.code, result.message, result.data)
         except LiveApiError as exc:
             if self._is_current_action(action_generation, session):
                 logger.exception("Live API error while starting live")
@@ -822,21 +942,23 @@ class LiveControlDialog(QDialog):
             if self._is_current_action(action_generation, session):
                 self._set_busy(False)
 
-    def _handle_start_live_result(self, code: int, message: str, data: dict[str, Any]) -> None:
+    async def _handle_start_live_result(self, code: int, message: str, data: dict[str, Any]) -> None:
         if code == 0:
             self.credentials = parse_stream_credentials(data)
             self._render_credentials()
             self._set_live_active(True)
             if self.credentials:
                 self.set_status("直播已开始，推流凭证已生成；正在尝试连接 OBS 自动推流。", success=True)
-                self._obs_write_task = asyncio.create_task(self._write_obs_after_start())
-                self._obs_write_task.add_done_callback(self._consume_task_exception)
+                self._obs_write_task = self._task_scope.create_task(
+                    self._write_obs_after_start(),
+                    name="obs-credential-write",
+                )
             else:
                 self.set_status("直播已开始，但接口未返回可识别的推流凭证。", error=True)
             return
 
         if code == 60024:
-            self._show_qr_verification(start_live_verification_url(code, data, uid=None))
+            await self._show_qr_verification(start_live_verification_url(code, data, uid=None))
             self.set_status("本次开播需要扫码验证，完成后请重新点击开始直播。", error=True)
             return
 
@@ -844,9 +966,9 @@ class LiveControlDialog(QDialog):
             uid = get_cookie_value(self.session, "DedeUserID") if self.session else None
             auth_url = start_live_verification_url(code, data, uid=uid)
             if auth_url:
-                self._show_qr_verification(auth_url, title="人脸认证")
+                await self._show_qr_verification(auth_url, title="人脸认证")
             else:
-                self._show_text_dialog("人脸认证", "本次开播需要人脸认证，但当前会话缺少 DedeUserID。")
+                await self._show_text_dialog("人脸认证", "本次开播需要人脸认证，但当前会话缺少 DedeUserID。")
             self.set_status("本次开播需要人脸认证，完成后请重新点击开始直播。", error=True)
             return
 
@@ -856,8 +978,16 @@ class LiveControlDialog(QDialog):
     def _extract_qr_url(data: dict[str, Any]) -> str:
         return extract_qr_url(data)
 
-    @qasync.asyncSlot()
-    async def handle_stop_live(self) -> None:
+    @pyqtSlot()
+    def handle_stop_live(self) -> asyncio.Task[None] | None:
+        """Schedule the stop-live workflow under the dialog task owner."""
+        if self._shutting_down:
+            return None
+        return self._create_action_task(self._handle_stop_live(), name="stop-live")
+
+    async def _handle_stop_live(self) -> None:
+        if self._shutting_down:
+            return
         session = self.session
         if not session:
             return
@@ -949,8 +1079,16 @@ class LiveControlDialog(QDialog):
             self._obs_busy = False
             self._update_action_state()
 
-    @qasync.asyncSlot()
-    async def handle_check_obs(self) -> None:
+    @pyqtSlot()
+    def handle_check_obs(self) -> asyncio.Task[None] | None:
+        """Schedule the OBS check workflow under the dialog task owner."""
+        if self._shutting_down:
+            return None
+        return self._create_action_task(self._handle_check_obs(), name="check-obs")
+
+    async def _handle_check_obs(self) -> None:
+        if self._shutting_down:
+            return
         client = self._obs_client()
         if client is None:
             return
@@ -1116,9 +1254,9 @@ class LiveControlDialog(QDialog):
         QApplication.clipboard().setText(text)
         self.set_status("已复制到剪贴板。")
 
-    def _show_qr_verification(self, url: str, title: str = "开播验证") -> None:
+    async def _show_qr_verification(self, url: str, title: str = "开播验证") -> None:
         if not url:
-            self._show_text_dialog(title, "本次开播需要扫码验证，但接口未返回二维码地址。")
+            await self._show_text_dialog(title, "本次开播需要扫码验证，但接口未返回二维码地址。")
             return
 
         dialog = QDialog(self)
@@ -1149,15 +1287,34 @@ class LiveControlDialog(QDialog):
         close_btn = QPushButton("关闭")
         close_btn.clicked.connect(dialog.accept)
         layout.addWidget(close_btn)
-        dialog.exec()
+        await self._open_dialog(dialog)
 
-    def _show_text_dialog(self, title: str, text: str) -> None:
+    async def _show_text_dialog(self, title: str, text: str) -> None:
         box = QMessageBox(self)
         box.setWindowTitle(title)
         box.setText(text)
         box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         box.setStandardButtons(QMessageBox.StandardButton.Ok)
         copy_btn = box.addButton("复制", QMessageBox.ButtonRole.ActionRole)
-        box.exec()
+        await self._open_dialog(box)
         if box.clickedButton() == copy_btn:
             self.copy_to_clipboard(text)
+
+    async def _open_dialog(self, dialog: QDialog) -> int:
+        """Open a modal dialog asynchronously and close it when its owner is canceled."""
+        loop = asyncio.get_running_loop()
+        finished: asyncio.Future[int] = loop.create_future()
+
+        def complete(result: int) -> None:
+            if not finished.done():
+                finished.set_result(result)
+
+        dialog.finished.connect(complete)
+        dialog.open()
+        try:
+            return await finished
+        except asyncio.CancelledError:
+            dialog.close()
+            raise
+        finally:
+            dialog.deleteLater()
