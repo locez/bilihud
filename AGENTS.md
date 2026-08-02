@@ -63,6 +63,8 @@ Strong typing is a continuous requirement for all new and modified code.
 - Parse external JSON, configuration, and third-party objects into typed structures.
 - Use `dataclass`, `Enum`, `Protocol`, `TypedDict`, and type aliases when they express the real contract.
 - Give states, commands, events, errors, and configuration explicit structures.
+- Before adding a helper or utility function, search the existing code for an equivalent capability. Reuse the existing function or extend its typed contract when it owns the same responsibility; add a new helper only when the responsibility or ownership is genuinely different.
+- When a value does not satisfy a function's annotated input type, first decide whether the function's contract should accept that value. Prefer widening or clarifying the function's type and testing the resulting contract when the value is semantically valid; do not add call-site conversions merely to satisfy the annotation. Convert at a real boundary only when normalization is part of that boundary's explicit contract, with validation that preserves the intended meaning.
 - Use the type checker configured by the repository; do not hide errors by expanding exclusions.
 - Every type suppression must document its reason, impact, and follow-up path.
 
