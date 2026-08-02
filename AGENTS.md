@@ -73,6 +73,8 @@ Strong typing is a continuous requirement for all new and modified code.
 - Document configuration fields, injected services, sessions, tasks, credentials, and other state that crosses a layer or has a non-trivial lifecycle.
 - Private helpers need documentation when they enforce an invariant, normalize external data, handle security-sensitive values, or coordinate cancellation and resource cleanup.
 - Comments should explain intent and constraints rather than repeat the code. Keep them short and update them with the behavior they describe.
+- Treat existing documentation as part of the code's contract and accumulated domain knowledge. Before rewriting it, preserve non-obvious protocol mappings, return-code meanings, invariants, lifecycle or security constraints, and operational guidance.
+- Do not remove meaningful documentation merely for brevity or style consistency. If information is obsolete, verify that it is no longer true and record the replacement or removal rationale in the change description.
 - Transitional compatibility code must include a `TODO` comment stating what will be removed and the condition or tracking issue that permits removal.
 - Do not add a compatibility fallback without an explicit removal condition; when the condition changes, update the `TODO` with the new owner or follow-up issue.
 
