@@ -1,18 +1,25 @@
 # -*- coding: utf-8 -*-
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QPushButton, QWidget, 
-    QGraphicsDropShadowEffect
-)
-from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor
-import qasync
 import asyncio
-from .auth import AuthManager
+
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QImage, QPixmap
+from PyQt6.QtWidgets import QDialog, QGraphicsDropShadowEffect, QLabel, QPushButton, QVBoxLayout, QWidget
+
+from .auth import AuthenticationService
+from .services import create_default_services
+
 
 class QRLoginDialog(QDialog):
+    """Display the Bilibili QR-login flow through an injected auth service."""
+
     login_success = pyqtSignal()
     
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        auth_service: AuthenticationService | None = None,
+    ) -> None:
+        """Create the dialog and start polling only after it becomes visible."""
         super().__init__(parent)
         self.setWindowTitle("扫码登录 Bilibili")
         self.setFixedSize(320, 400)
@@ -21,17 +28,20 @@ class QRLoginDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
-        self.auth_manager = AuthManager()
-        self.qrcode_key = None
+        self.auth_service = (  # Shared authentication boundary supplied by the app.
+            auth_service if auth_service is not None else create_default_services().auth_service
+        )
+        self.qrcode_key: str | None = None  # Key associated with the currently displayed QR code.
         
         self.init_ui()
         
         # Timer for polling
-        self.poll_timer = QTimer(self)
+        self.poll_timer = QTimer(self)  # Owned by the dialog and stopped on close.
         self.poll_timer.setInterval(2000) # Poll every 2 seconds
         self.poll_timer.timeout.connect(self.check_status)
         
     def init_ui(self):
+        """Build the frameless QR-login presentation and its status controls."""
         # Main layout with background container
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
@@ -125,14 +135,17 @@ class QRLoginDialog(QDialog):
         main_layout.addWidget(self.container)
 
     def showEvent(self, event):
+        """Refresh the QR code whenever the dialog is shown."""
         super().showEvent(event)
         self.refresh_qrcode()
         
     def closeEvent(self, event):
+        """Stop status polling before the dialog is destroyed or hidden."""
         self.poll_timer.stop()
         super().closeEvent(event)
         
     def refresh_qrcode(self):
+        """Start one asynchronous QR-code request and reset stale polling state."""
         self.status_label.setText("正在获取二维码...")
         self.status_label.setStyleSheet("color: #aaaaaa;")
         self.refresh_btn.setVisible(False)
@@ -142,19 +155,27 @@ class QRLoginDialog(QDialog):
         asyncio.create_task(self._load_qrcode())
         
     async def _load_qrcode(self):
-        url, key = await self.auth_manager.get_qrcode()
+        """Fetch a QR URL, render it, and start polling after a successful render."""
+        url, key = await self.auth_service.get_qrcode()
         if url and key:
             self.qrcode_key = key
             
             # Generate Image
             # Note: generate_qr_image is synchronous but fast
             loop = asyncio.get_event_loop()
-            bio = await loop.run_in_executor(None, self.auth_manager.generate_qr_image, url)
+            bio = await loop.run_in_executor(None, self.auth_service.generate_qr_image, url)
             
             if bio:
                 top_img = QImage.fromData(bio.getvalue())
                 pixmap = QPixmap.fromImage(top_img)
-                self.qr_label.setPixmap(pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                self.qr_label.setPixmap(
+                    pixmap.scaled(
+                        180,
+                        180,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
                 self.status_label.setText("请使用 哔哩哔哩手机客户端 扫码")
                 self.poll_timer.start()
             else:
@@ -165,12 +186,14 @@ class QRLoginDialog(QDialog):
             self.refresh_btn.setVisible(True)
 
     def check_status(self):
+        """Schedule one status poll when a QR-login key is available."""
         if not self.qrcode_key:
             return
         asyncio.create_task(self._poll_status())
             
     async def _poll_status(self):
-        code, msg, cookies = await self.auth_manager.poll_status(self.qrcode_key)
+        """Persist cookies after successful scanning and update visible failure states."""
+        code, msg, cookies = await self.auth_service.poll_status(self.qrcode_key)
         print(f"Poll Status: {code}, Msg: {msg}") 
         
         if code == 0:
@@ -181,7 +204,7 @@ class QRLoginDialog(QDialog):
             
             # Save cookies
             if cookies:
-                self.auth_manager.save_cookies(cookies)
+                self.auth_service.save_cookies(cookies)
                 self.login_success.emit()
                 # Wait a bit before closing
                 await asyncio.sleep(1)

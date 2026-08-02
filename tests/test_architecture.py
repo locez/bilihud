@@ -5,6 +5,11 @@ from typing import Final
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "bilihud"
 PURE_MODULE_NAMES: Final[tuple[str, ...]] = ("live_audience", "live_emoticons")
+PRESENTATION_MODULE_NAMES: Final[tuple[str, ...]] = (
+    "danmaku_widget",
+    "live_control_dialog",
+    "qr_login_dialog",
+)
 
 
 @dataclass(frozen=True)
@@ -91,5 +96,26 @@ def test_layer_import_rules_reject_forbidden_dependencies() -> None:
             for module in _imported_modules(path):
                 if _is_forbidden(module, rule.forbidden_prefixes):
                     violations.append(f"{rule.name}: {path.relative_to(SOURCE_ROOT)} imports {module}")
+
+    assert violations == []
+
+
+def test_presentation_uses_configuration_and_authentication_boundaries() -> None:
+    forbidden_modules = {"keyring"}
+    forbidden_names = {"AuthManager", "KeyringSessionStore", "load_config", "save_config"}
+    violations: list[str] = []
+
+    for name in PRESENTATION_MODULE_NAMES:
+        path = SOURCE_ROOT / f"{name}.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in forbidden_modules:
+                        violations.append(f"{name} imports {alias.name}")
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name in forbidden_names:
+                        violations.append(f"{name} imports {alias.name}")
 
     assert violations == []

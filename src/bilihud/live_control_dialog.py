@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from dataclasses import replace
 from typing import Any
 
 import aiohttp
@@ -23,7 +24,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .auth import AuthManager
+from .auth import AuthenticationService
+from .config import ConfigStore, validate_room_id
 from .live_api import (
     LiveApiError,
     RoomInfo,
@@ -52,7 +54,7 @@ from .obs_api import (
     obs_check_button_state,
     pick_primary_credential,
 )
-from .utils import load_config, save_config, validate_room_id
+from .services import AppServices, create_default_services
 
 logger = logging.getLogger(__name__)
 
@@ -70,26 +72,35 @@ def obs_cleanup_after_stop_state(obs_streaming: bool | None) -> tuple[bool, str]
 
 
 class LiveControlDialog(QDialog):
+    """Coordinate live-room controls and OBS integration through injected services."""
+
     live_status_changed = pyqtSignal(bool)
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        services: AppServices | None = None,
+    ) -> None:
+        """Create the dialog with shared configuration and authentication boundaries."""
         super().__init__(parent)
         self.setWindowTitle("直播控制")
         self.setMinimumSize(520, 540)
 
-        self.auth_manager = AuthManager()
-        self.session: aiohttp.ClientSession | None = None
+        self.services = services if services is not None else create_default_services()
+        self.config_store: ConfigStore = self.services.config_store  # Non-sensitive settings boundary.
+        self.auth_service: AuthenticationService = self.services.auth_service  # Auth and OBS secret boundary.
+        self.session: aiohttp.ClientSession | None = None  # Session owned and closed by this dialog.
         self.area_list: list[dict[str, Any]] = []
         self.credentials: list[StreamCredential] = []
         self.current_room_info: RoomInfo | None = None
         self.is_live_active = False
-        self._initial_load_task: asyncio.Task[None] | None = None
-        self._room_info_task: asyncio.Task[None] | None = None
-        self._obs_write_task: asyncio.Task[None] | None = None
+        self._initial_load_task: asyncio.Task[None] | None = None  # Canceled when the dialog closes.
+        self._room_info_task: asyncio.Task[None] | None = None  # Latest room-info request.
+        self._obs_write_task: asyncio.Task[None] | None = None  # Latest OBS settings request.
         self._load_generation = 0
         self._action_generation = 0
-        self._session_cleanup_task: asyncio.Task[None] | None = None
-        self._sessions_pending_close: list[aiohttp.ClientSession] = []
+        self._session_cleanup_task: asyncio.Task[None] | None = None  # Owner of deferred closes.
+        self._sessions_pending_close: list[aiohttp.ClientSession] = []  # Sessions awaiting cleanup.
         self._busy = False
         self._obs_busy = False
         self._obs_connected = False
@@ -288,13 +299,13 @@ class LiveControlDialog(QDialog):
         combo.completer().popup().setStyleSheet(popup_style)
 
     def _load_config_values(self) -> None:
-        config = load_config()
-        room_id = config.get("room_id", "")
-        self.room_id_input.setText(str(room_id) if room_id else "")
-        self.title_input.setText(str(config.get("live_title", "")))
-        self.obs_host_input.setText(str(config.get("obs_host", "127.0.0.1")))
-        self.obs_port_input.setText(str(config.get("obs_port", "4455")))
-        self.obs_password_input.setText(str(config.get("obs_password", "")))
+        """Load typed settings and the OBS password from their separate boundaries."""
+        config = self.config_store.load()
+        self.room_id_input.setText(str(config.room_id) if config.room_id else "")
+        self.title_input.setText(config.live_title)
+        self.obs_host_input.setText(config.obs_host)
+        self.obs_port_input.setText(str(config.obs_port))
+        self.obs_password_input.setText(self.auth_service.load_obs_password() or "")
 
     def set_room_id(self, room_id: int) -> None:
         if room_id > 0:
@@ -313,6 +324,7 @@ class LiveControlDialog(QDialog):
         self._initial_load_task.add_done_callback(self._consume_task_exception)
 
     def closeEvent(self, event) -> None:
+        """Cancel owned work and schedule all aiohttp sessions for cleanup."""
         self._load_generation += 1
         self._action_generation += 1
         if self._initial_load_task and not self._initial_load_task.done():
@@ -329,10 +341,11 @@ class LiveControlDialog(QDialog):
         super().closeEvent(event)
 
     async def load_initial_state(self, generation: int) -> None:
+        """Create a dialog-owned session and discard it if loading becomes stale."""
         self._set_busy(True, "正在加载登录状态和直播分区...")
         session: aiohttp.ClientSession | None = None
         try:
-            session, _from_keyring = await self.auth_manager.create_authenticated_session()
+            session, _from_keyring = await self.auth_service.create_authenticated_session()
             if generation != self._load_generation:
                 self._schedule_session_cleanup(session)
                 return
@@ -456,10 +469,8 @@ class LiveControlDialog(QDialog):
             self._update_action_state()
 
     def _restore_saved_area(self) -> None:
-        config = load_config()
-        parent_id = str(config.get("live_parent_area_id", ""))
-        area_id = str(config.get("live_area_id", ""))
-        self._select_area(parent_id, area_id)
+        config = self.config_store.load()
+        self._select_area(config.live_parent_area_id, config.live_area_id)
 
     def _remember_synced_title(self, room_id: int, title: str) -> None:
         current = self.current_room_info
@@ -643,19 +654,25 @@ class LiveControlDialog(QDialog):
         self.status_label.setText(message)
         self._set_status_style("error" if error else "success" if success else "info")
 
-    def _save_form_config(self) -> None:
+    def _save_form_config(self) -> bool:
+        """Persist form settings and save or clear the OBS password securely."""
         room_id = self._room_id()
-        save_config(
-            {
-                "room_id": room_id if room_id is not None else self.room_id_input.text().strip(),
-                "live_title": self.title_input.text().strip(),
-                "live_parent_area_id": self._selected_parent_area_id(),
-                "live_area_id": self._selected_area_id(),
-                "obs_host": self.obs_host_input.text().strip() or "127.0.0.1",
-                "obs_port": self.obs_port_input.text().strip() or "4455",
-                "obs_password": self.obs_password_input.text(),
-            }
+        current = self.config_store.load()
+        config = replace(
+            current,
+            room_id=room_id,
+            live_title=self.title_input.text().strip(),
+            live_parent_area_id=self._selected_parent_area_id(),
+            live_area_id=self._selected_area_id(),
+            obs_host=self.obs_host_input.text().strip() or current.obs_host,
+            obs_port=self._obs_port() or current.obs_port,
         )
+        config_saved = self.config_store.save(config)
+        password = self.obs_password_input.text()
+        secret_saved = self.auth_service.save_obs_password(password) if password else True
+        if not password:
+            self.auth_service.clear_obs_password()
+        return config_saved and secret_saved
 
     def _begin_action(self) -> int:
         self._action_generation += 1
@@ -1012,6 +1029,7 @@ class LiveControlDialog(QDialog):
             self._update_action_state()
 
     def _clear_credentials(self) -> None:
+        """Clear only the transient stream credentials shown by this dialog."""
         self.credentials = []
         self._render_credentials()
 
@@ -1110,7 +1128,7 @@ class LiveControlDialog(QDialog):
         prompt.setWordWrap(True)
         layout.addWidget(prompt)
 
-        bio = self.auth_manager.generate_qr_image(url)
+        bio = self.auth_service.generate_qr_image(url)
         if bio:
             image = QImage.fromData(bio.getvalue())
             label = QLabel()

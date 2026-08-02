@@ -7,6 +7,7 @@ from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication, QLabel, QWidget
 
 from bilihud import danmaku_widget
+from bilihud.config import AppConfig
 from bilihud.live_audience import AudienceSnapshot, AudienceUser
 from bilihud.live_emoticons import LiveEmoticon, LiveEmoticonPackage
 
@@ -581,12 +582,12 @@ def test_live_control_uses_authenticated_anchor_room(monkeypatch):
         auth_manager = AuthManager()
         connected_rooms = []
         widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+        widget.auth_service = auth_manager
 
         async def connect_to_room(room_id):
             connected_rooms.append(room_id)
 
         widget._connect_to_room_id = connect_to_room
-        monkeypatch.setattr(danmaku_widget, "AuthManager", lambda: auth_manager)
         monkeypatch.setattr(danmaku_widget, "get_anchor_live_room_id", get_anchor_room)
 
         room_id = await danmaku_widget.DanmakuWidget._ensure_live_control_room(widget)
@@ -618,9 +619,10 @@ def test_connect_to_room_replaces_stale_same_room_client(monkeypatch):
     class NewDanmakuClient:
         instances = []
 
-        def __init__(self, room_id, sessdata):
+        def __init__(self, room_id, sessdata, auth_service=None):
             self.room_id = room_id
             self.sessdata = sessdata
+            self.auth_service = auth_service
             self.client = None
             self.started = False
             NewDanmakuClient.instances.append(self)
@@ -633,6 +635,16 @@ def test_connect_to_room_replaces_stale_same_room_client(monkeypatch):
         widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
         widget.room_id = 7450109
         widget.sessdata = "sess"
+        widget.auth_service = object()
+        widget.mirror_port = 2233
+        widget.config_store = type(
+            "ConfigStore",
+            (),
+            {
+                "load": lambda _self: AppConfig(),
+                "save": lambda _self, config: events.append(("save", config)) or True,
+            },
+        )()
         widget.room_id_input = RoomInput()
         widget.danmaku_client = StaleDanmakuClient()
 
@@ -652,7 +664,6 @@ def test_connect_to_room_replaces_stale_same_room_client(monkeypatch):
         widget._start_audience_refresh = start_audience_refresh
 
         monkeypatch.setattr(danmaku_widget, "DanmakuClient", NewDanmakuClient)
-        monkeypatch.setattr(danmaku_widget, "save_config", lambda data: events.append(("save", data)))
 
         await danmaku_widget.DanmakuWidget._connect_to_room_id(widget, 7450109)
 
