@@ -215,6 +215,15 @@ chore/issue-126-update-tooling
 - Do not commit caches, credentials, build artifacts, or temporary files.
 - Review the staged diff before committing.
 
+## Merge policy
+
+- Prefer fast-forward-only merges.
+- Before merging, fetch the latest target branch.
+- Use `git merge --ff-only <source>`.
+- Do not use `--no-ff`, squash, or rebase-and-merge unless explicitly requested.
+- If fast-forward is impossible, stop and report the reason; do not create a merge commit or rewrite commits automatically.
+- Do not rewrite commits authored or signed by another person without explicit approval.
+
 ## Conventional Commits
 
 Commit messages must follow:
