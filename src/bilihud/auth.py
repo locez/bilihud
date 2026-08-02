@@ -3,12 +3,10 @@ import json
 import logging
 from collections.abc import Mapping
 from io import BytesIO
-from typing import Any
 
 import aiohttp
 import qrcode
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -18,31 +16,6 @@ COMMON_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
-
-
-def load_bilibili_cookies() -> Any | None:
-    """Try to load Bilibili cookies from supported browsers."""
-    try:
-        import browser_cookie3
-
-        return browser_cookie3.chrome(domain_name=".bilibili.com")
-    except Exception as e:
-        logger.info("Chrome cookie load failed: %s", e)
-
-    try:
-        import browser_cookie3
-
-        return browser_cookie3.edge(domain_name=".bilibili.com")
-    except Exception as e:
-        logger.info("Edge cookie load failed: %s", e)
-
-    try:
-        import browser_cookie3
-
-        return browser_cookie3.firefox(domain_name=".bilibili.com")
-    except Exception as e:
-        logger.info("Firefox cookie load failed: %s", e)
-        return None
 
 
 class AuthManager:
@@ -157,13 +130,23 @@ class AuthManager:
             import keyring
             cookie_json = keyring.get_password(SERVICE_ID, USERNAME_KEY)
             if cookie_json:
-                return json.loads(cookie_json)
+                stored_cookies = json.loads(cookie_json)
+                if not isinstance(stored_cookies, dict):
+                    logger.error("Stored keyring cookies are not a JSON object")
+                    return None
+                if not all(
+                    isinstance(name, str) and isinstance(value, str)
+                    for name, value in stored_cookies.items()
+                ):
+                    logger.error("Stored keyring cookies contain invalid values")
+                    return None
+                return dict(stored_cookies)
             return None
         except Exception as e:
             logger.error(f"Failed to load cookies from keyring: {e}")
             return None
 
-    def clear_cookies(self):
+    def clear_cookies(self) -> None:
         """Clear stored cookies"""
         try:
             import keyring
@@ -171,23 +154,12 @@ class AuthManager:
         except Exception as e:
             logger.error(f"Failed to delete cookies: {e}")
 
-    def load_auth_cookies(self, prefer_keyring: bool = True) -> tuple[dict[str, str], bool]:
-        """Load auth cookies from keyring first, falling back to browser cookies."""
-        if prefer_keyring:
-            saved_cookies = self.load_cookies()
-            if saved_cookies:
-                return dict(saved_cookies), True
-
-        try:
-            browser_cookies = load_bilibili_cookies()
-        except Exception as e:
-            logger.warning("Browser cookie load failed: %s", e)
-            return {}, False
-
-        if not browser_cookies:
-            return {}, False
-
-        return {cookie.name: cookie.value for cookie in browser_cookies}, False
+    def load_auth_cookies(self) -> tuple[dict[str, str], bool]:
+        """Load authenticated cookies from the keyring."""
+        saved_cookies = self.load_cookies()
+        if saved_cookies:
+            return dict(saved_cookies), True
+        return {}, False
 
     def create_session_from_cookies(self, cookies: Mapping[str, str]) -> aiohttp.ClientSession:
         """Create an aiohttp session configured with Bilibili auth cookies."""
@@ -205,7 +177,7 @@ class AuthManager:
     async def create_authenticated_session(
         self, validate_keyring: bool = True
     ) -> tuple[aiohttp.ClientSession, bool]:
-        """Create an aiohttp session from keyring or browser cookies."""
+        """Create an aiohttp session from the stored keyring cookies."""
         cookies, from_keyring = self.load_auth_cookies()
         if from_keyring and validate_keyring and not await self.validate_session(cookies):
             logger.info("Keyring cookies expired")

@@ -29,7 +29,6 @@ RDEPEND="
 	dev-python/pyqt6[${PYTHON_USEDEP}]
 	dev-python/aiohttp[${PYTHON_USEDEP}]
 	dev-python/qasync[${PYTHON_USEDEP}]
-	dev-python/browser-cookie3[${PYTHON_USEDEP}]
 	app-arch/brotli[python,${PYTHON_USEDEP}]
 	dev-python/pure-protobuf[${PYTHON_USEDEP}]
 	dev-python/qrcode[${PYTHON_USEDEP}]
@@ -60,4 +59,3 @@ python_install_all() {
 	domenu bilihud.desktop
 	newicon src/bilihud/assets/icon.png bilihud.png
 }
-

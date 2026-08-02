@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import logging
 import time
 from collections.abc import Callable
 from urllib.parse import urlencode, urlparse
@@ -35,6 +36,8 @@ WBI_MIXIN_KEY_ENC_TAB = (
     22, 25, 54, 21, 56, 59, 6, 63,
     57, 62, 11, 36, 20, 34, 44, 52,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DanmakuClient:
@@ -72,28 +75,32 @@ class DanmakuClient:
         """设置登录失效回调"""
         self.on_login_failed = callback
 
-    async def start(self):
+    async def start(self) -> None:
         """在事件循环中启动弹幕客户端"""
-        # 在Executor中运行Cookie加载，避免阻塞主线程和可能的线程冲突
         loop = asyncio.get_running_loop()
         auth_manager = AuthManager()
+        login_failure_message: str | None = None
 
         try:
             loaded_cookies, is_keyring = await loop.run_in_executor(None, auth_manager.load_auth_cookies)
             if is_keyring:
                 if not await auth_manager.validate_session(loaded_cookies):
-                    print("Keyring cookies expired")
-                    if self.on_login_failed:
-                        self.on_login_failed("本地保存的登录信息已失效，请重新登录")
-                    # 失效了就清空，但不要回退到浏览器，因为用户意图是使用keyring
+                    logger.info("Keyring cookies expired")
+                    login_failure_message = "本地保存的登录信息已失效，请重新登录"
                     loaded_cookies = {}
 
-        except Exception as e:
-            print(f"Error loading cookies: {e}")
+        except Exception:
+            logger.exception("Failed to load authentication cookies")
             loaded_cookies = {}
+            login_failure_message = "读取登录信息失败，请扫码登录"
 
         if self.sessdata:
             loaded_cookies["SESSDATA"] = self.sessdata
+        elif not loaded_cookies and login_failure_message is None:
+            login_failure_message = "未找到有效登录信息，请扫码登录"
+
+        if login_failure_message and self.on_login_failed:
+            self.on_login_failed(login_failure_message)
 
         self.session = auth_manager.create_session_from_cookies(loaded_cookies)
 

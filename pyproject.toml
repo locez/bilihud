@@ -42,7 +42,6 @@ dependencies = [
   "PyQt6",
   "aiohttp",
   "qasync",
-  "browser-cookie3",
   "qrcode",
   "keyring",
   "Pillow",
