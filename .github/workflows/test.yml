@@ -46,6 +46,9 @@ jobs:
         # exit-zero treats all errors as warnings
         ruff check --exit-zero --statistics src/
 
+    - name: Check architecture boundaries
+      run: pytest tests/test_architecture.py
+
     - name: Run tests
       run: |
         xvfb-run pytest

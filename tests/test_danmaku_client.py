@@ -1,5 +1,4 @@
 import asyncio
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import aiohttp
@@ -8,13 +7,6 @@ import pytest
 from bilihud import danmaku_client
 from bilihud.danmaku_client import DanmakuClient, DanmakuShutdownError
 from bilihud.live_emoticons import LiveEmoticon
-
-
-def test_stop_catches_asyncio_timeout_error_for_python_310_compatibility():
-    source = Path("src/bilihud/danmaku_client.py").read_text(encoding="utf-8")
-
-    assert "except asyncio.TimeoutError" in source
-    assert "except TimeoutError" not in source
 
 
 def test_start_starts_blivedm_client_before_returning(monkeypatch):
@@ -53,6 +45,58 @@ def test_start_starts_blivedm_client_before_returning(monkeypatch):
         assert client.client is not None
         assert client.client.start_calls == 1
         assert client.client.is_running is True
+
+    asyncio.run(run_test())
+
+
+def test_start_reports_expired_keyring_login_without_falling_back_to_browser(monkeypatch):
+    class FakeAuthManager:
+        def load_auth_cookies(self):
+            return {"SESSDATA": "expired"}, True
+
+        async def validate_session(self, _cookies):
+            return False
+
+        def create_session_from_cookies(self, cookies):
+            assert cookies == {}
+            return FakeSession()
+
+    class FakeBLiveClient:
+        def __init__(self, _room_id, *, session):
+            self.session = session
+            self.running = False
+
+        @property
+        def is_running(self):
+            return self.running
+
+        def set_handler(self, _handler):
+            pass
+
+        def start(self):
+            self.running = True
+
+        def stop(self):
+            self.running = False
+
+        async def join(self):
+            pass
+
+        async def close(self):
+            pass
+
+    async def run_test():
+        login_failures = []
+        monkeypatch.setattr(danmaku_client, "AuthManager", FakeAuthManager)
+        monkeypatch.setattr(danmaku_client.blivedm, "BLiveClient", FakeBLiveClient)
+
+        client = DanmakuClient(7450109)
+        client.set_login_failed_callback(login_failures.append)
+
+        await client.start()
+        await client.stop()
+
+        assert login_failures == ["本地保存的登录信息已失效，请重新登录"]
 
     asyncio.run(run_test())
 
