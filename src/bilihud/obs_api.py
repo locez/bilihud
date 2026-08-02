@@ -9,7 +9,15 @@ from typing import Any
 
 import aiohttp
 
-from .live_api import StreamCredential
+from .domain.live_control import (
+    StreamCredential,
+)
+from .domain.live_control import (
+    obs_check_button_state as _obs_check_button_state,
+)
+from .domain.live_control import (
+    pick_primary_credential as _pick_primary_credential,
+)
 
 OBS_WEBSOCKET_RPC_VERSION = 1
 
@@ -24,9 +32,8 @@ def is_obs_process_name(command: str) -> bool:
 
 
 def obs_check_button_state(port_valid: bool, checking: bool, connected: bool) -> tuple[bool, str]:
-    if checking:
-        return False, "检查中"
-    return port_valid, "重新检查" if connected else "检查 OBS"
+    """Keep the historical OBS helper name while delegating pure domain logic."""
+    return _obs_check_button_state(port_valid, checking, connected)
 
 
 def is_obs_process_running(proc_root: str = "/proc") -> bool:
@@ -119,13 +126,8 @@ def obs_start_stream_requests(credential: StreamCredential) -> list[dict[str, An
 
 
 def pick_primary_credential(credentials: Sequence[StreamCredential]) -> StreamCredential | None:
-    for credential in credentials:
-        if credential.label == "rtmp-1":
-            return credential
-    for credential in credentials:
-        if credential.label.lower().startswith("rtmp"):
-            return credential
-    return credentials[0] if credentials else None
+    """Keep the historical OBS helper name while delegating pure domain logic."""
+    return _pick_primary_credential(credentials)
 
 
 class ObsWebSocketClient:

@@ -16,7 +16,11 @@ MESSAGE_CONSUMER_MODULE_NAMES: Final[tuple[str, ...]] = (
     "mirror_state",
     "mock_messages",
 )
-APPLICATION_MODULE_NAMES: Final[tuple[str, ...]] = ("hud_controller", "hud_ports")
+APPLICATION_MODULE_NAMES: Final[tuple[str, ...]] = (
+    "hud_controller",
+    "hud_ports",
+    "live_control_service",
+)
 
 
 @dataclass(frozen=True)
@@ -120,7 +124,7 @@ def test_message_consumers_do_not_import_blivedm_models() -> None:
 
 
 def test_presentation_uses_configuration_and_authentication_boundaries() -> None:
-    forbidden_modules = {"keyring"}
+    forbidden_modules = {"aiohttp", "keyring", "bilihud.live_api", "bilihud.obs_api"}
     forbidden_names = {"AuthManager", "KeyringSessionStore", "load_config", "save_config"}
     violations: list[str] = []
 
@@ -158,6 +162,26 @@ def test_hud_controller_keeps_presentation_and_concrete_network_outside_applicat
         for module in _imported_modules(path):
             if _is_forbidden(module, forbidden_prefixes):
                 violations.append(f"{name} imports {module}")
+
+    assert violations == []
+
+
+def test_live_control_service_keeps_concrete_network_and_presentation_outside_application() -> None:
+    forbidden_prefixes = frozenset(
+        {
+            "PyQt5",
+            "PyQt6",
+            "aiohttp",
+            "bilihud.auth",
+            "bilihud.live_api",
+            "bilihud.obs_api",
+        }
+    )
+    violations: list[str] = []
+    path = SOURCE_ROOT / "live_control_service.py"
+    for module in _imported_modules(path):
+        if _is_forbidden(module, forbidden_prefixes):
+            violations.append(f"live_control_service imports {module}")
 
     assert violations == []
 

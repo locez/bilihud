@@ -1,12 +1,10 @@
 import asyncio
 import logging
 from collections.abc import Coroutine
-from dataclasses import replace
 from typing import Any
 
-import aiohttp
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtGui import QCloseEvent, QImage, QPixmap, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -24,53 +22,44 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .auth import AuthenticationService
-from .config import ConfigStore
+from .domain.live_control import (
+    LiveAreaGroup,
+    LiveControlErrorCode,
+    LiveControlSettings,
+    LiveControlState,
+    ObsSettings,
+    RoomInfo,
+    SessionStatus,
+    StartLiveOutcome,
+    StartLiveStatus,
+    StopLiveStatus,
+    StreamCredential,
+    obs_check_button_state,
+    room_action_enabled_state,
+)
+from .domain.live_control import (
+    obs_cleanup_after_stop_state as _obs_cleanup_after_stop_state,
+)
+from .domain.live_control import (
+    start_live_confirmation_needed as _start_live_confirmation_needed,
+)
 from .helpers import validate_room_id
 from .lifecycle import TaskScope, TaskSupervisor, cancel_task
-from .live_api import (
-    LiveApiError,
-    RoomInfo,
-    StreamCredential,
-    extract_qr_url,
-    get_area_list,
-    get_cookie_value,
-    get_live_version,
-    get_room_info,
-    is_live_rate_limited_error,
-    parse_stream_credentials,
-    room_action_enabled_state,
-    room_area_needs_update,
-    room_title_needs_update,
-    start_live,
-    start_live_verification_url,
-    stop_live,
-    update_room_area,
-    update_room_title,
-)
-from .obs_api import (
-    ObsApiError,
-    ObsWebSocketClient,
-    is_obs_process_running,
-    launch_obs,
-    obs_check_button_state,
-    pick_primary_credential,
-)
+from .live_control_service import LiveControlService
 from .services import AppServices, create_default_services
 
 logger = logging.getLogger(__name__)
 
 
+# TODO: remove these compatibility exports after callers import the service helpers directly.
 def start_live_confirmation_needed(obs_streaming: bool | None) -> bool:
-    return obs_streaming is True
+    """Keep the historical pure helper available to existing callers."""
+    return _start_live_confirmation_needed(obs_streaming)
 
 
 def obs_cleanup_after_stop_state(obs_streaming: bool | None) -> tuple[bool, str]:
-    if obs_streaming is True:
-        return True, "streaming"
-    if obs_streaming is False:
-        return False, "not_streaming"
-    return False, "unknown"
+    """Keep the historical pure helper available to existing callers."""
+    return _obs_cleanup_after_stop_state(obs_streaming)
 
 
 class LiveControlDialog(QDialog):
@@ -90,8 +79,7 @@ class LiveControlDialog(QDialog):
         self.setMinimumSize(520, 540)
 
         self.services = services if services is not None else create_default_services()
-        self.config_store: ConfigStore = self.services.config_store  # Non-sensitive settings boundary.
-        self.auth_service: AuthenticationService = self.services.auth_service  # Auth and OBS secret boundary.
+        self.live_control_service: LiveControlService = self.services.live_control_service
         if task_scope is None:
             task_supervisor = TaskSupervisor()
             self._task_supervisor: TaskSupervisor | None = task_supervisor
@@ -101,22 +89,18 @@ class LiveControlDialog(QDialog):
             self._task_supervisor = None
             self._owns_task_supervisor = False
             self._task_scope = task_scope
-        self.session: aiohttp.ClientSession | None = None  # Session owned and closed by this dialog.
-        self.area_list: list[dict[str, Any]] = []
+        self.area_list: tuple[LiveAreaGroup, ...] = ()
         self.credentials: list[StreamCredential] = []
         self.current_room_info: RoomInfo | None = None
         self.is_live_active = False
         self._initial_load_task: asyncio.Task[None] | None = None  # Canceled when the dialog closes.
         self._room_info_task: asyncio.Task[None] | None = None  # Latest room-info request.
-        self._obs_write_task: asyncio.Task[None] | None = None  # Latest OBS settings request.
         self._load_generation = 0
         self._action_generation = 0
-        self._session_cleanup_task: asyncio.Task[None] | None = None  # Owner of deferred closes.
-        self._sessions_pending_close: list[aiohttp.ClientSession] = []  # Sessions awaiting cleanup.
+        self._service_close_task: asyncio.Task[None] | None = None  # Deferred reusable-service cleanup.
         self._busy = False
         self._obs_busy = False
         self._obs_connected = False
-        self._obs_streaming_started = False
         self._action_tasks: set[asyncio.Task[Any]] = set()  # Qt-triggered workflows owned by this dialog.
         self._shutting_down = False  # Blocks new dialog work during application shutdown.
         self._shutdown_complete = False  # Makes application shutdown idempotent.
@@ -315,12 +299,12 @@ class LiveControlDialog(QDialog):
 
     def _load_config_values(self) -> None:
         """Load typed settings and the OBS password from their separate boundaries."""
-        config = self.config_store.load()
-        self.room_id_input.setText(str(config.room_id) if config.room_id else "")
-        self.title_input.setText(config.live_title)
-        self.obs_host_input.setText(config.obs_host)
-        self.obs_port_input.setText(str(config.obs_port))
-        self.obs_password_input.setText(self.auth_service.load_obs_password() or "")
+        settings = self.live_control_service.load_settings()
+        self.room_id_input.setText(str(settings.room_id) if settings.room_id else "")
+        self.title_input.setText(settings.live_title)
+        self.obs_host_input.setText(settings.obs_host)
+        self.obs_port_input.setText(str(settings.obs_port))
+        self.obs_password_input.setText(settings.obs_password)
 
     def set_room_id(self, room_id: int) -> None:
         if room_id > 0:
@@ -355,13 +339,16 @@ class LiveControlDialog(QDialog):
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
 
-    def showEvent(self, event) -> None:
+    def showEvent(self, event: QShowEvent | None) -> None:
         super().showEvent(event)
         if self._shutting_down:
             return
         if self._initial_load_task and not self._initial_load_task.done():
             return
-        if self.session and not self.session.closed:
+        if (
+            self.live_control_service.state.session.status is not SessionStatus.CLOSED
+            and (self._service_close_task is None or self._service_close_task.done())
+        ):
             self._update_action_state()
             return
 
@@ -371,28 +358,29 @@ class LiveControlDialog(QDialog):
             name="initial-load",
         )
 
-    def closeEvent(self, event) -> None:
-        """Cancel owned work and schedule all aiohttp sessions for cleanup."""
+    def closeEvent(self, event: QCloseEvent | None) -> None:
+        """Cancel owned work and schedule reusable service cleanup."""
         self._load_generation += 1
         self._action_generation += 1
         if self._initial_load_task and not self._initial_load_task.done():
             self._initial_load_task.cancel()
         if self._room_info_task and not self._room_info_task.done():
             self._room_info_task.cancel()
-        if self._obs_write_task and not self._obs_write_task.done():
-            self._obs_write_task.cancel()
         for task in tuple(self._action_tasks):
             if not task.done():
                 task.cancel()
         self._clear_credentials()
-        self._schedule_session_cleanup(self.session)
-        self.session = None
+        if self._service_close_task is None or self._service_close_task.done():
+            self._service_close_task = self._task_scope.create_task(
+                self.live_control_service.close(),
+                name="close-live-control-service",
+            )
         self._busy = False
         self._update_action_state()
         super().closeEvent(event)
 
     async def shutdown(self) -> None:
-        """Cancel dialog work and await cleanup of every owned HTTP session."""
+        """Cancel dialog work and await cleanup of the service-owned resources."""
         if self._shutdown_complete:
             return
 
@@ -401,62 +389,41 @@ class LiveControlDialog(QDialog):
         self._action_generation += 1
         await cancel_task(self._initial_load_task)
         await cancel_task(self._room_info_task)
-        await cancel_task(self._obs_write_task)
+        await cancel_task(self._service_close_task)
         await self._cancel_action_tasks()
         self._clear_credentials()
-
-        if self.session is not None and not self.session.closed:
-            if self.session not in self._sessions_pending_close:
-                self._sessions_pending_close.append(self.session)
-        self.session = None
-
-        cleanup_errors: list[Exception] = []
-        cleanup_task = self._session_cleanup_task
-        if cleanup_task is not None and not cleanup_task.done():
-            try:
-                await cleanup_task
-            except Exception as exc:
-                cleanup_errors.append(exc)
         try:
-            await self._close_pending_sessions()
+            await self.live_control_service.shutdown()
         except Exception as exc:
-            cleanup_errors.append(exc)
+            logger.exception("Failed to shut down live-control service")
+            raise exc
         try:
             await self._task_scope.cancel_all()
             self._busy = False
             self._update_action_state()
-            if cleanup_errors:
-                raise cleanup_errors[0]
         finally:
             if self._owns_task_supervisor and self._task_supervisor is not None:
                 await self._task_supervisor.shutdown()
         self._shutdown_complete = True
 
     async def load_initial_state(self, generation: int) -> None:
-        """Create a dialog-owned session and discard it if loading becomes stale."""
+        """Load the service snapshot and discard it when the dialog load is stale."""
         self._set_busy(True, "正在加载登录状态和直播分区...")
-        session: aiohttp.ClientSession | None = None
         try:
-            session, _from_keyring = await self.auth_service.create_authenticated_session()
+            result = await self.live_control_service.initialize(self._room_id())
             if generation != self._load_generation:
-                self._schedule_session_cleanup(session)
                 return
-
-            self.session = session
-            if self._has_csrf():
+            self._apply_service_state(result.state)
+            if result.error is not None:
+                if result.error.code is LiveControlErrorCode.LOGIN_EXPIRED:
+                    self.set_status("保存的登录状态已过期，请先通过托盘菜单重新扫码登录。", error=True)
+                else:
+                    self.set_status(result.error.message, error=True)
+            elif self._has_csrf():
                 self.set_status("登录状态可用。")
             else:
                 self.set_status("未找到 CSRF Token，请先通过托盘菜单扫码登录。", error=True)
-
-            area_list = await get_area_list(self.session)
-            if generation != self._load_generation:
-                return
-
-            self.area_list = area_list
-            self._populate_parent_areas()
-            await self._load_room_info(generation, update_status=self._has_csrf())
         except asyncio.CancelledError:
-            self._schedule_session_cleanup(session)
             raise
         except Exception as exc:
             if generation == self._load_generation:
@@ -466,64 +433,45 @@ class LiveControlDialog(QDialog):
             if generation == self._load_generation:
                 self._set_busy(False)
 
-    def _schedule_session_cleanup(self, session: aiohttp.ClientSession | None) -> None:
-        if session and not session.closed and session not in self._sessions_pending_close:
-            self._sessions_pending_close.append(session)
-
-        if self._shutting_down:
-            return
-
-        if self._sessions_pending_close and (
-            self._session_cleanup_task is None or self._session_cleanup_task.done()
-        ):
-            self._session_cleanup_task = self._task_scope.create_task(
-                self._close_pending_sessions(),
-                name="session-cleanup",
-            )
-
-    async def _close_pending_sessions(self) -> None:
-        while self._sessions_pending_close:
-            session = self._sessions_pending_close[0]
-            if session.closed:
-                self._sessions_pending_close.pop(0)
-                continue
-            await session.close()
-            self._sessions_pending_close.pop(0)
-
     def _populate_parent_areas(self) -> None:
         self.parent_area_combo.blockSignals(True)
         self.parent_area_combo.clear()
         for parent in self.area_list:
-            self.parent_area_combo.addItem(str(parent.get("name") or ""), str(parent.get("id") or ""))
+            self.parent_area_combo.addItem(parent.name, parent.parent_area_id)
         self.parent_area_combo.blockSignals(False)
         self._on_parent_area_changed()
 
+    def _apply_service_state(self, state: LiveControlState) -> None:
+        """Bind one immutable service snapshot to the dialog's presentation fields."""
+        self.area_list = state.areas
+        self.credentials = list(state.credentials)
+        self.current_room_info = state.room_info
+        self._obs_connected = state.obs_connected
+        self._populate_parent_areas()
+        if state.room_info is not None:
+            self._set_live_active(state.room_info.is_live)
+            if state.room_info.title:
+                self.title_input.setText(state.room_info.title)
+            self._select_area(state.room_info.parent_area_id, state.room_info.area_id)
+        else:
+            self._set_live_active(False)
+        self._render_credentials()
+
     async def _load_room_info(self, generation: int, update_status: bool = True) -> bool:
         room_id = self._room_id()
-        if room_id is None or self.session is None:
+        if room_id is None:
             self.current_room_info = None
             self._restore_saved_area()
             return False
-
-        try:
-            room_info = await get_room_info(self.session, room_id)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.info("Failed to load room info for %s: %s", room_id, exc)
-            if generation == self._load_generation:
-                self.current_room_info = None
-                self._restore_saved_area()
-            return False
-
+        result = await self.live_control_service.load_room_info(room_id)
         if generation != self._load_generation:
             return False
-
-        self.current_room_info = room_info
-        self._set_live_active(room_info.is_live)
-        if room_info.title:
-            self.title_input.setText(room_info.title)
-        self._select_area(room_info.parent_area_id, room_info.area_id)
+        self._apply_service_state(result.state)
+        if result.error is not None:
+            self.current_room_info = None
+            self._restore_saved_area()
+            logger.info("Failed to load room info for %s: %s", room_id, result.error.message)
+            return False
         if update_status:
             self.set_status("已加载直播间当前标题和分区。")
         return True
@@ -542,7 +490,11 @@ class LiveControlDialog(QDialog):
     async def _reload_room_info(self) -> None:
         if self._shutting_down:
             return
-        if self._busy or not self.area_list or not self.session or self.session.closed:
+        if (
+            self._busy
+            or not self.area_list
+            or self.live_control_service.state.session.status is SessionStatus.CLOSED
+        ):
             return
         if self._room_id() is None:
             self.current_room_info = None
@@ -566,26 +518,8 @@ class LiveControlDialog(QDialog):
             self._update_action_state()
 
     def _restore_saved_area(self) -> None:
-        config = self.config_store.load()
-        self._select_area(config.live_parent_area_id, config.live_area_id)
-
-    def _remember_synced_title(self, room_id: int, title: str) -> None:
-        current = self.current_room_info
-        self.current_room_info = RoomInfo(
-            room_id=room_id,
-            title=title,
-            parent_area_id=current.parent_area_id if current and current.room_id == room_id else "",
-            area_id=current.area_id if current and current.room_id == room_id else "",
-        )
-
-    def _remember_synced_area(self, room_id: int, area_id: str) -> None:
-        current = self.current_room_info
-        self.current_room_info = RoomInfo(
-            room_id=room_id,
-            title=current.title if current and current.room_id == room_id else "",
-            parent_area_id=self._selected_parent_area_id(),
-            area_id=area_id,
-        )
+        settings = self.live_control_service.load_settings()
+        self._select_area(settings.live_parent_area_id, settings.live_area_id)
 
     def _select_area(self, parent_id: str, area_id: str) -> None:
         if parent_id:
@@ -600,15 +534,15 @@ class LiveControlDialog(QDialog):
     def _on_parent_area_changed(self) -> None:
         current_parent_id = self._selected_parent_area_id()
         selected_parent = next(
-            (parent for parent in self.area_list if str(parent.get("id") or "") == current_parent_id),
+            (parent for parent in self.area_list if parent.parent_area_id == current_parent_id),
             None,
         )
 
         self.area_combo.blockSignals(True)
         self.area_combo.clear()
         if selected_parent:
-            for area in selected_parent.get("list") or []:
-                self.area_combo.addItem(str(area.get("name") or ""), str(area.get("id") or ""))
+            for area in selected_parent.areas:
+                self.area_combo.addItem(area.name, area.area_id)
         self.area_combo.blockSignals(False)
         self._update_action_state()
 
@@ -641,36 +575,19 @@ class LiveControlDialog(QDialog):
             return None
         return port if 1 <= port <= 65535 else None
 
-    def _obs_client(self) -> ObsWebSocketClient | None:
+    def _obs_settings(self) -> ObsSettings | None:
         port = self._obs_port()
         if port is None:
-            self.set_status("OBS 端口无效。", error=True)
             return None
-        return ObsWebSocketClient(
-            host=self.obs_host_input.text().strip() or "127.0.0.1",
+        host = self.obs_host_input.text().strip()
+        return ObsSettings(
+            host=host if host else "127.0.0.1",
             port=port,
             password=self.obs_password_input.text(),
         )
 
-    async def _current_obs_streaming(self) -> bool | None:
-        client = self._obs_client()
-        if client is None:
-            return None
-        try:
-            streaming = await client.is_streaming()
-        except ObsApiError as exc:
-            logger.info("Failed to query OBS stream status: %s", exc)
-            self._obs_connected = False
-            return None
-        except Exception:
-            logger.exception("Unexpected OBS stream status failure")
-            self._obs_connected = False
-            return None
-        self._obs_connected = True
-        return streaming
-
     def _has_csrf(self) -> bool:
-        return bool(self.session and not self.session.closed and get_cookie_value(self.session, "bili_jct"))
+        return self.live_control_service.state.session.is_authenticated
 
     def _update_action_state(self) -> None:
         if self._busy:
@@ -753,66 +670,28 @@ class LiveControlDialog(QDialog):
 
     def _save_form_config(self) -> bool:
         """Persist form settings and save or clear the OBS password securely."""
-        room_id = self._room_id()
-        current = self.config_store.load()
-        config = replace(
-            current,
-            room_id=room_id,
+        current = self.live_control_service.load_settings()
+        port = self._obs_port()
+        settings = LiveControlSettings(
+            room_id=self._room_id(),
             live_title=self.title_input.text().strip(),
             live_parent_area_id=self._selected_parent_area_id(),
             live_area_id=self._selected_area_id(),
             obs_host=self.obs_host_input.text().strip() or current.obs_host,
-            obs_port=self._obs_port() or current.obs_port,
+            obs_port=port if port is not None else current.obs_port,
+            obs_password=self.obs_password_input.text(),
         )
-        config_saved = self.config_store.save(config)
-        password = self.obs_password_input.text()
-        secret_saved = self.auth_service.save_obs_password(password) if password else True
-        if not password:
-            self.auth_service.clear_obs_password()
-        return config_saved and secret_saved
+        return self.live_control_service.save_settings(settings).success
 
     def _begin_action(self) -> int:
         self._action_generation += 1
         return self._action_generation
 
-    def _is_current_action(self, generation: int, session: aiohttp.ClientSession) -> bool:
+    def _is_current_action(self, generation: int) -> bool:
         return (
             generation == self._action_generation
             and self.isVisible()
-            and self.session is session
-            and not session.closed
         )
-
-    async def _sync_room_before_start(
-        self,
-        session: aiohttp.ClientSession,
-        room_id: int,
-        title: str,
-        area_id: str,
-    ) -> None:
-        if room_title_needs_update(self.current_room_info, room_id, title):
-            await update_room_title(session, room_id, title)
-            self._remember_synced_title(room_id, title)
-
-        if room_area_needs_update(self.current_room_info, room_id, area_id):
-            await update_room_area(session, room_id, area_id)
-            self._remember_synced_area(room_id, area_id)
-
-    async def _sync_room_before_start_lenient(
-        self,
-        session: aiohttp.ClientSession,
-        room_id: int,
-        title: str,
-        area_id: str,
-    ) -> None:
-        try:
-            await self._sync_room_before_start(session, room_id, title, area_id)
-        except LiveApiError as exc:
-            if is_live_rate_limited_error(exc):
-                logger.info("Room update skipped before start because Bilibili rate limited it: %s", exc)
-                self.set_status("直播间信息刚更新过，已跳过重复同步并继续开播...")
-                return
-            raise
 
     @pyqtSlot()
     def handle_update_title(self) -> asyncio.Task[None] | None:
@@ -824,8 +703,7 @@ class LiveControlDialog(QDialog):
     async def _handle_update_title(self) -> None:
         if self._shutting_down:
             return
-        session = self.session
-        if not session:
+        if self.live_control_service.state.session.status is SessionStatus.CLOSED:
             return
         action_generation = self._begin_action()
         room_id = self._room_id()
@@ -835,18 +713,21 @@ class LiveControlDialog(QDialog):
             return
         self._set_busy(True, "正在更新标题...")
         try:
-            await update_room_title(session, room_id, title)
-            if not self._is_current_action(action_generation, session):
+            result = await self.live_control_service.update_title(room_id, title)
+            if not self._is_current_action(action_generation):
                 return
-            self._remember_synced_title(room_id, title)
+            self._apply_service_state(result.state)
+            if result.error is not None:
+                self.set_status(result.error.message, error=True)
+                return
             self._save_form_config()
             self.set_status("直播间标题已更新。")
         except Exception as exc:
-            if self._is_current_action(action_generation, session):
+            if self._is_current_action(action_generation):
                 logger.exception("Failed to update room title")
                 self.set_status(f"更新标题失败: {exc}", error=True)
         finally:
-            if self._is_current_action(action_generation, session):
+            if self._is_current_action(action_generation):
                 self._set_busy(False)
 
     @pyqtSlot()
@@ -859,8 +740,7 @@ class LiveControlDialog(QDialog):
     async def _handle_update_area(self) -> None:
         if self._shutting_down:
             return
-        session = self.session
-        if not session:
+        if self.live_control_service.state.session.status is SessionStatus.CLOSED:
             return
         action_generation = self._begin_action()
         room_id = self._room_id()
@@ -870,18 +750,21 @@ class LiveControlDialog(QDialog):
             return
         self._set_busy(True, "正在更新分区...")
         try:
-            await update_room_area(session, room_id, area_id)
-            if not self._is_current_action(action_generation, session):
+            result = await self.live_control_service.update_area(room_id, area_id)
+            if not self._is_current_action(action_generation):
                 return
-            self._remember_synced_area(room_id, area_id)
+            self._apply_service_state(result.state)
+            if result.error is not None:
+                self.set_status(result.error.message, error=True)
+                return
             self._save_form_config()
             self.set_status("直播间分区已更新。")
         except Exception as exc:
-            if self._is_current_action(action_generation, session):
+            if self._is_current_action(action_generation):
                 logger.exception("Failed to update room area")
                 self.set_status(f"更新分区失败: {exc}", error=True)
         finally:
-            if self._is_current_action(action_generation, session):
+            if self._is_current_action(action_generation):
                 self._set_busy(False)
 
     @pyqtSlot()
@@ -894,8 +777,7 @@ class LiveControlDialog(QDialog):
     async def _handle_start_live(self) -> None:
         if self._shutting_down:
             return
-        session = self.session
-        if not session:
+        if self.live_control_service.state.session.status is SessionStatus.CLOSED:
             return
         action_generation = self._begin_action()
         room_id = self._room_id()
@@ -906,77 +788,74 @@ class LiveControlDialog(QDialog):
             return
 
         self._set_busy(True, "正在开始直播...")
+        obs_settings = self._obs_settings()
         try:
-            obs_streaming = await self._current_obs_streaming()
-            if not self._is_current_action(action_generation, session):
+            self._save_form_config()
+            outcome = await self.live_control_service.start_live(
+                room_id,
+                title,
+                area_id,
+                obs_settings,
+            )
+            if not self._is_current_action(action_generation):
                 return
-            if start_live_confirmation_needed(obs_streaming):
+            if outcome.status is StartLiveStatus.OBS_SWITCH_REQUIRED:
                 self._set_busy(False)
                 if not await self._confirm_switch_obs_stream():
                     self.set_status("已取消开播，OBS 推流保持不变。")
                     return
-                if not self._is_current_action(action_generation, session):
+                if not self._is_current_action(action_generation):
                     return
                 self._set_busy(True, "正在开始直播...")
-
-            self._save_form_config()
-            await self._sync_room_before_start_lenient(session, room_id, title, area_id)
-            if not self._is_current_action(action_generation, session):
-                return
-            version = await get_live_version(session)
-            if not self._is_current_action(action_generation, session):
-                return
-            result = await start_live(session, room_id, area_id, version.curr_version, str(version.build))
-            if not self._is_current_action(action_generation, session):
-                return
-            await self._handle_start_live_result(result.code, result.message, result.data)
-        except LiveApiError as exc:
-            if self._is_current_action(action_generation, session):
-                logger.exception("Live API error while starting live")
-                self.set_status(str(exc), error=True)
+                outcome = await self.live_control_service.start_live(
+                    room_id,
+                    title,
+                    area_id,
+                    obs_settings,
+                    allow_obs_switch=True,
+                )
+                if not self._is_current_action(action_generation):
+                    return
+            self._apply_service_state(outcome.state)
+            await self._present_start_outcome(outcome)
         except Exception as exc:
-            if self._is_current_action(action_generation, session):
+            if self._is_current_action(action_generation):
                 logger.exception("Failed to start live")
                 self.set_status(f"开始直播失败: {exc}", error=True)
         finally:
-            if self._is_current_action(action_generation, session):
+            if self._is_current_action(action_generation):
                 self._set_busy(False)
 
-    async def _handle_start_live_result(self, code: int, message: str, data: dict[str, Any]) -> None:
-        if code == 0:
-            self.credentials = parse_stream_credentials(data)
-            self._render_credentials()
-            self._set_live_active(True)
-            if self.credentials:
-                self.set_status("直播已开始，推流凭证已生成；正在尝试连接 OBS 自动推流。", success=True)
-                self._obs_write_task = self._task_scope.create_task(
-                    self._write_obs_after_start(),
-                    name="obs-credential-write",
-                )
+    async def _present_start_outcome(self, outcome: StartLiveOutcome) -> None:
+        """Render a typed service outcome and open verification UI when required."""
+        if outcome.status is StartLiveStatus.VERIFICATION_REQUIRED:
+            title = "人脸认证" if "face-auth" in outcome.verification_url else "开播验证"
+            await self._show_qr_verification(outcome.verification_url, title=title)
+            message = "本次开播需要验证，完成后请重新点击开始直播。"
+            self.set_status(self._with_start_notice(outcome, message), error=True)
+            return
+        if outcome.status is StartLiveStatus.STARTED_WITHOUT_CREDENTIALS:
+            message = outcome.error.message if outcome.error else "直播已开始，但未生成推流凭证。"
+            self.set_status(self._with_start_notice(outcome, message), error=True)
+            return
+        if outcome.status is StartLiveStatus.STARTED:
+            if outcome.error is not None and outcome.error.code is LiveControlErrorCode.OBS_FAILURE:
+                message = "直播已开始，RTMP 凭证已生成；OBS 自动推流失败，可手动复制地址和密钥。"
+                self.set_status(self._with_start_notice(outcome, message), error=True)
+            elif outcome.obs_started:
+                message = "直播已开始，推流凭证已生成，OBS 已自动开始推流。"
+                self.set_status(self._with_start_notice(outcome, message), success=True)
             else:
-                self.set_status("直播已开始，但接口未返回可识别的推流凭证。", error=True)
+                message = "直播已开始，推流凭证已生成。"
+                self.set_status(self._with_start_notice(outcome, message), success=True)
             return
-
-        if code == 60024:
-            await self._show_qr_verification(start_live_verification_url(code, data, uid=None))
-            self.set_status("本次开播需要扫码验证，完成后请重新点击开始直播。", error=True)
-            return
-
-        if code == 60043:
-            uid = get_cookie_value(self.session, "DedeUserID") if self.session else None
-            auth_url = start_live_verification_url(code, data, uid=uid)
-            if auth_url:
-                await self._show_qr_verification(auth_url, title="人脸认证")
-            else:
-                await self._show_text_dialog("人脸认证", "本次开播需要人脸认证，但当前会话缺少 DedeUserID。")
-            self.set_status("本次开播需要人脸认证，完成后请重新点击开始直播。", error=True)
-            return
-
-        self.set_status(f"开始直播失败: {message or 'Unknown Error'} ({code})", error=True)
+        message = outcome.error.message if outcome.error is not None else "开始直播失败。"
+        self.set_status(self._with_start_notice(outcome, message), error=True)
 
     @staticmethod
-    def _extract_qr_url(data: dict[str, Any]) -> str:
-        return extract_qr_url(data)
+    def _with_start_notice(outcome: StartLiveOutcome, message: str) -> str:
+        """Preserve non-fatal room-sync notices alongside the final start result."""
+        return f"{outcome.notice}\n{message}" if outcome.notice else message
 
     @pyqtSlot()
     def handle_stop_live(self) -> asyncio.Task[None] | None:
@@ -988,8 +867,7 @@ class LiveControlDialog(QDialog):
     async def _handle_stop_live(self) -> None:
         if self._shutting_down:
             return
-        session = self.session
-        if not session:
+        if self.live_control_service.state.session.status is SessionStatus.CLOSED:
             return
         action_generation = self._begin_action()
         room_id = self._room_id()
@@ -999,35 +877,27 @@ class LiveControlDialog(QDialog):
 
         self._set_busy(True, "正在停止直播...")
         try:
-            await stop_live(session, room_id)
-            if not self._is_current_action(action_generation, session):
+            self._save_form_config()
+            outcome = await self.live_control_service.stop_live(room_id, self._obs_settings())
+            if not self._is_current_action(action_generation):
                 return
-            self._clear_credentials()
-            self._set_live_active(False)
-            obs_streaming = await self._current_obs_streaming()
-            should_stop_obs, obs_state = obs_cleanup_after_stop_state(obs_streaming)
-            obs_stopped = True
-            if should_stop_obs:
-                obs_stopped = await self.stop_obs_stream(auto=True)
-                if not self._is_current_action(action_generation, session):
-                    return
-            self._obs_streaming_started = False
-            if should_stop_obs and obs_stopped:
+            self._apply_service_state(outcome.state)
+            if outcome.status is StopLiveStatus.STOPPED and outcome.obs_stopped:
                 self.set_status("直播已停止，OBS 推流已停止。")
-            elif obs_state == "unknown" or (should_stop_obs and not obs_stopped):
-                self.set_status("直播已停止；OBS 推流未能自动确认/停止，请在 OBS 中手动确认。", error=True)
-            else:
+            elif outcome.status is StopLiveStatus.STOPPED:
                 self.set_status("直播已停止。")
+            else:
+                self.set_status(
+                    outcome.error.message if outcome.error is not None else "停止直播失败。",
+                    error=True,
+                )
         except Exception as exc:
-            if self._is_current_action(action_generation, session):
+            if self._is_current_action(action_generation):
                 logger.exception("Failed to stop live")
                 self.set_status(f"停止直播失败: {exc}", error=True)
         finally:
-            if self._is_current_action(action_generation, session):
+            if self._is_current_action(action_generation):
                 self._set_busy(False)
-
-    async def _write_obs_after_start(self) -> None:
-        await self.start_obs_stream(auto=True)
 
     async def _confirm_switch_obs_stream(self) -> bool:
         loop = asyncio.get_running_loop()
@@ -1050,26 +920,21 @@ class LiveControlDialog(QDialog):
         return await future
 
     async def stop_obs_stream(self, auto: bool = False) -> bool:
-        client = self._obs_client()
-        if client is None:
-            return False
-
         self._save_form_config()
         self._obs_busy = True
         self._update_action_state()
         if not auto:
             self.set_status("正在停止 OBS 推流...")
         try:
-            await client.stop_stream()
-            self._obs_streaming_started = False
+            outcome = await self.live_control_service.stop_obs_stream(self._obs_settings())
+            self._apply_service_state(self.live_control_service.state)
+            if not outcome.success:
+                if not auto and outcome.error is not None:
+                    self.set_status(outcome.error.message, error=True)
+                return False
             if not auto:
                 self.set_status("OBS 推流已停止。", success=True)
             return True
-        except ObsApiError as exc:
-            logger.info("Failed to stop OBS stream: %s", exc)
-            if not auto:
-                self.set_status(f"停止 OBS 推流失败: {exc}", error=True)
-            return False
         except Exception as exc:
             logger.exception("Unexpected OBS stop failure")
             if not auto:
@@ -1089,8 +954,9 @@ class LiveControlDialog(QDialog):
     async def _handle_check_obs(self) -> None:
         if self._shutting_down:
             return
-        client = self._obs_client()
-        if client is None:
+        settings = self._obs_settings()
+        if settings is None:
+            self.set_status("OBS 端口无效。", error=True)
             return
 
         self._save_form_config()
@@ -1098,41 +964,24 @@ class LiveControlDialog(QDialog):
         self._update_action_state()
         self.set_status("正在检查 OBS WebSocket...")
         try:
-            try:
-                await client.check_connection()
-            except ObsApiError as exc:
-                logger.info("OBS WebSocket check failed: %s", exc)
-                self._obs_connected = False
-            else:
-                self._obs_connected = True
+            outcome = await self.live_control_service.check_obs(settings)
+            self._apply_service_state(self.live_control_service.state)
+            if outcome.connected:
                 self.set_status("OBS 已启动并且 WebSocket 可连接。点击“开始直播”会自动推流。", success=True)
                 return
-
-            try:
-                if is_obs_process_running():
-                    self._obs_connected = False
-                    self.set_status("OBS 已启动，但 WebSocket 无法连接。请检查 OBS WebSocket 设置。", error=True)
-                    return
-                launch_obs()
-                self._obs_connected = False
+            if outcome.launched:
                 self.set_status("已启动 OBS。请等待 OBS 完成加载，然后点击“开始直播”。", success=True)
-            except ObsApiError as exc:
-                self.set_status(f"启动 OBS 失败: {exc}", error=True)
-            except Exception as exc:
-                logger.exception("Unexpected OBS launch failure")
-                self.set_status(f"启动 OBS 失败: {exc}", error=True)
+            elif outcome.error is not None:
+                self.set_status(outcome.error.message, error=True)
         finally:
             self._obs_busy = False
             self._update_action_state()
 
     async def start_obs_stream(self, auto: bool = False) -> None:
-        credential = pick_primary_credential(self.credentials)
-        if credential is None:
+        settings = self._obs_settings()
+        if settings is None:
             if not auto:
-                self.set_status("没有可用于启动 OBS 推流的凭证。", error=True)
-            return
-        client = self._obs_client()
-        if client is None:
+                self.set_status("OBS 端口无效。", error=True)
             return
 
         self._save_form_config()
@@ -1141,21 +990,15 @@ class LiveControlDialog(QDialog):
         if not auto:
             self.set_status("正在填入 OBS 推流设置并启动推流...")
         try:
-            try:
-                obs_streaming = await client.is_streaming()
-            except ObsApiError as exc:
-                logger.info("Failed to query existing OBS stream before switch: %s", exc)
-            else:
-                if obs_streaming:
-                    await client.stop_stream()
-            await client.set_stream_service_settings_and_start(credential)
-            self._obs_streaming_started = True
-            self.set_status(f"已将 {credential.label.upper()} 填入 OBS 并启动推流。", success=True)
-        except ObsApiError as exc:
-            logger.info("Failed to write OBS stream settings: %s", exc)
-            if not auto:
-                self.set_status(f"启动 OBS 推流失败: {exc}", error=True)
-            elif self.credentials:
+            outcome = await self.live_control_service.start_obs_stream(settings)
+            self._apply_service_state(self.live_control_service.state)
+            if outcome.success:
+                credential = self.credentials[0] if self.credentials else None
+                label = credential.label.upper() if credential is not None else "RTMP"
+                self.set_status(f"已将 {label} 填入 OBS 并启动推流。", success=True)
+            elif not auto and outcome.error is not None:
+                self.set_status(outcome.error.message, error=True)
+            elif auto and self.credentials:
                 self.set_status("直播已开始，RTMP 凭证已生成；OBS 自动推流失败，可手动复制地址和密钥。", error=True)
         except Exception as exc:
             logger.exception("Unexpected OBS write failure")
@@ -1267,7 +1110,7 @@ class LiveControlDialog(QDialog):
         prompt.setWordWrap(True)
         layout.addWidget(prompt)
 
-        bio = self.auth_service.generate_qr_image(url)
+        bio = self.live_control_service.generate_qr_image(url)
         if bio:
             image = QImage.fromData(bio.getvalue())
             label = QLabel()

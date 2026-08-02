@@ -7,6 +7,21 @@ from urllib.parse import urlencode
 
 import aiohttp
 
+from .domain.live_control import (
+    LiveVersion,
+    RoomInfo,
+    StreamCredential,
+)
+from .domain.live_control import (
+    room_action_enabled_state as _room_action_enabled_state,
+)
+from .domain.live_control import (
+    room_area_needs_update as _room_area_needs_update,
+)
+from .domain.live_control import (
+    room_title_needs_update as _room_title_needs_update,
+)
+
 BASE_URL = "https://api.live.bilibili.com"
 APP_KEY = "aae92bc66f3edfab"
 APP_SECRET = "af125a0d5279fd576c1b4418a3e8276d"
@@ -15,28 +30,6 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0"
 )
-
-
-@dataclass(frozen=True)
-class StreamCredential:
-    label: str
-    address: str
-    key: str
-
-
-@dataclass(frozen=True)
-class LiveVersion:
-    curr_version: str
-    build: int
-
-
-@dataclass(frozen=True)
-class RoomInfo:
-    room_id: int
-    title: str
-    parent_area_id: str
-    area_id: str
-    is_live: bool = False
 
 
 @dataclass(frozen=True)
@@ -88,15 +81,18 @@ def is_live_rate_limited_error(exc: BaseException) -> bool:
 
 
 def room_title_needs_update(current_room: RoomInfo | None, room_id: int, title: str) -> bool:
-    return current_room is None or current_room.room_id != room_id or current_room.title.strip() != title.strip()
+    """Keep the historical live-api helper name while delegating pure domain logic."""
+    return _room_title_needs_update(current_room, room_id, title)
 
 
 def room_area_needs_update(current_room: RoomInfo | None, room_id: int, area_id: str) -> bool:
-    return current_room is None or current_room.room_id != room_id or current_room.area_id != area_id
+    """Keep the historical live-api helper name while delegating pure domain logic."""
+    return _room_area_needs_update(current_room, room_id, area_id)
 
 
 def room_action_enabled_state(can_start: bool, can_stop: bool, is_live: bool) -> tuple[bool, bool]:
-    return (can_start and not is_live, can_stop and is_live)
+    """Keep the historical live-api helper name for existing callers."""
+    return _room_action_enabled_state(can_start, can_stop, is_live)
 
 
 def get_cookie_value(session: aiohttp.ClientSession, name: str) -> str | None:
