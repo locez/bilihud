@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .auth import AuthenticationService, BilibiliAuthService, KeyringSessionStore, SessionStore
 from .config import ConfigStore, JsonConfigStore
+from .config_compat import LegacyConfigMigrator
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +20,9 @@ def create_default_services(config_path: Path | None = None) -> AppServices:
     """Build production adapters that share one secure session store instance."""
     session_store: SessionStore = KeyringSessionStore()
     return AppServices(
-        config_store=JsonConfigStore(config_path, secret_store=session_store),
+        config_store=JsonConfigStore(
+            config_path,
+            migrator=LegacyConfigMigrator(session_store),
+        ),
         auth_service=BilibiliAuthService(session_store),
     )

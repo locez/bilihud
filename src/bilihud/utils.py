@@ -7,14 +7,12 @@ from typing import Protocol
 
 from .auth import KeyringSessionStore
 from .config import AppConfig, JsonConfigStore, default_config_path
-from .config import validate_room_id as _validate_room_id
+from .config_compat import LegacyConfigMigrator
+from .helpers import validate_room_id as validate_room_id
 
 logger = logging.getLogger(__name__)
 
-
-def validate_room_id(room_id_str: str) -> bool:
-    """Return whether a user-entered room identifier is a positive integer."""
-    return _validate_room_id(room_id_str)
+# TODO: remove the legacy config facade after all callers use ConfigStore and AppServices.
 
 
 class DanmakuMessageLike(Protocol):
@@ -31,20 +29,20 @@ def get_config_path() -> Path:
 
 def _default_config_store() -> JsonConfigStore:
     """Create the compatibility store with secure OBS-password storage."""
-    return JsonConfigStore(secret_store=KeyringSessionStore())
+    return JsonConfigStore(migrator=LegacyConfigMigrator(KeyringSessionStore()))
 
 
-# Transitional compatibility for external callers; remove after all callers use ConfigStore.
+# TODO: remove after all callers use ConfigStore and AppServices.
 def load_config() -> dict[str, object]:
     """Return a legacy mapping view backed by the typed configuration store."""
     return _default_config_store().load().to_mapping()
 
 
-# Transitional compatibility for external callers; remove after all callers use ConfigStore.
+# TODO: remove after all callers use ConfigStore and AppServices.
 def save_config(data: Mapping[str, object]) -> bool:
     """Merge legacy settings through typed storage without writing OBS passwords to JSON."""
     secret_store = KeyringSessionStore()
-    store = JsonConfigStore(secret_store=secret_store)
+    store = JsonConfigStore(migrator=LegacyConfigMigrator(secret_store))
     current = store.load()
     merged = current.to_mapping()
     merged.update(data)

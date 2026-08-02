@@ -1,4 +1,5 @@
-from bilihud.utils import validate_room_id
+from bilihud.helpers import validate_room_id
+
 
 def test_validate_room_id():
     """Test room ID validation logic"""
