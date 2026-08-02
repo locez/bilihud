@@ -28,7 +28,9 @@ For every task:
 2. Check the current branch and working-tree status.
 3. Read the relevant implementation, tests, and configuration.
 4. Define the behavior boundary before implementing it.
-5. Add or update tests for new or changed behavior.
+5. Decide what evidence is needed for the change. Add or update tests only when
+   they verify a meaningful behavior, contract, invariant, or failure path.
+   Do not add tests merely because a file, setting, or code path changed.
 6. Keep the change focused and complete.
 7. Run the checks relevant to the change.
 8. Review the final diff for unrelated files and temporary artifacts.
@@ -97,10 +99,32 @@ Strong typing is a continuous requirement for all new and modified code.
 
 ## Testing
 
-Tests should verify behavior, contracts, and failure paths rather than source implementation details.
+Tests are executable evidence for behavior and contracts, not a way to count
+changed lines or restate the implementation.
 
-- Prefer behavior and interface tests.
-- Do not use source strings, import order, or private implementation details as primary assertions.
+- Before writing a test, name the observable behavior or contract it protects
+  and the regression that would make it fail. If that cannot be stated clearly,
+  do not add the test.
+- Prefer behavior, interface, integration, and failure-path tests that survive
+  internal refactoring and fail when an externally observable contract breaks.
+- Do not add tests only to increase coverage, mirror every branch mechanically,
+  or confirm that a recently edited file contains an expected line.
+- Do not use raw source reads, substring checks, import order, call ordering, or
+  private implementation details as primary assertions. In particular, avoid
+  tests shaped like `assert "..." in Path(...).read_text()` for source or
+  configuration files.
+- Structural rules can be tested when the structure is itself a stable contract,
+  such as module dependency boundaries or a generated artifact. Test them at the
+  right level with an AST/import-graph check, a format-aware parser, an actual
+  build/package installation, or CI validation. Do not replace those checks with
+  hand-written literal searches through files.
+- For metadata-only, lockfile-only, formatting-only, or workflow-only changes,
+  prefer the real tool that consumes the artifact (`uv lock --check`, a build,
+  package validation, or CI) over a unit test that repeats its text.
+- Exact literals are appropriate when they are part of a stable external
+  contract, such as user-visible output, a protocol field, or serialized data.
+  They are not evidence that an implementation detail exists in a particular
+  file.
 - Use fakes, stubs, or adapters for external services.
 - Cover normal, failure, cancellation, timeout, and repeated-call paths.
 - Run the full test suite when changing public behavior, lifecycle management, or cross-module contracts.
