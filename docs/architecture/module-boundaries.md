@@ -34,6 +34,22 @@ stable design rule, not a list of current migration tasks.
   capability without importing the concrete server into application code.
 - `mirror_server` only serves coordinator-owned state and applies the image
   proxy allowlist, DNS address checks, redirect policy, and response limits.
+- `overlay_ports` owns toolkit-neutral window geometry, capability, result, and
+  drag-strategy contracts; it must not import Qt, ctypes, or desktop APIs.
+- `qt_window_host` is the presentation-side Qt binding for those contracts;
+  `infrastructure.window_platform` owns capability-provider selection,
+  `infrastructure.qt_window_platform` owns the portable Qt window baseline,
+  and `infrastructure.layer_shell` and `infrastructure.x11` isolate optional
+  native enhancements.
+- Layer Shell drag behavior is selected through an infrastructure strategy
+  registry: the existing KDE-compatible local-anchor strategy remains the
+  default, while niri uses global pointer deltas and output-bound clamping for
+  asynchronous compositor configure feedback.
+- `danmaku_widget` binds the `OverlayPlatform` capability snapshot and forwards
+  window gestures; desktop names and native handles do not appear in its
+  workflow logic. A new desktop-specific drag behavior, such as a Layer Shell
+  compositor-specific strategy, is added as a provider or strategy, not as a
+  desktop-name branch in the widget.
 - Presentation code binds state and commands; it does not own business workflows.
 - Application code owns use-case lifecycles and coordinates infrastructure through ports.
 - Domain code remains deterministic and independently testable whenever practical.

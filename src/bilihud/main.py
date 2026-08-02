@@ -8,6 +8,7 @@ sys.modules["PyQt5"] = None
 os.environ["QT_API"] = "pyqt6"
 
 import asyncio
+import logging
 import signal
 from collections.abc import Iterable
 from typing import Any
@@ -19,6 +20,20 @@ from PyQt6.QtWidgets import QApplication
 from .danmaku_widget import DanmakuWidget
 from .lifecycle import TaskSupervisor
 from .services import AppServices, create_default_services
+
+
+def configure_logging() -> None:
+    """Send application diagnostics to the terminal without enabling noisy modules."""
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stdout,
+    )
+    for logger_name in (
+        "bilihud.infrastructure.window_platform",
+        "bilihud.infrastructure.layer_shell",
+    ):
+        logging.getLogger(logger_name).setLevel(logging.INFO)
 
 
 class ApplicationRuntime:
@@ -115,6 +130,7 @@ async def cancel_pending_tasks(
 
 def entry_point():
     """Parse CLI options, start the Qt/asyncio event loop, and shut it down cleanly."""
+    configure_logging()
     import argparse
 
     parser = argparse.ArgumentParser(description="B station Danmaku Reader")

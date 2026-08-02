@@ -9,6 +9,7 @@ PRESENTATION_MODULE_NAMES: Final[tuple[str, ...]] = (
     "danmaku_widget",
     "live_control_dialog",
     "qr_login_dialog",
+    "qt_window_host",
 )
 MESSAGE_CONSUMER_MODULE_NAMES: Final[tuple[str, ...]] = (
     "danmaku_format",
@@ -212,3 +213,19 @@ def test_danmaku_widget_uses_hud_controller_instead_of_concrete_client() -> None
 
     assert "bilihud.hud_controller" in modules
     assert "bilihud.danmaku_client" not in modules
+
+
+def test_danmaku_widget_uses_overlay_port_instead_of_platform_implementation() -> None:
+    modules = _imported_modules(SOURCE_ROOT / "danmaku_widget.py")
+
+    assert "bilihud.overlay_ports" in modules
+    assert "bilihud.infrastructure.window_platform" not in modules
+    assert "bilihud.layer_shell_loader" not in modules
+    assert "ctypes" not in modules
+    assert "PyQt6.sip" not in modules
+
+
+def test_overlay_ports_do_not_import_toolkits_or_native_libraries() -> None:
+    modules = _imported_modules(SOURCE_ROOT / "overlay_ports.py")
+
+    assert all(module not in {"PyQt5", "PyQt6", "ctypes"} for module in modules)

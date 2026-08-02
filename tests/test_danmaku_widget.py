@@ -1,8 +1,9 @@
 import asyncio
 import os
+from dataclasses import replace
 
 import pytest
-from PyQt6.QtCore import QEvent, QPoint
+from PyQt6.QtCore import QEvent
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication, QLabel, QWidget
 
@@ -19,8 +20,18 @@ from bilihud.domain.messages import (
     TextSegment,
     make_system_message,
 )
+from bilihud.infrastructure.layer_shell import LayerShellAnchorDragStrategy
 from bilihud.live_emoticons import LiveEmoticon, LiveEmoticonPackage
 from bilihud.mirror_coordinator import MirrorCoordinatorState, MirrorOperationResult
+from bilihud.overlay_ports import (
+    DragMode,
+    DragStartResult,
+    OverlayCapabilities,
+    OverlayOperationResult,
+    WindowPoint,
+    WindowRectangle,
+)
+from bilihud.services import create_default_services
 
 _QT_APP = None
 
@@ -32,63 +43,93 @@ def _app():
     return _QT_APP
 
 
-def test_layer_shell_drag_updates_anchor_position(monkeypatch):
-    class FakeGeometry:
-        def x(self):
-            return 0
+def test_layer_shell_drag_updates_anchor_position():
+    class FakeHost:
+        def native_window_pointer(self) -> int:
+            return 123
 
-        def y(self):
-            return 0
+        def window_position(self) -> WindowPoint:
+            return WindowPoint(100, 100)
 
-        def width(self):
-            return 1920
+        def geometry(self) -> WindowRectangle:
+            return WindowRectangle(x=100, y=100, width=300, height=450)
 
-        def height(self):
-            return 1080
-
-    class FakeScreen:
-        def geometry(self):
-            return FakeGeometry()
-
-    class FakeWindow:
-        def screen(self):
-            return FakeScreen()
+        def screen_geometry(self) -> WindowRectangle:
+            return WindowRectangle(x=0, y=0, width=1920, height=1080)
 
     class FakeLayerShell:
-        def __init__(self):
-            self.calls = []
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int, int]] = []
 
-        def set_anchor_position(self, pointer, x, y):
+        def set_anchor_position(self, pointer: int, x: int, y: int) -> None:
             self.calls.append((pointer, x, y))
 
-    class FakePosition:
-        def toPoint(self):
-            return QPoint(20, 20)
+    layer_shell = FakeLayerShell()
+    strategy = LayerShellAnchorDragStrategy(FakeHost(), layer_shell)
 
-    class FakeEvent:
-        def position(self):
-            return FakePosition()
+    assert strategy.synchronize_position().succeeded is True
+    assert strategy.begin_drag(WindowPoint(10, 10), WindowPoint(110, 110)).mode is DragMode.MANUAL
+    assert strategy.update_drag(WindowPoint(20, 20), WindowPoint(120, 120)).succeeded is True
+    assert strategy.update_drag(WindowPoint(20, 20), WindowPoint(130, 130)).succeeded is True
 
-        def accept(self):
+    assert layer_shell.calls == [(123, 100, 100), (123, 110, 110), (123, 120, 120)]
+
+
+def test_danmaku_widget_keeps_game_mode_controls_in_sync_with_fake_platform(tmp_path):
+    class FakePlatform:
+        capabilities = OverlayCapabilities(
+            layer_shell=False,
+            gaming_mode=True,
+            click_through=True,
+            drag=True,
+        )
+
+        def __init__(self) -> None:
+            self.mode_calls: list[bool] = []
+
+        def prepare(self) -> OverlayOperationResult:
+            return OverlayOperationResult.success()
+
+        def activate(self) -> OverlayOperationResult:
+            return OverlayOperationResult.success()
+
+        def set_gaming_mode(self, enabled: bool) -> OverlayOperationResult:
+            self.mode_calls.append(enabled)
+            return OverlayOperationResult.success()
+
+        def begin_drag(self, _local_position: WindowPoint, _global_position: WindowPoint) -> DragStartResult:
+            return DragStartResult(DragMode.MANUAL)
+
+        def update_drag(
+            self,
+            _local_position: WindowPoint,
+            _global_position: WindowPoint,
+        ) -> OverlayOperationResult:
+            return OverlayOperationResult.success()
+
+        def end_drag(self) -> None:
             pass
 
-    layer_shell = FakeLayerShell()
-    widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
-    widget._dragging = True
-    widget._drag_local_pos = QPoint(10, 10)
-    widget.layer_pos = QPoint(100, 100)
-    widget.layer_shell_lib = layer_shell
+    _app()
+    platform = FakePlatform()
+    services = replace(
+        create_default_services(tmp_path / "config.json"),
+        overlay_platform_factory=lambda _host: platform,
+    )
+    widget = danmaku_widget.DanmakuWidget(services=services)
+    try:
+        assert widget.set_gaming_mode(True).succeeded is True
+        assert widget.is_gaming_mode is True
+        assert widget.gaming_mode_btn.isChecked() is True
+        assert widget.tray_gaming_action.isChecked() is True
 
-    monkeypatch.setattr(danmaku_widget.sip, "unwrapinstance", lambda _window: 123)
-    monkeypatch.setattr(danmaku_widget.DanmakuWidget, "windowHandle", lambda _self: FakeWindow())
-    monkeypatch.setattr(danmaku_widget.DanmakuWidget, "width", lambda _self: 300)
-
-    danmaku_widget.DanmakuWidget.mouseMoveEvent(widget, FakeEvent())
-
-    assert widget.layer_pos == QPoint(110, 110)
-    pointer, x, y = layer_shell.calls[0]
-    assert pointer.value == 123
-    assert (x, y) == (110, 110)
+        assert widget.set_gaming_mode(False).succeeded is True
+        assert widget.is_gaming_mode is False
+        assert widget.gaming_mode_btn.isChecked() is False
+        assert widget.tray_gaming_action.isChecked() is False
+        assert platform.mode_calls == [True, False]
+    finally:
+        asyncio.run(widget.shutdown())
 
 
 def test_danmaku_widget_exposes_bilihud_mirror_tray_action(monkeypatch):

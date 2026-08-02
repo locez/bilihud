@@ -9,10 +9,12 @@ from .config_compat import LegacyConfigMigrator
 from .danmaku_client import DanmakuClient
 from .hud_ports import HudClientFactory
 from .infrastructure.live_control import BilibiliLiveControlApi, ObsWebSocketAdapter
+from .infrastructure.window_platform import create_default_overlay_platform
 from .live_control_service import LiveControlService
 from .mirror_coordinator import MirrorCoordinator
 from .mirror_server import MirrorServer
 from .mirror_state import MirrorState
+from .overlay_ports import OverlayPlatformFactory
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +26,7 @@ class AppServices:
     hud_client_factory: HudClientFactory  # Concrete HUD network adapter factory.
     live_control_service: LiveControlService  # Live-control application workflow owner.
     mirror_coordinator: MirrorCoordinator  # Mirror configuration and server lifecycle owner.
+    overlay_platform_factory: OverlayPlatformFactory  # Platform window capability boundary.
 
 
 def create_default_hud_client(
@@ -62,4 +65,5 @@ def create_default_services(config_path: Path | None = None) -> AppServices:
             config_store=config_store,
             server_factory=create_default_mirror_server,
         ),
+        overlay_platform_factory=create_default_overlay_platform,
     )
