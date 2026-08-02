@@ -25,7 +25,8 @@ from PyQt6.QtWidgets import (
 )
 
 from .auth import AuthenticationService
-from .config import ConfigStore, validate_room_id
+from .config import ConfigStore
+from .helpers import validate_room_id
 from .live_api import (
     LiveApiError,
     RoomInfo,

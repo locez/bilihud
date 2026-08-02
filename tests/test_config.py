@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from bilihud.config import AppConfig, JsonConfigStore
+from bilihud.config_compat import LegacyConfigMigrator
 
 
 class FakeSecretStore:
@@ -16,8 +17,13 @@ class FakeSecretStore:
         return True
 
 
+def make_store(path: Path, secret_store: FakeSecretStore) -> JsonConfigStore:
+    """Build a config store with an explicit legacy migration adapter."""
+    return JsonConfigStore(path, migrator=LegacyConfigMigrator(secret_store))
+
+
 def test_json_config_store_persists_typed_non_sensitive_settings(tmp_path: Path) -> None:
-    store = JsonConfigStore(tmp_path / "config.json", secret_store=FakeSecretStore())
+    store = make_store(tmp_path / "config.json", FakeSecretStore())
     config = AppConfig(
         room_id=7450109,
         live_title="测试直播",
@@ -52,7 +58,7 @@ def test_json_config_store_migrates_legacy_obs_password_to_secret_store(tmp_path
         encoding="utf-8",
     )
     secret_store = FakeSecretStore()
-    store = JsonConfigStore(config_path, secret_store=secret_store)
+    store = make_store(config_path, secret_store)
 
     config = store.load()
 
@@ -78,6 +84,6 @@ def test_json_config_store_uses_defaults_for_invalid_external_values(tmp_path: P
         encoding="utf-8",
     )
 
-    config = JsonConfigStore(config_path, secret_store=FakeSecretStore()).load()
+    config = make_store(config_path, FakeSecretStore()).load()
 
     assert config == AppConfig()

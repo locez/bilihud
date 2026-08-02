@@ -8,24 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from .config_compat import ConfigMigrator, LegacyConfigMigrator
+
 logger = logging.getLogger(__name__)
 
 CONFIG_VERSION = 1
 DEFAULT_MIRROR_PORT = 2233
 DEFAULT_OBS_HOST = "127.0.0.1"
 DEFAULT_OBS_PORT = 4455
-
-
-class ConfigSecretStore(Protocol):
-    """The secret operations needed to migrate legacy configuration."""
-
-    def load_obs_password(self) -> str | None:
-        """Return the stored OBS password, or ``None`` when absent."""
-        ...
-
-    def save_obs_password(self, password: str) -> bool:
-        """Persist an OBS password outside the ordinary configuration file."""
-        ...
 
 
 class ConfigStore(Protocol):
@@ -83,16 +73,16 @@ class AppConfig:
 
 
 class JsonConfigStore:
-    """Persist typed application settings and migrate legacy JSON values."""
+    """Persist typed application settings and delegate legacy migration."""
 
-    def __init__(self, path: Path | None = None, secret_store: ConfigSecretStore | None = None) -> None:
-        """Create a store using the supplied path and secure secret adapter."""
+    def __init__(self, path: Path | None = None, migrator: ConfigMigrator | None = None) -> None:
+        """Create a store using the supplied path and compatibility adapter."""
         self.path = path or default_config_path()
-        if secret_store is None:
+        if migrator is None:
             from .auth import KeyringSessionStore
 
-            secret_store = KeyringSessionStore()
-        self.secret_store = secret_store
+            migrator = LegacyConfigMigrator(KeyringSessionStore())
+        self.migrator = migrator
 
     def load(self) -> AppConfig:
         """Read configuration, migrate legacy secrets, and return normalized settings."""
@@ -109,7 +99,7 @@ class JsonConfigStore:
             logger.warning("Configuration root must be a JSON object: %s", self.path)
             return AppConfig()
 
-        raw_without_secret, secret_migrated = self._migrate_legacy_secret(raw)
+        raw_without_secret, secret_migrated = self.migrator.migrate(raw)
         config = AppConfig.from_mapping(raw_without_secret)
         can_write_canonical = "obs_password" not in raw_without_secret
         if secret_migrated or (can_write_canonical and raw_without_secret != config.to_mapping()):
@@ -128,30 +118,6 @@ class JsonConfigStore:
             logger.error("Failed to save configuration to %s: %s", self.path, exc)
             return False
 
-    def _migrate_legacy_secret(self, raw: Mapping[str, object]) -> tuple[dict[str, object], bool]:
-        """Move a legacy JSON password to secure storage without losing a failed migration."""
-        if "obs_password" not in raw:
-            return dict(raw), False
-
-        migrated = dict(raw)
-        legacy_password = migrated.pop("obs_password")
-        if not isinstance(legacy_password, str) or not legacy_password:
-            return migrated, True
-
-        try:
-            if (
-                self.secret_store.load_obs_password() is None
-                and not self.secret_store.save_obs_password(legacy_password)
-            ):
-                migrated["obs_password"] = legacy_password
-                return migrated, False
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            logger.error("Failed to migrate legacy OBS password: %s", exc)
-            migrated["obs_password"] = legacy_password
-            return migrated, False
-
-        return migrated, True
-
     def _write(self, config: AppConfig) -> None:
         """Create the parent directory and write the canonical configuration payload."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -166,14 +132,6 @@ def default_config_path() -> Path:
     xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
     config_home = Path(xdg_config_home) if xdg_config_home else Path.home() / ".config"
     return config_home / "bilihud" / "config.json"
-
-
-def validate_room_id(room_id_str: str) -> bool:
-    """Return whether a user-entered room identifier is a positive integer."""
-    try:
-        return int(room_id_str) > 0
-    except ValueError:
-        return False
 
 
 def _read_mapping(path: Path) -> dict[str, object] | None:

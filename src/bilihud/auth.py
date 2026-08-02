@@ -354,6 +354,7 @@ def _string_or_none(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
+# TODO: remove these legacy aliases after downstream callers migrate to the protocol names.
 # Public aliases keep the boundary name concise while preserving the legacy manager name.
 AuthSessionStore = SessionStore
 AuthService = AuthenticationService
