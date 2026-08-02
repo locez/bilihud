@@ -9,7 +9,7 @@ License:        MIT
 URL:            https://github.com/locez/bilihud
 Source0:        %{name}-%{version}.tar.gz
 
-BuildRequires:  python3-devel
+BuildRequires:  python3-devel >= 3.13
 BuildRequires:  python3-hatchling
 # BuildRequires:  python3-hatch-build-scripts  <-- unavailable in Fedora repos, installed via pip in CI
 BuildRequires:  gcc-c++
@@ -17,7 +17,7 @@ BuildRequires:  qt6-qtbase-devel
 BuildRequires:  layer-shell-qt-devel
 BuildRequires:  wayland-devel
 
-Requires:       python3
+Requires:       python3 >= 3.13
 Requires:       python3-pyqt6
 Requires:       layer-shell-qt
 
