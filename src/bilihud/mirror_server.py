@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from collections.abc import Mapping
 from urllib.parse import urlparse
 
 import aiohttp
@@ -22,7 +22,7 @@ IMAGE_PROXY_HEADERS = {
 }
 
 
-def mirror_event_payload(event: str, data: Any) -> str:
+def mirror_event_payload(event: str, data: object) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
 
 
@@ -289,7 +289,7 @@ class MirrorServer:
             self._clients.discard(queue)
         return response
 
-    def publish_append(self, entry: dict[str, Any]) -> None:
+    def publish_append(self, entry: Mapping[str, object]) -> None:
         payload = mirror_event_payload("append", entry)
         for queue in list(self._clients):
             queue.put_nowait(payload)
