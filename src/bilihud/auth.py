@@ -23,6 +23,12 @@ COMMON_USER_AGENT = (
 )
 ESSENTIAL_COOKIE_KEYS = frozenset({"SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5"})
 AuthCookies = dict[str, str]  # Normalized cookie names and values kept in secure storage.
+QR_LOGIN_STATUS_NAMES: Mapping[int, str] = {
+    0: "Success",
+    86101: "Scanned",
+    86090: "Not Scanned",
+    86038: "Expired",
+}
 
 
 class SessionStore(Protocol):
@@ -65,7 +71,14 @@ class AuthenticationService(Protocol):
         ...
 
     async def poll_status(self, qrcode_key: str) -> tuple[int, str, AuthCookies | None]:
-        """Poll QR-login state and return an authenticated cookie set on success."""
+        """Poll QR-login state and return an authenticated cookie set on success.
+
+        Returns:
+            ``(code, message, cookies_dict)``. ``code`` follows Bilibili's QR-login
+            protocol: ``0`` means Success, ``86101`` means Scanned, ``86090``
+            means Not Scanned, and ``86038`` means Expired. ``cookies_dict`` is
+            populated only after a successful login.
+        """
         ...
 
     def save_cookies(self, cookies: Mapping[str, str]) -> bool:
@@ -231,7 +244,14 @@ class BilibiliAuthService:
             return None
 
     async def poll_status(self, qrcode_key: str) -> tuple[int, str, AuthCookies | None]:
-        """Poll QR-login state and extract only the cookies needed by the app."""
+        """Poll QR-login state and extract only the cookies needed by the app.
+
+        Returns:
+            ``(code, message, cookies_dict)``. ``code`` follows Bilibili's QR-login
+            protocol: ``0`` means Success, ``86101`` means Scanned, ``86090``
+            means Not Scanned, and ``86038`` means Expired. ``cookies_dict`` is
+            populated only after a successful login.
+        """
         headers = {"User-Agent": COMMON_USER_AGENT}
         async with aiohttp.ClientSession(headers=headers) as session:
             try:

@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 import asyncio
+import logging
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QPixmap
 from PyQt6.QtWidgets import QDialog, QGraphicsDropShadowEffect, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from .auth import AuthenticationService
+from .auth import QR_LOGIN_STATUS_NAMES, AuthenticationService
 from .services import create_default_services
+
+logger = logging.getLogger(__name__)
 
 
 class QRLoginDialog(QDialog):
@@ -194,7 +197,8 @@ class QRLoginDialog(QDialog):
     async def _poll_status(self):
         """Persist cookies after successful scanning and update visible failure states."""
         code, msg, cookies = await self.auth_service.poll_status(self.qrcode_key)
-        print(f"Poll Status: {code}, Msg: {msg}") 
+        status_name = QR_LOGIN_STATUS_NAMES.get(code, "Unknown")
+        logger.info("QR login poll status: code=%s (%s), message=%s", code, status_name, msg)
         
         if code == 0:
             # Success

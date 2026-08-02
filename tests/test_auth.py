@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import keyring
 
-from bilihud.auth import AuthManager, BilibiliAuthService
+from bilihud.auth import QR_LOGIN_STATUS_NAMES, AuthManager, BilibiliAuthService
 
 
 @dataclass
@@ -101,6 +101,15 @@ def test_qr_login_poll_returns_session_cookies(monkeypatch):
 
     assert (code, message) == (0, "登录成功")
     assert cookies == {"SESSDATA": "qr-sess", "bili_jct": "qr-csrf"}
+
+
+def test_qr_login_status_codes_have_protocol_names():
+    assert QR_LOGIN_STATUS_NAMES == {
+        0: "Success",
+        86101: "Scanned",
+        86090: "Not Scanned",
+        86038: "Expired",
+    }
 
 
 def test_auth_service_uses_replaceable_session_store():
