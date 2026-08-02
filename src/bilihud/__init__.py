@@ -1,7 +1,7 @@
 """Top-level package for bilihud."""
 
-import sys
 import os
+import sys
 
 # 优先查找包内的 vendor (安装模式)
 _local_vendor = os.path.join(os.path.dirname(__file__), 'vendor')
@@ -16,7 +16,7 @@ if os.path.exists(_local_vendor):
     # But for simplicity, we will instruct pip to install flatly or we handle it in CI.
     # Actually, simpler: We will install dependencies into src/bilihud/vendor directly.
     # So imports like 'import qasync' will work if 'src/bilihud/vendor/qasync' exists AND 'src/bilihud/vendor' is in sys.path.
-    
+
 elif os.path.exists(_dev_vendor):
     # Only for blivedm submodule in dev mode
     if _dev_vendor not in sys.path:

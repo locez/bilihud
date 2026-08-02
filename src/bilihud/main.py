@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import os
 import sys
 
@@ -130,17 +129,17 @@ def entry_point():
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
         )
-    
+
     # Handle SIGINT
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     app = QApplication(sys.argv)
     app.setApplicationName("bilihud")
-    
+
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
     main_task = loop.create_task(main(app, args.room_id), name="application-main")
-    
+
     try:
         loop.run_forever()
     finally:

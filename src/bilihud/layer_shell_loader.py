@@ -1,6 +1,4 @@
-# -*- coding: utf-8 -*-
 from pathlib import Path
-
 
 LAYER_SHELL_LIBRARY_NAME = "libbili-layer.so"
 LAYER_SHELL_LIBRARY_PREFIX = "libbili-layer."

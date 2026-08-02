@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import asyncio
 import logging
 
@@ -17,7 +16,7 @@ class QRLoginDialog(QDialog):
     """Display the Bilibili QR-login flow through an injected auth service."""
 
     login_success = pyqtSignal()
-    
+
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -28,11 +27,11 @@ class QRLoginDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("扫码登录 Bilibili")
         self.setFixedSize(320, 400)
-        
+
         # Modern window styling
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        
+
         self.auth_service = (  # Shared authentication boundary supplied by the app.
             auth_service if auth_service is not None else create_default_services().auth_service
         )
@@ -50,20 +49,20 @@ class QRLoginDialog(QDialog):
         self._poll_task: asyncio.Task[None] | None = None  # Current QR status request.
         self._shutting_down = False  # Prevent new requests after application shutdown.
         self._shutdown_complete = False  # Makes application shutdown idempotent.
-        
+
         self.init_ui()
-        
+
         # Timer for polling
         self.poll_timer = QTimer(self)  # Owned by the dialog and stopped on close.
         self.poll_timer.setInterval(2000) # Poll every 2 seconds
         self.poll_timer.timeout.connect(self.check_status)
-        
+
     def init_ui(self):
         """Build the frameless QR-login presentation and its status controls."""
         # Main layout with background container
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
-        
+
         self.container = QWidget()
         self.container.setStyleSheet("""
             QWidget {
@@ -72,17 +71,17 @@ class QRLoginDialog(QDialog):
                 border: 1px solid #3d3d3d;
             }
         """)
-        
+
         # Add shadow
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(20)
         shadow.setColor(QColor(0, 0, 0, 100))
         self.container.setGraphicsEffect(shadow)
-        
+
         layout = QVBoxLayout(self.container)
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
-        
+
         # Title
         title_label = QLabel("扫码登录")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -93,14 +92,14 @@ class QRLoginDialog(QDialog):
             font-family: 'Microsoft YaHei';
         """)
         layout.addWidget(title_label)
-        
+
         # QR Code Display
         self.qr_label = QLabel()
         self.qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.qr_label.setFixedSize(200, 200)
         self.qr_label.setStyleSheet("background-color: white; border-radius: 4px;")
         layout.addWidget(self.qr_label, 0, Qt.AlignmentFlag.AlignCenter)
-        
+
         # Status Label
         self.status_label = QLabel("正在加载二维码...")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -111,7 +110,7 @@ class QRLoginDialog(QDialog):
             font-family: 'Microsoft YaHei';
         """)
         layout.addWidget(self.status_label)
-        
+
         # Refresh Button
         self.refresh_btn = QPushButton("刷新二维码")
         self.refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -149,7 +148,7 @@ class QRLoginDialog(QDialog):
         """)
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignCenter)
-        
+
         main_layout.addWidget(self.container)
 
     def showEvent(self, event):
@@ -158,7 +157,7 @@ class QRLoginDialog(QDialog):
         if self._shutting_down:
             return
         self.refresh_qrcode()
-        
+
     def closeEvent(self, event):
         """Stop status polling before the dialog is destroyed or hidden."""
         self.poll_timer.stop()
@@ -185,7 +184,7 @@ class QRLoginDialog(QDialog):
             if self._owns_task_supervisor and self._task_supervisor is not None:
                 await self._task_supervisor.shutdown()
         self._shutdown_complete = True
-        
+
     def refresh_qrcode(self):
         """Start one asynchronous QR-code request and reset stale polling state."""
         if self._shutting_down:
@@ -199,20 +198,20 @@ class QRLoginDialog(QDialog):
             self._load_task.cancel()
         if self._poll_task is not None and not self._poll_task.done():
             self._poll_task.cancel()
-        
+
         self._load_task = self._task_scope.create_task(self._load_qrcode(), name="load-qrcode")
-        
+
     async def _load_qrcode(self):
         """Fetch a QR URL, render it, and start polling after a successful render."""
         url, key = await self.auth_service.get_qrcode()
         if url and key:
             self.qrcode_key = key
-            
+
             # Generate Image
             # Note: generate_qr_image is synchronous but fast
             loop = asyncio.get_event_loop()
             bio = await loop.run_in_executor(None, self.auth_service.generate_qr_image, url)
-            
+
             if bio:
                 top_img = QImage.fromData(bio.getvalue())
                 pixmap = QPixmap.fromImage(top_img)
@@ -243,43 +242,43 @@ class QRLoginDialog(QDialog):
             self._poll_status(self.qrcode_key),
             name="poll-qrcode",
         )
-            
+
     async def _poll_status(self, qrcode_key: str) -> None:
         """Persist cookies after successful scanning and update visible failure states."""
         code, msg, cookies = await self.auth_service.poll_status(qrcode_key)
         status_name = QR_LOGIN_STATUS_NAMES.get(code, "Unknown")
         logger.info("QR login poll status: code=%s (%s), message=%s", code, status_name, msg)
-        
+
         if code == 0:
             # Success
             self.status_label.setText("登录成功！")
             self.status_label.setStyleSheet("color: #4caf50; font-weight: bold;")
             self.poll_timer.stop()
-            
+
             # Save cookies
             if cookies:
                 self.auth_service.save_cookies(cookies)
                 self.login_success.emit()
                 self.accept()
-                
+
         elif code == 86101:
             # Scanned
             # User requested to keep text fixed and avoid "false positive" updates
             # self.status_label.setText("扫描成功，请在手机上确认")
             # self.status_label.setStyleSheet("color: #ff9800;")
             pass
-            
+
         elif code == 86038:
             # Expired
             self.status_label.setText("二维码已过期")
             self.status_label.setStyleSheet("color: #ff5555;")
             self.poll_timer.stop()
             self.refresh_btn.setVisible(True)
-            
+
         elif code == 86090:
             # Not scanned yet, do nothing
             pass
-            
+
         else:
             # Other error
             pass

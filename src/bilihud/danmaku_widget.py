@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import asyncio
 import ctypes
 import html
@@ -147,7 +146,7 @@ class ModernInputWidget(QWidget):
         """)
         self.emoticon_btn.clicked.connect(self.emoticon_requested.emit)
         self.emoticon_btn.setVisible(show_emoticon_button)
-        
+
         # 发送按钮
         self.send_btn = QPushButton("发送")
         self.send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -356,20 +355,20 @@ class EmoticonPickerPopup(QDialog):
 
 class DanmakuInputDialog(QDialog):
     """全局弹幕输入框 (用于游戏模式/快捷唤起)"""
-    
+
     send_message = pyqtSignal(str)
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(450, 60)
-        
+
         # 整体布局
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
-        
+
         # 背景容器 (实现Glass效果)
         self.container = QFrame(self)
         self.container.setStyleSheet("""
@@ -379,27 +378,27 @@ class DanmakuInputDialog(QDialog):
                 border: 1px solid rgba(255, 255, 255, 30);
             }
         """)
-        
+
         # 加阴影
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(15)
         shadow.setOffset(0, 3)
         shadow.setColor(QColor(0, 0, 0, 150))
         self.container.setGraphicsEffect(shadow)
-        
+
         container_layout = QHBoxLayout(self.container)
         container_layout.setContentsMargins(10, 8, 10, 8)
-        
+
         self.input_widget = ModernInputWidget(self, placeholder="输入弹幕... [ESC关闭]", show_emoticon_button=False)
         self.input_widget.send_requested.connect(self.on_send)
-        
+
         container_layout.addWidget(self.input_widget)
         layout.addWidget(self.container)
-        
+
     def on_send(self, text):
         self.send_message.emit(text)
         self.hide() # 发送后隐藏
-            
+
     def showEvent(self, event):
         super().showEvent(event)
         self.input_widget.setFocus()
@@ -411,7 +410,7 @@ class DanmakuInputDialog(QDialog):
         )
         self.activateWindow()
         self.raise_()
-        
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
             self.hide()
@@ -421,24 +420,24 @@ class X11Helper:
     """X11辅助类，用于直接调用XShape扩展实现点击穿透"""
     _x11 = None
     _xext = None
-    
+
     @classmethod
     def init(cls):
         if cls._x11: return
         try:
             cls._x11 = ctypes.cdll.LoadLibrary('libX11.so.6')
             cls._xext = ctypes.cdll.LoadLibrary('libXext.so.6')
-            
+
             cls._x11.XOpenDisplay.restype = c_void_p
             cls._x11.XOpenDisplay.argtypes = [c_void_p]
             cls._x11.XFlush.argtypes = [c_void_p]
             cls._x11.XCloseDisplay.argtypes = [c_void_p]
-            
+
             # XShapeCombineRectangles(display, dest, dest_kind, x_off, y_off, rectangles, n_rects, op, ordering)
             cls._xext.XShapeCombineRectangles.argtypes = [
                 c_void_p, c_ulong, c_int, c_int, c_int, c_void_p, c_int, c_int, c_int
             ]
-            
+
             # XShapeCombineMask(display, dest, dest_kind, x_off, y_off, src, op)
             cls._xext.XShapeCombineMask.argtypes = [
                 c_void_p, c_ulong, c_int, c_int, c_int, c_void_p, c_int
@@ -450,18 +449,18 @@ class X11Helper:
     def set_click_through(cls, win_id, enabled):
         """设置窗口是否通过Input Shape完全穿透"""
         if sys.platform != 'linux': return
-        
+
         cls.init()
         if not cls._x11 or not cls._xext: return
-        
+
         display = cls._x11.XOpenDisplay(None)
         if not display:
             print("Failed to open X Display")
             return
-        
+
         ShapeInput = 2
         ShapeSet = 0
-        
+
         try:
             if enabled:
                 # 设置输入形状为空（0个矩形），使窗口对输入事件完全透明
@@ -565,25 +564,25 @@ class DanmakuDelegate(QStyledItemDelegate):
         """Paint the item content directly."""
         options = option
         self.initStyleOption(options, index)
-        
+
         msg_data = index.data(Qt.ItemDataRole.UserRole)
         if not msg_data:
             return
 
         painter.save()
-        
+
         # Get width
         width = options.rect.width()
         if width <= 0: width = 300
-        
+
         doc = self._get_document(msg_data, width, options.font)
-        
+
         # Translate painter to the correct position
         painter.translate(options.rect.x(), options.rect.y() + 1) # +1 Top Margin
-        
+
         # Draw the document
         doc.drawContents(painter)
-        
+
         painter.restore()
 
     def sizeHint(self, option: QStyleOptionViewItem, index):
@@ -591,15 +590,15 @@ class DanmakuDelegate(QStyledItemDelegate):
         msg_data = index.data(Qt.ItemDataRole.UserRole)
         if not msg_data:
             return QSize(0, 0)
-            
+
         width = option.rect.width()
         if width <= 0:
             if self.parent() and hasattr(self.parent(), 'viewport'):
                 width = self.parent().viewport().width()
         if width <= 0: width = 300
-             
+
         doc = self._get_document(msg_data, width, option.font)
-        
+
         return QSize(width, int(doc.size().height()) + 2) # +2 for margins
 
     def get_html_for_message(self, message: HudMessage) -> str:
@@ -707,7 +706,7 @@ class CustomSizeGrip(QWidget):
             delta = event.globalPosition().toPoint() - self._start_mouse_pos
             new_width = max(self.parent().minimumWidth(), self._start_size.width() + delta.x())
             new_height = max(self.parent().minimumHeight(), self._start_size.height() + delta.y())
-            
+
             self.parent().resize(new_width, new_height)
             event.accept()
 
@@ -717,12 +716,12 @@ class CustomSizeGrip(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
+
         # 绘制 resize grip 的外观 (例如右下角的小三角点)
         painter.setPen(Qt.PenStyle.NoPen)
         color = QColor(255, 255, 255, 100)
         painter.setBrush(QBrush(color))
-        
+
         # 绘制几个小点
         painter.drawEllipse(10, 10, 3, 3)
         painter.drawEllipse(6, 10, 3, 3)
@@ -773,13 +772,13 @@ class DanmakuWidget(QWidget):
         self.mirror_port = config.mirror_port  # Local port used by the Mirror server.
         # Track Layer Shell position manually because Qt frameGeometry() is unreliable (returns 0,0)
         self.layer_pos = QPoint(0, 0)
-        
+
         # [Performance] Resize Debounce Timer
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
         self._resize_timer.setInterval(30) # 30ms Debounce
         self._resize_timer.timeout.connect(self._delayed_adjust_height)
-        
+
         # Load Layer Shell Library
         self.load_layer_shell_lib()
 
@@ -788,14 +787,14 @@ class DanmakuWidget(QWidget):
         self.setup_tray_icon()
         self.update_gaming_mode_availability()
         self.setup_danmaku_client()
-        
+
         # 加载保存的配置
         if config.room_id is not None:
             self.room_id = config.room_id
-        
+
         # 初始化房间号
         self.room_id_input.setText(str(self.room_id))
-        
+
         # Try to activate Layer Shell initially
         QTimer.singleShot(100, self.activate_layer_shell)
 
@@ -837,7 +836,7 @@ class DanmakuWidget(QWidget):
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
-    
+
     def _delayed_adjust_height(self):
         """Debounced execution of item layout update"""
         if not self.is_gaming_mode:
@@ -859,12 +858,12 @@ class DanmakuWidget(QWidget):
             lib_path = find_layer_shell_library(package_dir)
             if lib_path:
                 self.layer_shell_lib = ctypes.CDLL(lib_path)
-                
+
                 # Define argument types for safety
                 self.layer_shell_lib.make_overlay.argtypes = [ctypes.c_void_p]
                 self.layer_shell_lib.set_passthrough.argtypes = [ctypes.c_void_p, ctypes.c_bool]
                 self.layer_shell_lib.set_anchor_position.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
-                
+
                 # Check if new function exists (for backward compatibility during dev)
                 if hasattr(self.layer_shell_lib, 'set_keyboard_interactivity'):
                     self.layer_shell_lib.set_keyboard_interactivity.argtypes = [ctypes.c_void_p, ctypes.c_bool]
@@ -898,7 +897,7 @@ class DanmakuWidget(QWidget):
                 if handle:
                     cpp_ptr = sip.unwrapinstance(handle)
                     self.layer_shell_lib.make_overlay(ctypes.c_void_p(cpp_ptr))
-                    
+
                     # Ensure interactivity is enabled by default (for Normal Mode)
                     if hasattr(self.layer_shell_lib, 'set_keyboard_interactivity'):
                         self.layer_shell_lib.set_keyboard_interactivity(ctypes.c_void_p(cpp_ptr), True)
@@ -910,7 +909,7 @@ class DanmakuWidget(QWidget):
                         # Important: layer_pos is relative to the screen we are on.
                         # We assume initial setup put us on primary screen consistent with layer_pos
                         self.layer_shell_lib.set_anchor_position(ctypes.c_void_p(cpp_ptr), self.layer_pos.x(), self.layer_pos.y())
-                    
+
 
             except Exception as e:
                 print(f"Error activating Layer Shell: {e}")
@@ -920,26 +919,26 @@ class DanmakuWidget(QWidget):
         self.resize(300, 450)
         # 居中屏幕
         screen_geo = QApplication.primaryScreen().geometry()
-        
+
         # Initialize position relative to primary screen top-left
         initial_x = screen_geo.width() - 330
         initial_y = 100
-        
+
         # Qt move expects global coordinates
         self.move(
-            screen_geo.x() + initial_x, 
+            screen_geo.x() + initial_x,
             screen_geo.y() + initial_y
         )
         self.layer_pos = QPoint(initial_x, initial_y)
         self.setWindowTitle("Danmaku Overlay")
-        
+
         # 基础无边框和置顶设置
         flags = (
-            Qt.WindowType.FramelessWindowHint | 
-            Qt.WindowType.WindowStaysOnTopHint | 
-            Qt.WindowType.Window 
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Window
         )
-            
+
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
@@ -948,7 +947,7 @@ class DanmakuWidget(QWidget):
         if not self.is_gaming_mode:
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            
+
             # 使用半透明黑色背景
             painter.setBrush(QBrush(QColor(0, 0, 0, 120)))
             painter.setPen(Qt.PenStyle.NoPen)
@@ -989,7 +988,7 @@ class DanmakuWidget(QWidget):
             }
         """)
         self.live_status_dot.hide()
-        
+
         # 房间号输入
         self.room_id_input = QLineEdit(str(self.room_id))
         self.room_id_input.setPlaceholderText("ID")
@@ -1041,7 +1040,7 @@ class DanmakuWidget(QWidget):
         self.connect_button.setCheckable(True)
         self.connect_button.setStyleSheet(btn_style)
         self.connect_button.clicked.connect(self.toggle_connection)
-        
+
         # 游戏模式切换按钮
         self.gaming_mode_btn = QPushButton("锁定穿透")
         self.gaming_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1122,12 +1121,12 @@ class DanmakuWidget(QWidget):
         self.main_layout.addWidget(self.audience_status)
         self.main_layout.addWidget(self.danmaku_list)
         self.main_layout.addWidget(self.input_area) # 放在底部
-        
+
         self.setLayout(self.main_layout)
-        
+
         # 信号连接
         self.message_received.connect(self.add_message)
-        
+
         # 初始化全局输入框
         self.input_dialog = DanmakuInputDialog(None)
         self.input_dialog.send_message.connect(self.trigger_send)
@@ -1136,7 +1135,7 @@ class DanmakuWidget(QWidget):
         self._dragging = False
         self._drag_position = QPoint()
         self._message_buffer: list[HudMessage] = [] # [Optimization] Buffer
-        
+
         # 大小调整手柄
         self.size_grip = CustomSizeGrip(self)
         self.size_grip.setStyleSheet("""
@@ -1159,7 +1158,7 @@ class DanmakuWidget(QWidget):
     def setup_tray_icon(self):
         """初始化系统托盘图标"""
         self.tray_icon = QSystemTrayIcon(self)
-        
+
         # 加载图标
         icon_path = os.path.join(os.path.dirname(__file__), 'assets', 'icon.png')
         if os.path.exists(icon_path):
@@ -1168,7 +1167,7 @@ class DanmakuWidget(QWidget):
             self.setWindowIcon(icon)
         else:
             print(f"Icon not found at {icon_path}")
-        
+
         # 创建托盘菜单
         tray_menu = QMenu()
         tray_menu.setStyleSheet("""
@@ -1184,22 +1183,22 @@ class DanmakuWidget(QWidget):
                 background-color: #3d3d3d;
             }
         """)
-        
+
         self.tray_send_action = QAction("发送弹幕", self)
         self.tray_send_action.triggered.connect(self.open_input_dialog)
         tray_menu.addAction(self.tray_send_action)
-        
+
         tray_menu.addSeparator()
-        
+
         self.tray_toggle_action = QAction("显示/隐藏", self)
         self.tray_toggle_action.triggered.connect(self.toggle_visibility)
         tray_menu.addAction(self.tray_toggle_action)
-        
+
         self.tray_gaming_action = QAction("锁定穿透 (游戏模式)", self)
         self.tray_gaming_action.setCheckable(True)
         self.tray_gaming_action.triggered.connect(self.toggle_gaming_mode_from_tray)
         tray_menu.addAction(self.tray_gaming_action)
-        
+
         tray_menu.addSeparator()
 
         self.tray_login_action = QAction("扫码登录", self)
@@ -1217,14 +1216,14 @@ class DanmakuWidget(QWidget):
         self.tray_mock_action = QAction("弹幕模拟", self)
         self.tray_mock_action.triggered.connect(self.trigger_danmaku_simulation)
         tray_menu.addAction(self.tray_mock_action)
-        
+
         quit_action = QAction("退出程序", self)
         quit_action.triggered.connect(self.quit_app)
         tray_menu.addAction(quit_action)
-        
+
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.show()
-        
+
         self.tray_icon.activated.connect(self.on_tray_activated)
 
     def add_system_message(
@@ -1260,7 +1259,7 @@ class DanmakuWidget(QWidget):
             if success:
                 # print(f"弹幕发送成功: {text}")
                 # 可选：发送成功也显示一条本地回显，或者直接等服务器下发
-                pass 
+                pass
             else:
                 self.add_system_message(f"发送失败: {msg}", SystemMessageLevel.ERROR)
                 print(f"弹幕发送失败: {msg}")
@@ -1463,14 +1462,14 @@ class DanmakuWidget(QWidget):
 
     def set_gaming_mode(self, enabled: bool):
         self.is_gaming_mode = enabled
-        
+
         # 保存当前位置和大小
         current_geo = self.geometry()
-        
+
         # 同步各按钮状态
         self.tray_gaming_action.setChecked(enabled)
         self.gaming_mode_btn.setChecked(enabled)
-        
+
         # [Critical Fix] 重新构建Flags
         flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Window
 
@@ -1479,7 +1478,7 @@ class DanmakuWidget(QWidget):
 
         if enabled:
             # --- 开启穿透模式 (Gaming Mode) ---
-            
+
             # 1. 穿透模式核心Flags
             # X11BypassWindowManagerHint: 绕过WM，确保能在全屏游戏之上显示
             # ONLY use this if NOT using Layer Shell (i.e. on X11)
@@ -1487,21 +1486,21 @@ class DanmakuWidget(QWidget):
             is_wayland = QGuiApplication.platformName().startswith('wayland')
             if not has_layer_shell and not is_wayland:
                 flags |= Qt.WindowType.X11BypassWindowManagerHint
-            
+
             # WindowTransparentForInput: 输入事件穿透 (配合XShape)
             # On Wayland with LayerShell, we use the bridge to set mask.
-            # On X11, we use XShape. 
+            # On X11, we use XShape.
             flags |= Qt.WindowType.WindowTransparentForInput
             # WindowDoesNotAcceptFocus: 拒绝焦点，防止抢占游戏输入
             flags |= Qt.WindowType.WindowDoesNotAcceptFocus
-            
+
             # For Layer Shell, we rely on setLayer(Overlay) which is done in activate_layer_shell
 
             # 2. UI调整
             self.header_widget.hide()
             self.input_area.hide()
             self.danmaku_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            
+
             self.danmaku_list.setStyleSheet("""
                 QListWidget {
                     background: transparent;
@@ -1509,24 +1508,24 @@ class DanmakuWidget(QWidget):
                     border-radius: 8px;
                 }
             """)
-            
+
             # 3. 属性设置
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True) # 防止show()时触发activate导致日志警告
-            
+
             self.tray_icon.showMessage(
-                "Danmaku Overlay", 
-                "已进入穿透模式 (游戏覆盖)\n弹幕将显示在最顶层，鼠标操作将穿透。", 
-                QSystemTrayIcon.MessageIcon.Information, 
+                "Danmaku Overlay",
+                "已进入穿透模式 (游戏覆盖)\n弹幕将显示在最顶层，鼠标操作将穿透。",
+                QSystemTrayIcon.MessageIcon.Information,
                 2000
             )
         else:
             # --- 关闭穿透模式 (Normal Mode) ---
-            
+
             # 1. Normal Mode Flags
             # 不需要 X11Bypass，也不需要 TransparentForInput
             # 普通无边框窗口；在 GNOME Wayland 上，置顶 hint 可能被 compositor 忽略。
-            
+
             # 2. UI调整
             self.header_widget.show()
             self.input_area.show()
@@ -1535,17 +1534,17 @@ class DanmakuWidget(QWidget):
 
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
-        
+
         if has_layer_shell:
             # --- Wayland Layer Shell Mode ---
             # Do NOT call setWindowFlags or hide() as it recreates the window surface
             # and breaks the Layer Shell integration.
-            
+
             # Apply native input region changes
             try:
                 cpp_ptr = sip.unwrapinstance(self.windowHandle())
                 self.layer_shell_lib.set_passthrough(ctypes.c_void_p(cpp_ptr), enabled)
-                
+
                 # Toggle keyboard interactivity
                 # Enabled (Gaming Mode) -> No keyboard
                 # Disabled (Normal Mode) -> OnDemand keyboard
@@ -1557,27 +1556,27 @@ class DanmakuWidget(QWidget):
                 self.layout().activate()
                 self.danmaku_list.update()
                 self.update()
-                
+
             except Exception as e:
                 print(f"Failed to set Wayland passthrough: {e}")
-                
+
         else:
             # --- X11 / Standard Mode ---
             # Recreate window to apply flags (necessary for X11Bypass etc on XCB)
             self.hide()
             self.setWindowFlags(flags)
-            
+
             # 延迟执行显示操作
             # 切换 BypassWindowManagerHint 会导致 Native Window 销毁重建
             # 如果同步执行 show()，可能导致 X11 状态未同步而无法映射窗口
             def restore_window_state():
                 # 恢复位置 (在窗口重建后应用)
                 self.setGeometry(current_geo)
-                
+
                 # 显示并置顶
                 self.show()
                 self.raise_()
-                
+
                 if not enabled:
                     self.activateWindow()
 
@@ -1663,21 +1662,21 @@ class DanmakuWidget(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        
+
         # 1. 更新SizeGrip位置
         rect = self.rect()
         self.size_grip.move(
             rect.right() - self.size_grip.width(),
             rect.bottom() - self.size_grip.height()
         )
-        
+
         # 2. Debounced Layout Update
         if not self.is_gaming_mode:
             self._resize_timer.start()
 
     def mouseReleaseEvent(self, event):
         self._dragging = False
-        
+
         # [Message Buffering]
         # Process all types of messages
         if self._message_buffer:
@@ -1694,7 +1693,7 @@ class DanmakuWidget(QWidget):
         # Re-activate Layer Shell when shown to ensure overlay/input works
         # Delayed to ensure window is mapped
         QTimer.singleShot(100, self.activate_layer_shell)
-    
+
     def setup_danmaku_client(self):
         self.danmaku_client = None
 
@@ -1906,7 +1905,7 @@ class DanmakuWidget(QWidget):
                 await self._disconnect_current_room()
             except Exception:
                 return
-            
+
     def save_room_id(self):
         try:
             self.room_id = int(self.room_id_input.text())
@@ -2147,13 +2146,13 @@ class DanmakuWidget(QWidget):
     def on_login_success(self):
         """登录成功，提醒用户重连"""
         self.tray_icon.showMessage(
-            "登录成功", 
-            "B站账号已登录，将在下次连接时生效。", 
-            QSystemTrayIcon.MessageIcon.Information, 
+            "登录成功",
+            "B站账号已登录，将在下次连接时生效。",
+            QSystemTrayIcon.MessageIcon.Information,
             2000
         )
         self.add_system_message("登录成功！请断开并重新连接以应用新的登录信息。")
-        
+
         # 自动重连逻辑 (如果已连接)
         if self.danmaku_client and self.danmaku_client.session:
             # 简单处理：提示用户
@@ -2162,9 +2161,9 @@ class DanmakuWidget(QWidget):
     def on_login_failed(self, msg: str):
         """登录失效回调"""
         self.tray_icon.showMessage(
-            "登录失效", 
-            msg, 
-            QSystemTrayIcon.MessageIcon.Warning, 
+            "登录失效",
+            msg,
+            QSystemTrayIcon.MessageIcon.Warning,
             5000
         )
         self.add_system_message(msg, SystemMessageLevel.ERROR)
@@ -2173,11 +2172,11 @@ class DanmakuWidget(QWidget):
         """覆盖关闭事件：最小化到系统托盘，而不是退出程序"""
         event.ignore()
         self.hide()
-        
+
         # Reminder for user
         self.tray_icon.showMessage(
-            "Bilibili Danmaku", 
-            "程序已最小化到托盘运行", 
-            QSystemTrayIcon.MessageIcon.Information, 
+            "Bilibili Danmaku",
+            "程序已最小化到托盘运行",
+            QSystemTrayIcon.MessageIcon.Information,
             2000
         )
