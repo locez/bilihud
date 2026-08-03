@@ -5,9 +5,9 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QImage, QPixmap
 from PyQt6.QtWidgets import QDialog, QGraphicsDropShadowEffect, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from .auth import QR_LOGIN_STATUS_NAMES, AuthenticationService
-from .lifecycle import TaskScope, TaskSupervisor, cancel_task
-from .services import create_default_services
+from .app.lifecycle import TaskScope, TaskSupervisor, cancel_task
+from .app.services import create_default_services
+from .auth.service import QR_LOGIN_STATUS_NAMES, AuthenticationService
 
 logger = logging.getLogger(__name__)
 

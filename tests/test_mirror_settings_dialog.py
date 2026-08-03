@@ -4,7 +4,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QPushButton, QWidget
 
-from bilihud.mirror_coordinator import MirrorCoordinatorState
+from bilihud.app.mirror_coordinator import MirrorCoordinatorState
 from bilihud.mirror_settings_dialog import MirrorSettingsDialog
 
 

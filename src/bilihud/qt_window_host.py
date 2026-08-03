@@ -6,7 +6,7 @@ import PyQt6.sip as sip
 from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from .overlay_ports import WindowHost, WindowPoint, WindowPolicy, WindowRectangle
+from .platform.ports import WindowHost, WindowPoint, WindowPolicy, WindowRectangle
 
 
 class QtWindowHost(WindowHost):

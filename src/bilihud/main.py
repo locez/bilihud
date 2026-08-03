@@ -17,9 +17,9 @@ import qasync
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
+from .app.lifecycle import TaskSupervisor
+from .app.services import AppServices, create_default_services
 from .danmaku_widget import DanmakuWidget
-from .lifecycle import TaskSupervisor
-from .services import AppServices, create_default_services
 
 
 def configure_logging() -> None:
@@ -30,8 +30,8 @@ def configure_logging() -> None:
         stream=sys.stdout,
     )
     for logger_name in (
-        "bilihud.infrastructure.window_platform",
-        "bilihud.infrastructure.layer_shell",
+        "bilihud.platform.window_platform",
+        "bilihud.platform.layer_shell",
     ):
         logging.getLogger(logger_name).setLevel(logging.INFO)
 

@@ -8,7 +8,9 @@ from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication, QLabel, QWidget
 
 from bilihud import danmaku_widget
-from bilihud.domain.messages import (
+from bilihud.app.mirror_coordinator import MirrorCoordinatorState, MirrorOperationResult
+from bilihud.app.services import create_default_services
+from bilihud.danmaku.messages import (
     DanmakuMessage,
     GiftMessage,
     InteractionKind,
@@ -20,10 +22,9 @@ from bilihud.domain.messages import (
     TextSegment,
     make_system_message,
 )
-from bilihud.infrastructure.layer_shell import LayerShellAnchorDragStrategy
-from bilihud.live_emoticons import LiveEmoticon, LiveEmoticonPackage
-from bilihud.mirror_coordinator import MirrorCoordinatorState, MirrorOperationResult
-from bilihud.overlay_ports import (
+from bilihud.live.emoticons import LiveEmoticon, LiveEmoticonPackage
+from bilihud.platform.layer_shell import LayerShellAnchorDragStrategy
+from bilihud.platform.ports import (
     DragMode,
     DragStartResult,
     OverlayCapabilities,
@@ -31,7 +32,6 @@ from bilihud.overlay_ports import (
     WindowPoint,
     WindowRectangle,
 )
-from bilihud.services import create_default_services
 
 _QT_APP = None
 

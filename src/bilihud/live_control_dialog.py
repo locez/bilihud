@@ -22,7 +22,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .domain.live_control import (
+from .app.lifecycle import TaskScope, TaskSupervisor, cancel_task
+from .app.live_control_service import LiveControlService
+from .app.services import AppServices, create_default_services
+from .live.models import (
     LiveAreaGroup,
     LiveControlErrorCode,
     LiveControlSettings,
@@ -37,16 +40,13 @@ from .domain.live_control import (
     obs_check_button_state,
     room_action_enabled_state,
 )
-from .domain.live_control import (
+from .live.models import (
     obs_cleanup_after_stop_state as _obs_cleanup_after_stop_state,
 )
-from .domain.live_control import (
+from .live.models import (
     start_live_confirmation_needed as _start_live_confirmation_needed,
 )
-from .helpers import validate_room_id
-from .lifecycle import TaskScope, TaskSupervisor, cancel_task
-from .live_control_service import LiveControlService
-from .services import AppServices, create_default_services
+from .live.validation import validate_room_id
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .mirror_coordinator import MirrorCoordinatorState
+from .app.mirror_coordinator import MirrorCoordinatorState
 
 
 class MirrorSettingsDialog(QDialog):

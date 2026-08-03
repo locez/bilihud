@@ -44,15 +44,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .audience_widgets import AudiencePopup, AudienceStatusWidget
-from .auth import AuthenticationService
-from .config import ConfigStore
-from .danmaku_format import (
-    danmaku_author_badges_html,
-    danmaku_message_content_html,
-    danmaku_message_emoticon_urls,
-)
-from .domain.hud import (
+from .app.hud import (
     HudConnectionStatus,
     HudEvent,
     HudLoginFailed,
@@ -61,7 +53,19 @@ from .domain.hud import (
     HudState,
     HudStateChanged,
 )
-from .domain.messages import (
+from .app.hud_controller import HudController
+from .app.lifecycle import TaskScope, TaskSupervisor
+from .app.mirror_coordinator import MirrorCoordinator, MirrorOperationResult
+from .app.services import AppServices, create_default_services
+from .audience_widgets import AudiencePopup, AudienceStatusWidget
+from .auth.service import AuthenticationService
+from .config.store import ConfigStore
+from .danmaku.format import (
+    danmaku_author_badges_html,
+    danmaku_message_content_html,
+    danmaku_message_emoticon_urls,
+)
+from .danmaku.messages import (
     DanmakuMessage,
     GiftMessage,
     HudMessage,
@@ -70,18 +74,14 @@ from .domain.messages import (
     SystemMessageLevel,
     make_system_message,
 )
-from .hud_controller import HudController
-from .lifecycle import TaskScope, TaskSupervisor
-from .live_api import get_anchor_live_room_id
+from .danmaku.mock import mock_message_batch
+from .live.api import get_anchor_live_room_id
+from .live.emoticons import LiveEmoticon, LiveEmoticonPackage
 from .live_control_dialog import LiveControlDialog
-from .live_emoticons import LiveEmoticon, LiveEmoticonPackage
-from .mirror_coordinator import MirrorCoordinator, MirrorOperationResult
 from .mirror_settings_dialog import MirrorSettingsDialog
-from .mock_messages import mock_message_batch
-from .overlay_ports import DragMode, OverlayOperationResult, OverlayPlatform, WindowPoint
+from .platform.ports import DragMode, OverlayOperationResult, OverlayPlatform, WindowPoint
 from .qr_login_dialog import QRLoginDialog
 from .qt_window_host import QtWindowHost
-from .services import AppServices, create_default_services
 
 logger = logging.getLogger(__name__)
 

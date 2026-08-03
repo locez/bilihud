@@ -1,9 +1,7 @@
-from __future__ import annotations
+"""Compatibility export for the live-room validation contract."""
 
+from .live.validation import validate_room_id
 
-def validate_room_id(room_id: str | int) -> bool:
-    """Return whether a room identifier is a positive integer."""
-    try:
-        return int(room_id) > 0
-    except (TypeError, ValueError):
-        return False
+# TODO: remove this shim after downstream callers migrate to bilihud.live.validation.
+
+__all__ = ("validate_room_id",)

@@ -5,7 +5,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from bilihud.audience_widgets import AudiencePopup, AudienceStatusWidget
-from bilihud.live_audience import AudienceSnapshot, AudienceUser
+from bilihud.live.audience import AudienceSnapshot, AudienceUser
 
 _QT_APP = None
 
