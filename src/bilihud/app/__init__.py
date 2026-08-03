@@ -1,1 +1,1 @@
-"""Application-layer workflows, ports, lifecycle, and composition wiring."""
+"""Application-layer workflows, capability contracts, lifecycle, and wiring."""

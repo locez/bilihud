@@ -11,7 +11,7 @@ from typing import Protocol
 
 from .layer_shell_loader import find_layer_shell_library
 from .native import NativeFunction, load_native_function
-from .ports import (
+from .overlay_contracts import (
     DragMode,
     DragStartResult,
     OverlayCapabilities,
@@ -110,7 +110,7 @@ class LayerShellBridge(Protocol):
 
 
 class _CtypesLayerShellBridge:
-    """Translate the compiled bridge's ctypes ABI into the platform strategy port."""
+    """Translate the compiled bridge's ctypes ABI into the platform strategy capability."""
 
     def __init__(self, bindings: _LayerShellBindings) -> None:
         self._bindings = bindings

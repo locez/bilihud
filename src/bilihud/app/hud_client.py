@@ -1,4 +1,4 @@
-"""Infrastructure ports used by the HUD application controller."""
+"""HUD client capability required by the application controller."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ class HudClient(Protocol):
 
 
 class HudClientFactory(Protocol):
-    """Build one infrastructure client for an application-owned room session."""
+    """Build one client for an application-owned room session."""
 
     def __call__(
         self,

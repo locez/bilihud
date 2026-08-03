@@ -1,6 +1,6 @@
 """Toolkit-neutral overlay contracts and desktop platform adapters."""
 
-from .ports import (
+from .overlay_contracts import (
     DragMode,
     DragStartResult,
     OverlayCapabilities,

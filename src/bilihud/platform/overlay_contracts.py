@@ -173,7 +173,7 @@ class OverlayDragStrategy(Protocol):
 
 
 class OverlayPlatform(Protocol):
-    """Platform capability and lifecycle port used by the presentation widget."""
+    """Platform capability and lifecycle contract used by the presentation widget."""
 
     @property
     def capabilities(self) -> OverlayCapabilities:

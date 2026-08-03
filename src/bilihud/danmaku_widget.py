@@ -79,7 +79,7 @@ from .live.api import get_anchor_live_room_id
 from .live.emoticons import LiveEmoticon, LiveEmoticonPackage
 from .live_control_dialog import LiveControlDialog
 from .mirror_settings_dialog import MirrorSettingsDialog
-from .platform.ports import DragMode, OverlayOperationResult, OverlayPlatform, WindowPoint
+from .platform.overlay_contracts import DragMode, OverlayOperationResult, OverlayPlatform, WindowPoint
 from .qr_login_dialog import QRLoginDialog
 from .qt_window_host import QtWindowHost
 

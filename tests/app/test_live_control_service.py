@@ -114,7 +114,7 @@ class FakeConfigStore:
         return True
 
 
-class FakeSecrets:
+class FakeObsPasswordStore:
     def __init__(self) -> None:
         self.password: str | None = None
 
@@ -128,6 +128,8 @@ class FakeSecrets:
     def clear_obs_password(self) -> None:
         self.password = None
 
+
+class FakeQrImageGenerator:
     def generate_qr_image(self, url: str) -> BytesIO | None:
         return None
 
@@ -137,7 +139,8 @@ def make_service(api: FakeLiveApi, obs: FakeObs) -> LiveControlService:
         api=api,
         obs=obs,
         config_store=FakeConfigStore(),
-        secrets=FakeSecrets(),
+        obs_password_store=FakeObsPasswordStore(),
+        qr_image_generator=FakeQrImageGenerator(),
     )
 
 

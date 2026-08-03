@@ -188,7 +188,7 @@ def test_presentation_uses_configuration_and_authentication_boundaries() -> None
 
 
 def _assert_application_imports_allowed(relative_paths: tuple[str, ...]) -> None:
-    """Assert that application workflows depend on ports, not concrete adapters."""
+    """Assert that application workflows depend on capabilities, not adapters."""
     violations: list[str] = []
     for relative in relative_paths:
         path = _path(relative)
@@ -200,15 +200,23 @@ def _assert_application_imports_allowed(relative_paths: tuple[str, ...]) -> None
 
 
 def test_hud_application_keeps_concrete_network_and_presentation_outside_application() -> None:
-    _assert_application_imports_allowed(("app/hud_controller.py", "app/hud_ports.py"))
+    _assert_application_imports_allowed(("app/hud_controller.py", "app/hud_client.py"))
 
 
 def test_live_control_application_keeps_concrete_network_and_presentation_outside_application() -> None:
-    _assert_application_imports_allowed(("app/live_control_service.py", "app/live_control_ports.py"))
+    _assert_application_imports_allowed(
+        (
+            "app/live_control_service.py",
+            "app/live_control_api.py",
+            "app/obs_control.py",
+            "app/credential_store.py",
+            "app/verification.py",
+        )
+    )
 
 
 def test_mirror_application_keeps_http_and_presentation_outside_application() -> None:
-    _assert_application_imports_allowed(("app/mirror_coordinator.py", "app/mirror_ports.py"))
+    _assert_application_imports_allowed(("app/mirror_coordinator.py", "app/mirror_server.py"))
 
 
 def test_danmaku_widget_uses_hud_controller_instead_of_concrete_client() -> None:
@@ -218,17 +226,17 @@ def test_danmaku_widget_uses_hud_controller_instead_of_concrete_client() -> None
     assert "bilihud.danmaku.client" not in modules
 
 
-def test_danmaku_widget_uses_overlay_port_instead_of_platform_implementation() -> None:
+def test_danmaku_widget_uses_overlay_contracts_instead_of_platform_implementation() -> None:
     modules = _imported_modules(_path("danmaku_widget.py"))
 
-    assert "bilihud.platform.ports" in modules
+    assert "bilihud.platform.overlay_contracts" in modules
     assert "bilihud.platform.window_platform" not in modules
     assert "bilihud.platform.layer_shell_loader" not in modules
     assert "ctypes" not in modules
     assert "PyQt6.sip" not in modules
 
 
-def test_overlay_ports_do_not_import_toolkits_or_native_libraries() -> None:
-    modules = _imported_modules(_path("platform/ports.py"))
+def test_overlay_contracts_do_not_import_toolkits_or_native_libraries() -> None:
+    modules = _imported_modules(_path("platform/overlay_contracts.py"))
 
     assert all(module not in {"PyQt5", "PyQt6", "ctypes"} for module in modules)

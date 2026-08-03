@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from ..config.store import AppConfig, ConfigStore
 from ..danmaku.messages import HudMessage, SystemMessageLevel
 from ..mirror.state import MIRROR_DEFAULT_PORT, MIRROR_ROUTE, MirrorEntry, MirrorState
-from .mirror_ports import MirrorServerFactory, MirrorServerPort
+from .mirror_server import MirrorServer, MirrorServerFactory
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +63,7 @@ class MirrorCoordinator:
         self._server_factory: MirrorServerFactory = server_factory
         self._message_state: MirrorState = MirrorState()
         self._state: MirrorCoordinatorState = self._make_state(enabled=False, port=MIRROR_DEFAULT_PORT)
-        self._server: MirrorServerPort | None = None
+        self._server: MirrorServer | None = None
         self._operation_lock: asyncio.Lock = asyncio.Lock()
         self._shutting_down: bool = False
         self._shutdown_complete: bool = False

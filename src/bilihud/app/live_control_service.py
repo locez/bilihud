@@ -32,19 +32,16 @@ from ..live.models import (
     start_live_confirmation_needed,
 )
 from ..live.validation import validate_room_id
-from .live_control_ports import (
-    LiveControlApi,
-    LiveControlApiError,
-    LiveControlSecrets,
-    ObsAdapter,
-    ObsAdapterError,
-)
+from .credential_store import ObsPasswordStore
+from .live_control_api import LiveControlApi, LiveControlApiError
+from .obs_control import ObsAdapter, ObsAdapterError
+from .verification import QrImageGenerator
 
 logger = logging.getLogger(__name__)
 
 
 class LiveControlService:
-    """Own live-control session lifecycle and coordinate typed external ports."""
+    """Own live-control session lifecycle and coordinate typed capabilities."""
 
     def __init__(
         self,
@@ -52,13 +49,15 @@ class LiveControlService:
         api: LiveControlApi,
         obs: ObsAdapter,
         config_store: ConfigStore,
-        secrets: LiveControlSecrets,
+        obs_password_store: ObsPasswordStore,
+        qr_image_generator: QrImageGenerator,
     ) -> None:
-        """Create a service whose network, OBS, and secret ownership is explicit."""
+        """Create a service with explicit API, OBS, storage, and verification capabilities."""
         self._api = api
         self._obs = obs
         self._config_store = config_store
-        self._secrets = secrets
+        self._obs_password_store: ObsPasswordStore = obs_password_store
+        self._qr_image_generator: QrImageGenerator = qr_image_generator
         self._state = LiveControlState()
         self._generation = 0
         self._operation_gate = asyncio.Lock()
@@ -80,7 +79,7 @@ class LiveControlService:
     def load_settings(self) -> LiveControlSettings:
         """Load typed form defaults and the OBS password through their boundaries."""
         config = self._config_store.load()
-        password = self._secrets.load_obs_password()
+        password = self._obs_password_store.load_obs_password()
         return LiveControlSettings(
             room_id=config.room_id,
             live_title=config.live_title,
@@ -105,9 +104,9 @@ class LiveControlService:
         )
         config_saved = self._config_store.save(config)
         if settings.obs_password:
-            secret_saved = self._secrets.save_obs_password(settings.obs_password)
+            secret_saved = self._obs_password_store.save_obs_password(settings.obs_password)
         else:
-            self._secrets.clear_obs_password()
+            self._obs_password_store.clear_obs_password()
             secret_saved = True
         if config_saved and secret_saved:
             return SettingsSaveOutcome(success=True)
@@ -120,8 +119,8 @@ class LiveControlService:
         )
 
     def generate_qr_image(self, url: str) -> BytesIO | None:
-        """Generate verification QR bytes through the injected secret boundary."""
-        return self._secrets.generate_qr_image(url)
+        """Generate verification QR bytes through the injected image generator."""
+        return self._qr_image_generator.generate_qr_image(url)
 
     async def initialize(self, room_id: int | None) -> LiveControlOperationResult:
         """Open the session, load areas, and optionally load the selected room."""

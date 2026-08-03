@@ -1,4 +1,4 @@
-"""Qt presentation adapter for the toolkit-neutral overlay window port."""
+"""Qt presentation adapter for the toolkit-neutral overlay window contract."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import PyQt6.sip as sip
 from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from .platform.ports import WindowHost, WindowPoint, WindowPolicy, WindowRectangle
+from .platform.overlay_contracts import WindowHost, WindowPoint, WindowPolicy, WindowRectangle
 
 
 class QtWindowHost(WindowHost):

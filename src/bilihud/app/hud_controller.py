@@ -24,7 +24,7 @@ from .hud import (
     HudState,
     HudStateChanged,
 )
-from .hud_ports import HudClient, HudClientFactory
+from .hud_client import HudClient, HudClientFactory
 from .lifecycle import TaskScope, TaskSupervisor, cancel_task
 
 logger = logging.getLogger(__name__)

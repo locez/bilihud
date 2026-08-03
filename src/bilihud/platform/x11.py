@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 
 from .native import NativeFunction, load_native_function
-from .ports import OverlayOperationResult
+from .overlay_contracts import OverlayOperationResult
 
 
 class X11InputShape:

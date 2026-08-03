@@ -1,4 +1,4 @@
-"""Ports separating Mirror application coordination from its HTTP adapter."""
+"""Mirror server capability required by the application coordinator."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Protocol
 from ..mirror.state import MirrorEntry, MirrorState
 
 
-class MirrorServerPort(Protocol):
+class MirrorServer(Protocol):
     """HTTP capability required by the Mirror application coordinator."""
 
     @property
@@ -29,11 +29,11 @@ class MirrorServerPort(Protocol):
 
 
 class MirrorServerFactory(Protocol):
-    """Build one infrastructure server around coordinator-owned state."""
+    """Build one server around coordinator-owned state."""
 
-    def __call__(self, state: MirrorState, *, port: int) -> MirrorServerPort:
+    def __call__(self, state: MirrorState, *, port: int) -> MirrorServer:
         """Create a stopped server without performing network I/O."""
         ...
 
 
-__all__ = ("MirrorServerFactory", "MirrorServerPort")
+__all__ = ("MirrorServer", "MirrorServerFactory")

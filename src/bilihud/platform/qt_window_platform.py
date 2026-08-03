@@ -6,7 +6,7 @@ import logging
 
 from PyQt6.QtCore import QTimer
 
-from .ports import (
+from .overlay_contracts import (
     DragMode,
     DragStartResult,
     OverlayCapabilities,

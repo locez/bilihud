@@ -18,7 +18,7 @@ from .layer_shell import (
     load_layer_shell_bridge,
 )
 from .layer_shell_loader import should_disable_layer_shell
-from .ports import (
+from .overlay_contracts import (
     OverlayDragStrategy,
     OverlayPlatform,
     WindowHost,

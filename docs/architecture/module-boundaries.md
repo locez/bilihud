@@ -8,17 +8,17 @@ not a list of current migration tasks.
 
 The repository uses feature-first packages. A feature owns its pure contracts,
 parsers, and concrete external adapters; the application package coordinates
-those features through typed ports.
+those features through typed capability contracts.
 
 ```text
 bilihud/
-  app/             application workflows, ports, lifecycle, composition wiring
+  app/             application workflows, capability contracts, lifecycle, composition wiring
   auth/            authentication and secure session storage
   config/          typed settings, persistence, and legacy migration
   danmaku/         message contracts, formatting, blivedm adapter, client
   live/            live-room models, parsing, Bilibili/OBS adapters, validation
   mirror/          mirror state, serialization, and HTTP server
-  platform/        overlay ports and desktop/native window adapters
+  platform/        overlay contracts and desktop/native window adapters
   *.py             Qt presentation and process entry points (T10 scope)
 ```
 
@@ -30,7 +30,7 @@ whose external contract it implements.
 
 `app/services.py` is the composition root exception: it is allowed to import
 concrete adapters so one object graph can be assembled. Application workflows
-and ports under `app/` must remain independent from those implementations.
+and capability contracts under `app/` must remain independent from those implementations.
 The Qt presentation files remain at the package root until T10 decides whether
 they need a dedicated `presentation/` package.
 
@@ -39,9 +39,9 @@ they need a dedicated `presentation/` package.
 | Layer | Owns | May depend on | Must not depend on |
 | --- | --- | --- | --- |
 | Presentation | Widgets, dialogs, input binding, rendering | Application contracts, feature values, Qt | Concrete network clients, persistence, platform implementation details |
-| Application | Use cases, workflow coordination, lifecycle ownership, ports | Feature contracts and standard library | Presentation code and concrete adapters |
+| Application | Use cases, workflow coordination, lifecycle ownership, capability contracts | Feature contracts and standard library | Presentation code and concrete adapters |
 | Feature contracts | Typed values, states, events, errors, pure parsing rules | Python standard library and other stable feature contracts | Qt, network libraries, persistence, platform APIs, raw third-party models |
-| Feature adapters | Network, persistence, platform, and third-party integrations | Feature contracts, application ports, external libraries | Presentation decisions and UI state |
+| Feature adapters | Network, persistence, platform, and third-party integrations | Feature contracts, application capability contracts, external libraries | Presentation decisions and UI state |
 
 Dependencies should point toward stable contracts and business meaning. The
 package name must make the owner apparent; a new module must not be added to the
@@ -58,17 +58,19 @@ root merely because it is convenient.
   messages and must not import `blivedm` models directly.
 - `app.hud` owns HUD workflow state/events; `app.hud_controller` owns room
   transitions, audience refresh tasks, normalized send commands, and shutdown.
-  `app.hud_ports` defines the injected client capability.
+  `app.hud_client` defines the injected client capability.
 - `app.live_control_service` owns live-control workflow state transitions and
-  operation lifecycles. `app.live_control_ports` defines the Bilibili, OBS, and
-  secure-secret capabilities. `live.models` contains the live-control values
-  and outcome types; `live.adapters` connects those ports to HTTP and OBS.
+  operation lifecycles. `app.live_control_api` defines the Bilibili capability;
+  `app.obs_control` defines the OBS capability; `app.credential_store` owns the
+  OBS password storage contract; and `app.verification` defines QR-image
+  generation. `live.models` contains the live-control values and outcome types;
+  `live.adapters` connects the API and OBS contracts to external services.
 - `app.mirror_coordinator` owns Mirror configuration, history, server lifecycle,
-  and typed operation results. `app.mirror_ports` injects the HTTP capability;
+  and typed operation results. `app.mirror_server` injects the HTTP capability;
   `mirror.server` only serves coordinator-owned state and applies the image
   proxy allowlist, DNS address checks, redirect policy, and response limits.
-- `platform.ports` owns toolkit-neutral window geometry, capability, result,
-  and drag-strategy contracts. `platform.window_platform`,
+- `platform.overlay_contracts` owns toolkit-neutral window geometry, capability,
+  result, and drag-strategy contracts. `platform.window_platform`,
   `platform.qt_window_platform`, `platform.layer_shell`, `platform.x11`, and
   `platform.native` isolate desktop integrations. `qt_window_host` is the Qt
   presentation binding for those contracts.

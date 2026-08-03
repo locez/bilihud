@@ -8,7 +8,8 @@ from typing import TypeVar
 
 import aiohttp
 
-from ..app.live_control_ports import LiveControlApiError, ObsAdapterError
+from ..app.live_control_api import LiveControlApiError
+from ..app.obs_control import ObsAdapterError
 from ..auth.service import AuthenticationService
 from .api import (
     LiveApiError,
@@ -40,7 +41,7 @@ Result = TypeVar("Result")
 
 
 class BilibiliLiveControlApi:
-    """Adapt the existing Bilibili HTTP functions to the live-control port."""
+    """Adapt the existing Bilibili HTTP functions to the live-control capability."""
 
     def __init__(self, auth_service: AuthenticationService) -> None:
         """Create an adapter with an explicit owner for authenticated sessions."""
@@ -131,7 +132,7 @@ class BilibiliLiveControlApi:
 
 
 class ObsWebSocketAdapter:
-    """Adapt the concrete OBS WebSocket client to the typed OBS port."""
+    """Adapt the concrete OBS WebSocket client to the typed OBS capability."""
 
     async def check_connection(self, settings: ObsSettings) -> None:
         """Check one OBS endpoint and normalize its expected failures."""

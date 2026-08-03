@@ -7,7 +7,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 
 from bilihud.platform import qt_window_platform, window_platform
-from bilihud.platform.ports import (
+from bilihud.platform.overlay_contracts import (
     DragMode,
     OverlayOperationResult,
     WindowPoint,

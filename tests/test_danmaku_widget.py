@@ -24,7 +24,7 @@ from bilihud.danmaku.messages import (
 )
 from bilihud.live.emoticons import LiveEmoticon, LiveEmoticonPackage
 from bilihud.platform.layer_shell import LayerShellAnchorDragStrategy
-from bilihud.platform.ports import (
+from bilihud.platform.overlay_contracts import (
     DragMode,
     DragStartResult,
     OverlayCapabilities,
