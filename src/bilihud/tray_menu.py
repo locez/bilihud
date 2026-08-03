@@ -85,8 +85,13 @@ class TrayMenu(QMenu):
                 padding: 6px;
             }}
             QMenu::item {{
-                padding: 8px 24px 8px 12px;
+                padding: 8px 14px 8px 8px;
                 border-radius: 5px;
+            }}
+            QMenu::indicator {{
+                width: 14px;
+                height: 14px;
+                margin: 0 4px 0 0;
             }}
             QMenu::item:selected {{
                 background-color: {hover};
