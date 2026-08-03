@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from bilihud.config.compat import LegacyConfigMigrator
-from bilihud.config.store import AppConfig, JsonConfigStore
+from bilihud.config.store import AppConfig, JsonConfigStore, ThemeMode
 
 
 class FakeSecretStore:
@@ -33,6 +33,8 @@ def test_json_config_store_persists_typed_non_sensitive_settings(tmp_path: Path)
         mirror_port=2233,
         obs_host="localhost",
         obs_port=4455,
+        theme=ThemeMode.DARK,
+        window_opacity=65,
     )
 
     assert store.save(config) is True
@@ -41,6 +43,8 @@ def test_json_config_store_persists_typed_non_sensitive_settings(tmp_path: Path)
     serialized = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert serialized["version"] == 1
     assert serialized["obs_port"] == 4455
+    assert serialized["theme"] == "dark"
+    assert serialized["window_opacity"] == 65
     assert "obs_password" not in serialized
 
 
@@ -79,6 +83,8 @@ def test_json_config_store_uses_defaults_for_invalid_external_values(tmp_path: P
                 "mirror_enabled": "yes",
                 "obs_host": "",
                 "obs_port": 70000,
+                "theme": "neon",
+                "window_opacity": 120,
             }
         ),
         encoding="utf-8",
@@ -87,3 +93,8 @@ def test_json_config_store_uses_defaults_for_invalid_external_values(tmp_path: P
     config = make_store(config_path, FakeSecretStore()).load()
 
     assert config == AppConfig()
+
+
+def test_app_config_accepts_the_supported_low_opacity_boundary() -> None:
+    assert AppConfig.from_mapping({"window_opacity": 20}).window_opacity == 20
+    assert AppConfig.from_mapping({"window_opacity": 19}).window_opacity == 80

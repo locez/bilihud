@@ -15,6 +15,7 @@ from ..live.models import (
     LiveControlSettings,
     LiveControlState,
     LiveSessionInfo,
+    LiveVerificationKind,
     ObsCheckOutcome,
     ObsSettings,
     ObsStreamOutcome,
@@ -335,6 +336,11 @@ class LiveControlService:
                     self._state,
                     error=error,
                     verification_url=response.verification_url,
+                    verification_kind=(
+                        LiveVerificationKind.FACE
+                        if response.code == 60043
+                        else LiveVerificationKind.QR
+                    ),
                     notice=notice,
                 )
             if response.code != 0:

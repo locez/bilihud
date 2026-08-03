@@ -1,13 +1,12 @@
 import asyncio
 import html
 import logging
-import os
 from collections.abc import Coroutine
+from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import QPoint, QSize, Qt, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
-    QAction,
     QBrush,
     QCloseEvent,
     QColor,
@@ -32,7 +31,6 @@ from PyQt6.QtWidgets import (
     QListView,
     QListWidget,
     QListWidgetItem,
-    QMenu,
     QPushButton,
     QScrollArea,
     QStyledItemDelegate,
@@ -55,11 +53,18 @@ from .app.hud import (
 )
 from .app.hud_controller import HudController
 from .app.lifecycle import TaskScope, TaskSupervisor
+from .app.menu import AccountStatus, MenuCommand, TrayMenuState
 from .app.mirror_coordinator import MirrorCoordinator, MirrorOperationResult
 from .app.services import AppServices, create_default_services
+from .appearance import resolve_appearance
 from .audience_widgets import AudiencePopup, AudienceStatusWidget
-from .auth.service import AuthenticationService
-from .config.store import ConfigStore
+from .auth.service import (
+    AccountLookupResult,
+    AccountLookupStatus,
+    AccountProfile,
+    AuthenticationService,
+)
+from .config.store import AppConfig, ConfigStore
 from .danmaku.format import (
     danmaku_author_badges_html,
     danmaku_message_content_html,
@@ -77,13 +82,18 @@ from .danmaku.messages import (
 from .danmaku.mock import mock_message_batch
 from .live.api import get_anchor_live_room_id
 from .live.emoticons import LiveEmoticon, LiveEmoticonPackage
-from .live_control_dialog import LiveControlDialog
-from .mirror_settings_dialog import MirrorSettingsDialog
 from .platform.overlay_contracts import DragMode, OverlayOperationResult, OverlayPlatform, WindowPoint
 from .qr_login_dialog import QRLoginDialog
 from .qt_window_host import QtWindowHost
+from .settings_dialog import SettingsDialog, SettingsPage, SettingsSaveRequest
+from .tray_menu import TrayMenu
 
 logger = logging.getLogger(__name__)
+
+
+def _opacity_to_alpha(opacity: int) -> int:
+    """Convert a validated percentage into the HUD background alpha channel."""
+    return max(0, min(255, round(255 * opacity / 100)))
 
 
 class ModernInputWidget(QWidget):
@@ -689,17 +699,26 @@ class DanmakuWidget(QWidget):
         self.config_store: ConfigStore = self.services.config_store  # Typed settings boundary.
         self.auth_service: AuthenticationService = self.services.auth_service  # Shared auth boundary.
         self.mirror_coordinator: MirrorCoordinator = self.services.mirror_coordinator
-        self._live_control_dialog: LiveControlDialog | None = None  # Reused live-control dialog owner.
-        self._mirror_settings_dialog: MirrorSettingsDialog | None = None  # Reused Mirror settings owner.
         self._qr_login_dialog: QRLoginDialog | None = None  # Active modal QR-login dialog, if any.
-        self.is_gaming_mode = False
+        self.is_gaming_mode: bool = False
+        self._account_status: AccountStatus = AccountStatus.UNKNOWN
+        self._account_profile: AccountProfile | None = None  # Normalized identity shown in settings.
+        self._account_refresh_task: asyncio.Task[None] | None = None  # Owned account identity lookup.
+        self._account_refresh_generation = 0  # Invalidates stale identity responses after session changes.
+        self._account_refresh_pending = False  # Queues one refresh after an in-flight lookup completes.
         self._window_host: QtWindowHost = QtWindowHost(self)
         self.overlay_platform: OverlayPlatform = self.services.overlay_platform_factory(self._window_host)
         prepare_result = self.overlay_platform.prepare()
         if not prepare_result.succeeded:
             logger.warning("Platform window preparation failed: %s", prepare_result.reason)
-        config = self.config_store.load()
+        config: AppConfig = self.config_store.load()
+        self._app_config: AppConfig = config
+        self._hud_background_alpha = _opacity_to_alpha(config.window_opacity)
+        self._settings_dialog: SettingsDialog | None = None  # Reused detailed settings owner.
+        if config.room_id is not None:
+            self.room_id = config.room_id
         self.mirror_coordinator.apply_config(config)
+        self._hud_state: HudState = HudState(room_id=self.room_id)
 
         # [Performance] Resize Debounce Timer
         self._resize_timer = QTimer(self)
@@ -712,10 +731,6 @@ class DanmakuWidget(QWidget):
         self.setup_tray_icon()
         self.update_gaming_mode_availability()
 
-        # 加载保存的配置
-        if config.room_id is not None:
-            self.room_id = config.room_id
-
         self.hud_controller: HudController = HudController(
             initial_room_id=self.room_id,
             sessdata=self.sessdata,
@@ -724,7 +739,7 @@ class DanmakuWidget(QWidget):
             config_store=self.config_store,
             task_scope=self._task_scope.child("hud-controller"),
         )
-        self._hud_state: HudState = self.hud_controller.state
+        self._hud_state = self.hud_controller.state
         self.hud_controller.subscribe(self._on_hud_event)
 
         # 初始化房间号
@@ -740,6 +755,7 @@ class DanmakuWidget(QWidget):
             return
         result = await self.mirror_coordinator.start()
         self._apply_mirror_result(result)
+        self._schedule_account_refresh()
 
     def _create_action_task(
         self,
@@ -756,6 +772,72 @@ class DanmakuWidget(QWidget):
     def _discard_action_task(self, task: asyncio.Task[Any]) -> None:
         """Remove a completed Qt-triggered workflow from the widget registry."""
         self._action_tasks.discard(task)
+
+    def _schedule_account_refresh(self) -> None:
+        """Refresh the saved account identity under the widget's task owner."""
+        if self._shutting_down:
+            return
+        task = self._account_refresh_task
+        if task is not None and not task.done():
+            self._account_refresh_pending = True
+            return
+        self._account_refresh_pending = False
+        generation = self._account_refresh_generation
+        self._account_status = AccountStatus.UNKNOWN
+        self._account_profile = None
+        self._publish_account_state()
+        task = self._create_action_task(
+            self._refresh_account_state(generation),
+            name="refresh-account",
+        )
+        self._account_refresh_task = task
+        task.add_done_callback(self._clear_account_refresh_task)
+
+    def _clear_account_refresh_task(self, task: asyncio.Task[Any]) -> None:
+        """Release the account refresh handle after its owned task completes."""
+        if self._account_refresh_task is task:
+            self._account_refresh_task = None
+            if self._account_refresh_pending and not self._shutting_down:
+                self._schedule_account_refresh()
+
+    async def _refresh_account_state(self, generation: int) -> None:
+        """Resolve account identity and map the auth result into presentation state."""
+        try:
+            result = await self.auth_service.lookup_account()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("Failed to refresh account identity: %s", exc)
+            if generation != self._account_refresh_generation:
+                return
+            self._account_status = AccountStatus.UNAVAILABLE
+            self._account_profile = None
+        else:
+            if generation != self._account_refresh_generation:
+                return
+            self._apply_account_lookup(result)
+        self._publish_account_state()
+
+    def _apply_account_lookup(self, result: AccountLookupResult) -> None:
+        """Convert the authentication boundary result into menu and settings state."""
+        if result.status is AccountLookupStatus.AUTHENTICATED:
+            self._account_status = AccountStatus.LOGGED_IN
+            self._account_profile = result.profile
+        elif result.status is AccountLookupStatus.NO_SESSION:
+            self._account_status = AccountStatus.LOGGED_OUT
+            self._account_profile = None
+        elif result.status is AccountLookupStatus.INVALID:
+            self._account_status = AccountStatus.LOGIN_EXPIRED
+            self._account_profile = None
+        else:
+            self._account_status = AccountStatus.UNAVAILABLE
+            self._account_profile = None
+
+    def _publish_account_state(self) -> None:
+        """Push the normalized account state to every presentation surface."""
+        self.update_tray_menu_state()
+        if self._settings_dialog is not None:
+            self._settings_dialog.set_account_state(self._account_status, self._account_profile)
 
     async def _cancel_action_tasks(self) -> None:
         """Cancel and await Qt-triggered workflows before closing their resources."""
@@ -799,14 +881,18 @@ class DanmakuWidget(QWidget):
         self.setWindowTitle("Danmaku Overlay")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
+    def _apply_hud_opacity(self, opacity: int) -> None:
+        """Apply the configured opacity to the HUD background layer."""
+        self._hud_background_alpha = _opacity_to_alpha(opacity)
+        self.update()
+
     def paintEvent(self, event):
         """自定义绘制背景，实现轻微的渐变面板效果 (非穿透模式下)"""
         if not self.is_gaming_mode:
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-            # 使用半透明黑色背景
-            painter.setBrush(QBrush(QColor(0, 0, 0, 120)))
+            painter.setBrush(QBrush(QColor(0, 0, 0, self._hud_background_alpha)))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(self.rect(), 8, 8)
             super().paintEvent(event)
@@ -1012,76 +1098,68 @@ class DanmakuWidget(QWidget):
         """
         pass
 
-    def setup_tray_icon(self):
-        """初始化系统托盘图标"""
+    def setup_tray_icon(self) -> None:
+        """Create the tray surface and bind it to typed command requests."""
         self.tray_icon = QSystemTrayIcon(self)
-
-        # 加载图标
-        icon_path = os.path.join(os.path.dirname(__file__), 'assets', 'icon.png')
-        if os.path.exists(icon_path):
-            icon = QIcon(icon_path)
+        icon_path = Path(__file__).parent / "assets" / "icon.png"
+        if icon_path.exists():
+            icon = QIcon(str(icon_path))
             self.tray_icon.setIcon(icon)
             self.setWindowIcon(icon)
         else:
-            print(f"Icon not found at {icon_path}")
+            logger.warning("Icon not found at %s", icon_path)
 
-        # 创建托盘菜单
-        tray_menu = QMenu()
-        tray_menu.setStyleSheet("""
-            QMenu {
-                background-color: #2b2b2b;
-                color: #ffffff;
-                border: 1px solid #3d3d3d;
-            }
-            QMenu::item {
-                padding: 5px 20px;
-            }
-            QMenu::item:selected {
-                background-color: #3d3d3d;
-            }
-        """)
-
-        self.tray_send_action = QAction("发送弹幕", self)
-        self.tray_send_action.triggered.connect(self.open_input_dialog)
-        tray_menu.addAction(self.tray_send_action)
-
-        tray_menu.addSeparator()
-
-        self.tray_toggle_action = QAction("显示/隐藏", self)
-        self.tray_toggle_action.triggered.connect(self.toggle_visibility)
-        tray_menu.addAction(self.tray_toggle_action)
-
-        self.tray_gaming_action = QAction("锁定穿透 (游戏模式)", self)
-        self.tray_gaming_action.setCheckable(True)
-        self.tray_gaming_action.triggered.connect(self.toggle_gaming_mode_from_tray)
-        tray_menu.addAction(self.tray_gaming_action)
-
-        tray_menu.addSeparator()
-
-        self.tray_login_action = QAction("扫码登录", self)
-        self.tray_login_action.triggered.connect(self.open_qr_login)
-        tray_menu.addAction(self.tray_login_action)
-
-        self.tray_live_control_action = QAction("直播控制", self)
-        self.tray_live_control_action.triggered.connect(self.open_live_control)
-        tray_menu.addAction(self.tray_live_control_action)
-
-        self.tray_mirror_action = QAction("BiliHUD Mirror", self)
-        self.tray_mirror_action.triggered.connect(self.open_mirror_settings)
-        tray_menu.addAction(self.tray_mirror_action)
-
-        self.tray_mock_action = QAction("弹幕模拟", self)
-        self.tray_mock_action.triggered.connect(self.trigger_danmaku_simulation)
-        tray_menu.addAction(self.tray_mock_action)
-
-        quit_action = QAction("退出程序", self)
-        quit_action.triggered.connect(self.quit_app)
-        tray_menu.addAction(quit_action)
-
-        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_menu = TrayMenu(self)
+        self.tray_menu.command_requested.connect(self._handle_menu_command)
+        self.tray_send_action = self.tray_menu.action_for(MenuCommand.SEND_DANMAKU)
+        self.tray_toggle_action = self.tray_menu.action_for(MenuCommand.TOGGLE_VISIBILITY)
+        self.tray_gaming_action = self.tray_menu.action_for(MenuCommand.TOGGLE_GAMING_MODE)
+        self.tray_login_action = self.tray_menu.action_for(MenuCommand.OPEN_LOGIN)
+        self.tray_live_settings_action = self.tray_menu.action_for(MenuCommand.OPEN_LIVE_SETTINGS)
+        self.tray_mirror_settings_action = self.tray_menu.action_for(MenuCommand.OPEN_MIRROR_SETTINGS)
+        self.tray_settings_action = self.tray_menu.action_for(MenuCommand.OPEN_SETTINGS)
+        self.tray_icon.setContextMenu(self.tray_menu)
         self.tray_icon.show()
-
         self.tray_icon.activated.connect(self.on_tray_activated)
+        self.update_tray_menu_state()
+
+    def _tray_menu_state(self) -> TrayMenuState:
+        """Build the complete tray snapshot from current presentation and coordinator state."""
+        capabilities = self.overlay_platform.capabilities
+        return TrayMenuState(
+            visible=self.isVisible(),
+            hud_connection=self._hud_state.connection,
+            account_status=self._account_status,
+            gaming_mode=self.is_gaming_mode,
+            gaming_mode_available=capabilities.gaming_mode,
+            gaming_mode_reason=capabilities.unavailable_reason,
+            mirror_status=self.mirror_coordinator.state.status_text,
+        )
+
+    def update_tray_menu_state(self) -> None:
+        """Refresh tray labels and check states from one immutable application snapshot."""
+        self.tray_menu.set_state(self._tray_menu_state())
+        if self._settings_dialog is not None:
+            self._settings_dialog.set_mirror_status(self.mirror_coordinator.state.status_text)
+
+    def _handle_menu_command(self, command: MenuCommand, checked: bool = False) -> None:
+        """Route a tray command to an existing owner method without UI-side business logic."""
+        if command is MenuCommand.SEND_DANMAKU:
+            self.open_input_dialog()
+        elif command is MenuCommand.TOGGLE_VISIBILITY:
+            self.toggle_visibility()
+        elif command is MenuCommand.TOGGLE_GAMING_MODE:
+            self.toggle_gaming_mode_from_tray(checked)
+        elif command is MenuCommand.OPEN_LOGIN:
+            self.open_qr_login()
+        elif command is MenuCommand.OPEN_LIVE_SETTINGS:
+            self.open_settings(SettingsPage.LIVE)
+        elif command is MenuCommand.OPEN_MIRROR_SETTINGS:
+            self.open_settings(SettingsPage.MIRROR)
+        elif command is MenuCommand.OPEN_SETTINGS:
+            self.open_settings(SettingsPage.GENERAL)
+        elif command is MenuCommand.QUIT:
+            self.quit_app()
 
     def add_system_message(
         self,
@@ -1099,17 +1177,31 @@ class DanmakuWidget(QWidget):
         """Bind platform capability state to both the window and tray controls."""
         available = self.is_gaming_mode_available()
         self.gaming_mode_btn.setEnabled(available)
-        self.tray_gaming_action.setEnabled(available)
         if not available:
             self.gaming_mode_btn.setText("穿透不可用")
             self.gaming_mode_btn.setChecked(False)
-            self.tray_gaming_action.setChecked(False)
             reason = self.overlay_platform.capabilities.unavailable_reason
             if reason is None:
                 reason = "当前平台不支持"
             tooltip = f"游戏模式不可用: {reason}\n当前仍可使用普通窗口模式。"
             self.gaming_mode_btn.setToolTip(tooltip)
-            self.tray_gaming_action.setToolTip(tooltip)
+        else:
+            self.gaming_mode_btn.setText("锁定穿透")
+            self.gaming_mode_btn.setToolTip("")
+        self.update_tray_menu_state()
+
+    async def _ensure_live_control_room(self) -> int:
+        """Resolve the authenticated anchor room for compatibility callers."""
+        session = None
+        try:
+            session, _from_keyring = await self.auth_service.create_authenticated_session()
+            anchor_room_id = await get_anchor_live_room_id(session)
+        finally:
+            if session is not None and not session.closed:
+                await session.close()
+
+        await self.hud_controller.connect(anchor_room_id)
+        return anchor_room_id
 
     async def _send_danmaku_task(self, text: str):
         """Execute a text-send command through the application controller."""
@@ -1186,6 +1278,7 @@ class DanmakuWidget(QWidget):
         else:
             self.show()
             self.activateWindow()
+        self.update_tray_menu_state()
 
     async def shutdown(self) -> None:
         """Stop widget-owned workflows and release their network resources."""
@@ -1197,13 +1290,13 @@ class DanmakuWidget(QWidget):
         try:
             await self._cancel_action_tasks()
 
-            live_control_dialog = self._live_control_dialog
-            if live_control_dialog is not None:
+            settings_dialog = self._settings_dialog
+            if settings_dialog is not None:
                 try:
-                    await live_control_dialog.shutdown()
-                    live_control_dialog.close()
+                    await settings_dialog.shutdown()
+                    settings_dialog.close()
                 except Exception as exc:
-                    logger.exception("Failed to close live control dialog")
+                    logger.exception("Failed to close settings dialog")
                     shutdown_errors.append(exc)
 
             qr_login_dialog = self._qr_login_dialog
@@ -1216,10 +1309,6 @@ class DanmakuWidget(QWidget):
                     shutdown_errors.append(exc)
                 else:
                     self._qr_login_dialog = None
-
-            mirror_settings_dialog = self._mirror_settings_dialog
-            if mirror_settings_dialog is not None:
-                mirror_settings_dialog.close()
 
             try:
                 await self.hud_controller.shutdown()
@@ -1335,6 +1424,7 @@ class DanmakuWidget(QWidget):
             self.danmaku_list.setStyleSheet("background: transparent; border: none;")
 
         self._sync_audience_visibility()
+        self.update_tray_menu_state()
         return result
 
     # --- 鼠标拖拽移动窗口逻辑 ---
@@ -1395,6 +1485,7 @@ class DanmakuWidget(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.update_tray_menu_state()
         # Re-activate Layer Shell when shown to ensure overlay/input works
         # Delayed to ensure window is mapped
         QTimer.singleShot(100, self.activate_layer_shell)
@@ -1448,6 +1539,7 @@ class DanmakuWidget(QWidget):
             self.audience_status.set_snapshot(snapshot)
             self.audience_popup.set_snapshot(snapshot)
         self._sync_audience_visibility()
+        self.update_tray_menu_state()
 
     def _set_connecting_ui(self):
         self.connect_button.setText("连接中...")
@@ -1545,71 +1637,60 @@ class DanmakuWidget(QWidget):
 
         self.mirror_coordinator.publish_message(message)
 
-    async def _ensure_live_control_room(self) -> int:
-        """Resolve the authenticated anchor room and close the temporary session."""
-        session = None
-        try:
-            session, _from_keyring = await self.auth_service.create_authenticated_session()
-            anchor_room_id = await get_anchor_live_room_id(session)
-        finally:
-            if session is not None and not session.closed:
-                await session.close()
-
-        await self.hud_controller.connect(anchor_room_id)
-        return anchor_room_id
-
-    @pyqtSlot()
-    def open_live_control(self) -> asyncio.Task[None] | None:
-        """Schedule opening the live control dialog under the widget owner."""
-        if self._shutting_down:
-            return None
-        return self._create_action_task(
-            self._open_live_control(),
-            name="open-live-control",
-        )
-
-    async def _open_live_control(self) -> None:
-        """打开直播控制窗口"""
+    def open_settings(self, page: SettingsPage = SettingsPage.GENERAL) -> None:
+        """Open the unified settings window on the requested detail page."""
         if self._shutting_down:
             return
-        try:
-            anchor_room_id = await self._ensure_live_control_room()
-        except Exception as e:
-            self.add_system_message(f"无法打开直播控制: {e}", SystemMessageLevel.ERROR)
-            print(f"Open live control failed: {e}")
-            return
-        if self._shutting_down:
-            return
-
-        if self._live_control_dialog is None:
-            self._live_control_dialog = LiveControlDialog(
+        if self._settings_dialog is None:
+            dialog = SettingsDialog(
                 self,
+                self._app_config,
                 services=self.services,
-                task_scope=self._task_scope.child("live-control"),
+                task_scope=self._task_scope,
             )
-            self._live_control_dialog.live_status_changed.connect(self.set_live_status_indicator)
-        dialog = self._live_control_dialog
+            dialog.settings_requested.connect(self._on_settings_requested)
+            dialog.mirror_enabled_requested.connect(self._schedule_mirror_toggle)
+            dialog.live_status_changed.connect(self.set_live_status_indicator)
+            dialog.login_requested.connect(self.open_qr_login)
+            dialog.logout_requested.connect(self.logout_account)
+            dialog.simulation_requested.connect(self.trigger_danmaku_simulation)
+            self._settings_dialog = dialog
+        dialog = self._settings_dialog
+        dialog.set_config(self._app_config)
+        dialog.set_mirror_state(self.mirror_coordinator.state)
+        dialog.set_account_state(self._account_status, self._account_profile)
+        dialog.select_page(page)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _on_settings_requested(self, request: SettingsSaveRequest) -> None:
+        """Persist settings and apply presentation-only values through the widget owner."""
+        dialog = self._settings_dialog
         if dialog is None:
             return
-        dialog.set_room_id(anchor_room_id)
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
-
-    def open_mirror_settings(self):
-        """Open the Mirror settings view and bind the current application state."""
-        if self._shutting_down:
+        try:
+            saved = self.config_store.save(request.config)
+        except (OSError, ValueError) as exc:
+            logger.error("Failed to save settings: %s", exc)
+            dialog.report_save_result(request, False, "设置保存失败")
             return
-        if self._mirror_settings_dialog is None:
-            self._mirror_settings_dialog = MirrorSettingsDialog(self)
-            self._mirror_settings_dialog.mirror_enabled_requested.connect(
-                self._schedule_mirror_toggle
-            )
-        dialog = self._mirror_settings_dialog
-        dialog.refresh(self.mirror_coordinator.state)
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
+        if not saved:
+            dialog.report_save_result(request, False, "设置保存失败")
+            return
+
+        self._app_config = request.config
+        self._apply_hud_opacity(request.config.window_opacity)
+        dialog.report_save_result(request, True)
+
+    @pyqtSlot()
+    def open_live_control(self) -> None:
+        """Keep the historical command as an alias for the unified live settings tab."""
+        self.open_settings(SettingsPage.LIVE)
+
+    def open_mirror_settings(self) -> None:
+        """Keep the historical command as an alias for the unified Mirror settings tab."""
+        self.open_settings(SettingsPage.MIRROR)
 
     @property
     def mirror_url(self) -> str:
@@ -1661,8 +1742,8 @@ class DanmakuWidget(QWidget):
 
     def refresh_mirror_settings(self) -> None:
         """Refresh the settings view from a coordinator-owned state snapshot."""
-        if self._mirror_settings_dialog is not None:
-            self._mirror_settings_dialog.refresh(self.mirror_coordinator.state)
+        if self._settings_dialog is not None:
+            self._settings_dialog.set_mirror_state(self.mirror_coordinator.state)
 
     def mirror_status_text(self) -> str:
         """Return the localized status exposed by the coordinator state."""
@@ -1689,6 +1770,7 @@ class DanmakuWidget(QWidget):
         for notice in result.notices:
             self.add_system_message(notice.text, notice.level)
         self.refresh_mirror_settings()
+        self.update_tray_menu_state()
 
     def set_live_status_indicator(self, is_live: bool):
         """显示或隐藏标题栏直播状态点。"""
@@ -1708,6 +1790,7 @@ class DanmakuWidget(QWidget):
             self,
             auth_service=self.auth_service,
             task_scope=self._task_scope.child("qr-login"),
+            appearance=resolve_appearance(self._app_config.theme),
         )
         dialog.login_success.connect(self.on_login_success)
         dialog.finished.connect(lambda _result: self._finish_qr_login(dialog))
@@ -1732,8 +1815,13 @@ class DanmakuWidget(QWidget):
             self._qr_login_dialog = None
         dialog.deleteLater()
 
-    def on_login_success(self):
-        """登录成功，提醒用户重连"""
+    def on_login_success(self) -> None:
+        """Record QR-login success, then resolve the new account identity."""
+        self._account_refresh_generation += 1
+        self._account_status = AccountStatus.LOGGED_IN
+        self._account_profile = None
+        self._publish_account_state()
+        self._schedule_account_refresh()
         self.tray_icon.showMessage(
             "登录成功",
             "B站账号已登录，将在下次连接时生效。",
@@ -1742,8 +1830,13 @@ class DanmakuWidget(QWidget):
         )
         self.add_system_message("登录成功！请断开并重新连接以应用新的登录信息。")
 
-    def on_login_failed(self, msg: str):
-        """登录失效回调"""
+    def on_login_failed(self, msg: str) -> None:
+        """Mark the shared account as expired when a HUD session reports failure."""
+        self._account_refresh_generation += 1
+        self._account_refresh_pending = False
+        self._account_status = AccountStatus.LOGIN_EXPIRED
+        self._account_profile = None
+        self._publish_account_state()
         self.tray_icon.showMessage(
             "登录失效",
             msg,
@@ -1752,10 +1845,89 @@ class DanmakuWidget(QWidget):
         )
         self.add_system_message(msg, SystemMessageLevel.ERROR)
 
+    @pyqtSlot()
+    def logout_account(self) -> asyncio.Task[None] | None:
+        """Schedule account logout and release all app-owned authenticated sessions."""
+        if self._shutting_down:
+            return None
+        return self._create_action_task(self._logout_account(), name="logout-account")
+
+    async def _logout_account(self) -> None:
+        """Disconnect authenticated consumers before removing the saved keyring session."""
+        self._account_refresh_generation += 1
+        self._account_refresh_pending = False
+        cleanup_errors: list[str] = []
+        try:
+            await self.hud_controller.disconnect()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Failed to disconnect HUD during logout")
+            cleanup_errors.append("弹幕连接关闭失败")
+
+        try:
+            await self.services.live_control_service.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Failed to close live-control service during logout")
+            cleanup_errors.append("直播服务关闭失败")
+
+        try:
+            session_cleared = self.auth_service.logout()
+        except Exception:
+            logger.exception("Failed to clear Bilibili session during logout")
+            session_cleared = False
+            cleanup_errors.append("登录会话清除失败")
+
+        if not session_cleared:
+            self.add_system_message(
+                "登出失败，B站登录会话仍可能保存在 keyring 中，请重试。",
+                SystemMessageLevel.ERROR,
+            )
+            return
+
+        self._account_status = AccountStatus.LOGGED_OUT
+        self._account_profile = None
+        if self._settings_dialog is not None:
+            self._settings_dialog.refresh_live_state()
+        self._publish_account_state()
+        if cleanup_errors:
+            message = "B站登录会话已清除，但部分连接关闭失败，请重启应用后确认。"
+            icon = QSystemTrayIcon.MessageIcon.Warning
+        else:
+            message = "B站登录会话已从 keyring 清除。"
+            icon = QSystemTrayIcon.MessageIcon.Information
+        self.tray_icon.showMessage(
+            "已登出",
+            message,
+            icon,
+            2000,
+        )
+        if cleanup_errors:
+            self.add_system_message(
+                f"账号已登出，但清理连接时出现问题：{'；'.join(cleanup_errors)}",
+                SystemMessageLevel.ERROR,
+            )
+        else:
+            self.add_system_message("已登出 B站账号。")
+
+    def _account_status_text(self) -> str:
+        """Return the account state label shared by settings and tray presentation."""
+        labels = {
+            AccountStatus.UNKNOWN: "检查中",
+            AccountStatus.LOGGED_IN: "已登录",
+            AccountStatus.LOGIN_EXPIRED: "登录失效",
+            AccountStatus.LOGGED_OUT: "未登录",
+            AccountStatus.UNAVAILABLE: "暂时无法获取",
+        }
+        return labels[self._account_status]
+
     def closeEvent(self, event: QCloseEvent):
         """覆盖关闭事件：最小化到系统托盘，而不是退出程序"""
         event.ignore()
         self.hide()
+        self.update_tray_menu_state()
 
         # Reminder for user
         self.tray_icon.showMessage(

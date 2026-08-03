@@ -4,6 +4,7 @@ import http.cookies
 import json
 import logging
 from collections.abc import Mapping
+from dataclasses import replace
 from io import BytesIO
 from typing import Protocol
 
@@ -11,6 +12,18 @@ import aiohttp
 import keyring
 import keyring.errors as keyring_errors
 import qrcode
+
+from .account import (
+    AccountLookupResult,
+    AccountLookupStatus,
+    account_count,
+    account_room_id,
+    fetch_optional_account_data,
+    parse_account_profile,
+)
+from .account import (
+    AccountProfile as AccountProfile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +38,8 @@ ESSENTIAL_COOKIE_KEYS = frozenset({"SESSDATA", "bili_jct", "DedeUserID", "DedeUs
 AuthCookies = dict[str, str]  # Normalized cookie names and values kept in secure storage.
 QR_LOGIN_STATUS_NAMES: Mapping[int, str] = {
     0: "Success",
-    86101: "Scanned",
-    86090: "Not Scanned",
+    86101: "Not Scanned",
+    86090: "Scanned",
     86038: "Expired",
 }
 
@@ -42,8 +55,8 @@ class SessionStore(Protocol):
         """Persist normalized Bilibili cookies without exposing them to callers."""
         ...
 
-    def clear_cookies(self) -> None:
-        """Remove the saved Bilibili session from secure storage."""
+    def clear_cookies(self) -> bool:
+        """Remove the saved Bilibili session and report secure-storage success."""
         ...
 
     def load_obs_password(self) -> str | None:
@@ -75,8 +88,8 @@ class AuthenticationService(Protocol):
 
         Returns:
             ``(code, message, cookies_dict)``. ``code`` follows Bilibili's QR-login
-            protocol: ``0`` means Success, ``86101`` means Scanned, ``86090``
-            means Not Scanned, and ``86038`` means Expired. ``cookies_dict`` is
+            protocol: ``0`` means Success, ``86101`` means Not Scanned, ``86090``
+            means Scanned, and ``86038`` means Expired. ``cookies_dict`` is
             populated only after a successful login.
         """
         ...
@@ -99,6 +112,14 @@ class AuthenticationService(Protocol):
 
     async def validate_session(self, cookies: Mapping[str, str]) -> bool:
         """Check whether a Bilibili cookie set still represents a logged-in user."""
+        ...
+
+    async def lookup_account(self) -> AccountLookupResult:
+        """Resolve the saved session into a normalized account identity."""
+        ...
+
+    def logout(self) -> bool:
+        """Remove the saved Bilibili session and report whether it was cleared."""
         ...
 
     def load_obs_password(self) -> str | None:
@@ -158,12 +179,16 @@ class KeyringSessionStore:
             logger.error("Failed to save cookies to keyring: %s", exc)
             return False
 
-    def clear_cookies(self) -> None:
-        """Delete the Bilibili cookie entry when it exists."""
+    def clear_cookies(self) -> bool:
+        """Delete the Bilibili cookie entry when it exists and report failures."""
         try:
+            if keyring.get_password(self.service_id, USERNAME_KEY) is None:
+                return True
             keyring.delete_password(self.service_id, USERNAME_KEY)
+            return True
         except (keyring_errors.KeyringError, OSError) as exc:
-            logger.info("Failed to delete cookies from keyring: %s", exc)
+            logger.error("Failed to delete cookies from keyring: %s", exc)
+            return False
 
     def load_obs_password(self) -> str | None:
         """Load the OBS WebSocket password from keyring."""
@@ -199,6 +224,9 @@ class BilibiliAuthService:
 
     BASE_URL = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
     POLL_URL = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll"
+    NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
+    RELATION_URL = "https://api.bilibili.com/x/relation/stat"
+    LIVE_INFO_URL = "https://api.live.bilibili.com/xlive/web-ucenter/user/live_info"
 
     def __init__(self, session_store: SessionStore | None = None) -> None:
         """Create the service with an injectable secure storage adapter."""
@@ -248,8 +276,8 @@ class BilibiliAuthService:
 
         Returns:
             ``(code, message, cookies_dict)``. ``code`` follows Bilibili's QR-login
-            protocol: ``0`` means Success, ``86101`` means Scanned, ``86090``
-            means Not Scanned, and ``86038`` means Expired. ``cookies_dict`` is
+            protocol: ``0`` means Success, ``86101`` means Not Scanned, ``86090``
+            means Scanned, and ``86038`` means Expired. ``cookies_dict`` is
             populated only after a successful login.
         """
         headers = {"User-Agent": COMMON_USER_AGENT}
@@ -284,9 +312,9 @@ class BilibiliAuthService:
         """Load cookies through the injected secure storage adapter."""
         return self.session_store.load_cookies()
 
-    def clear_cookies(self) -> None:
+    def clear_cookies(self) -> bool:
         """Clear Bilibili cookies through the injected secure storage adapter."""
-        self.session_store.clear_cookies()
+        return self.session_store.clear_cookies()
 
     def load_auth_cookies(self) -> tuple[AuthCookies, bool]:
         """Return saved cookies and whether a secure saved session was available."""
@@ -321,11 +349,10 @@ class BilibiliAuthService:
 
     async def validate_session(self, cookies: Mapping[str, str]) -> bool:
         """Validate a cookie set using Bilibili's logged-in navigation endpoint."""
-        url = "https://api.bilibili.com/x/web-interface/nav"
         headers = {"User-Agent": COMMON_USER_AGENT}
         try:
             async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
-                async with session.get(url) as response:
+                async with session.get(self.NAV_URL) as response:
                     payload = _as_mapping(await response.json())
                     if _int_value(payload.get("code")) != 0:
                         return False
@@ -334,6 +361,55 @@ class BilibiliAuthService:
         except (aiohttp.ClientError, OSError, TimeoutError, TypeError, ValueError) as exc:
             logger.error("Session validation failed: %s", exc)
             return False
+
+    async def lookup_account(self) -> AccountLookupResult:
+        """Fetch and normalize the saved Bilibili account identity."""
+        cookies, _from_keyring = self.load_auth_cookies()
+        if not cookies:
+            return AccountLookupResult(AccountLookupStatus.NO_SESSION)
+
+        headers = {"User-Agent": COMMON_USER_AGENT}
+        timeout = aiohttp.ClientTimeout(total=10)
+        try:
+            async with aiohttp.ClientSession(
+                cookies=cookies,
+                headers=headers,
+                timeout=timeout,
+            ) as session:
+                async with session.get(self.NAV_URL) as response:
+                    payload = _as_mapping(await response.json())
+                    if _int_value(payload.get("code")) != 0:
+                        return AccountLookupResult(AccountLookupStatus.INVALID)
+                    data = _as_mapping(payload.get("data"))
+                    if data.get("isLogin") is not True:
+                        return AccountLookupResult(AccountLookupStatus.INVALID)
+                    profile = parse_account_profile(data)
+                    if profile is None:
+                        logger.error("Bilibili account response omitted identity fields")
+                        return AccountLookupResult(
+                            AccountLookupStatus.UNAVAILABLE,
+                            message="账号资料格式无效",
+                        )
+                    relation_data = await fetch_optional_account_data(
+                        session,
+                        self.RELATION_URL,
+                        params={"vmid": profile.user_id},
+                    )
+                    live_data = await fetch_optional_account_data(session, self.LIVE_INFO_URL)
+                    profile = replace(
+                        profile,
+                        following_count=account_count(relation_data.get("following")),
+                        follower_count=account_count(relation_data.get("follower")),
+                        live_room_id=account_room_id(live_data.get("room_id")),
+                    )
+                    return AccountLookupResult(AccountLookupStatus.AUTHENTICATED, profile)
+        except (aiohttp.ClientError, OSError, TimeoutError, TypeError, ValueError) as exc:
+            logger.error("Account lookup failed: %s", exc)
+            return AccountLookupResult(AccountLookupStatus.UNAVAILABLE, message=str(exc))
+
+    def logout(self) -> bool:
+        """Clear only the saved Bilibili session, retaining unrelated OBS credentials."""
+        return self.clear_cookies()
 
     def load_obs_password(self) -> str | None:
         """Load the OBS password through secure storage."""

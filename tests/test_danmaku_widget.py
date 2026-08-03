@@ -1,15 +1,18 @@
 import asyncio
 import os
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtCore import QEvent
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QApplication, QLabel, QWidget
+from PyQt6.QtWidgets import QApplication, QLabel
 
 from bilihud import danmaku_widget
+from bilihud.app.menu import AccountStatus, MenuCommand, TrayMenuState
 from bilihud.app.mirror_coordinator import MirrorCoordinatorState, MirrorOperationResult
 from bilihud.app.services import create_default_services
+from bilihud.auth.service import AccountProfile
 from bilihud.danmaku.messages import (
     DanmakuMessage,
     GiftMessage,
@@ -32,6 +35,8 @@ from bilihud.platform.overlay_contracts import (
     WindowPoint,
     WindowRectangle,
 )
+from bilihud.settings_dialog import SettingsPage
+from bilihud.tray_menu import TrayMenu
 
 _QT_APP = None
 
@@ -73,6 +78,12 @@ def test_layer_shell_drag_updates_anchor_position():
     assert strategy.update_drag(WindowPoint(20, 20), WindowPoint(130, 130)).succeeded is True
 
     assert layer_shell.calls == [(123, 100, 100), (123, 110, 110), (123, 120, 120)]
+
+
+def test_hud_opacity_maps_to_the_background_alpha_layer():
+    assert danmaku_widget._opacity_to_alpha(40) == 102
+    assert danmaku_widget._opacity_to_alpha(80) == 204
+    assert danmaku_widget._opacity_to_alpha(100) == 255
 
 
 def test_danmaku_widget_keeps_game_mode_controls_in_sync_with_fake_platform(tmp_path):
@@ -132,70 +143,31 @@ def test_danmaku_widget_keeps_game_mode_controls_in_sync_with_fake_platform(tmp_
         asyncio.run(widget.shutdown())
 
 
-def test_danmaku_widget_exposes_bilihud_mirror_tray_action(monkeypatch):
-    class Signal:
-        def __init__(self):
-            self.callbacks = []
-
-        def connect(self, callback):
-            self.callbacks.append(callback)
-
-        def emit(self, *args):
-            for callback in self.callbacks:
-                callback(*args)
-
-    class Action:
-        def __init__(self, text, _parent):
-            self.text = text
-            self.triggered = Signal()
-
-        def setCheckable(self, _checkable):
-            pass
-
-    class Menu:
-        def setStyleSheet(self, _style):
-            pass
-
-        def addAction(self, _action):
-            pass
-
-        def addSeparator(self):
-            pass
-
-    class TrayIcon:
-        def __init__(self, _parent):
-            self.activated = Signal()
-
-        def setContextMenu(self, _menu):
-            pass
-
-        def show(self):
-            pass
-
-    events = []
+def test_tray_menu_emits_commands_and_renders_state():
     _app()
-    widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
-    widget.open_input_dialog = lambda: events.append("input")
-    widget.toggle_visibility = lambda: events.append("visibility")
-    widget.toggle_gaming_mode_from_tray = lambda checked: events.append(("gaming", checked))
-    widget.open_qr_login = lambda: events.append("login")
-    widget.open_live_control = lambda: events.append("live-control")
-    widget.open_mirror_settings = lambda: events.append("mirror")
-    widget.trigger_danmaku_simulation = lambda: events.append("mock")
-    widget.quit_app = lambda: events.append("quit")
-    monkeypatch.setattr(danmaku_widget, "QAction", Action)
-    monkeypatch.setattr(danmaku_widget, "QMenu", Menu)
-    monkeypatch.setattr(danmaku_widget, "QSystemTrayIcon", TrayIcon)
-    monkeypatch.setattr(danmaku_widget.os.path, "exists", lambda _path: False)
+    menu = TrayMenu()
+    commands = []
+    menu.command_requested.connect(lambda command, checked: commands.append((command, checked)))
+    menu.set_state(
+        TrayMenuState(
+            visible=True,
+            hud_connection=danmaku_widget.HudConnectionStatus.DISCONNECTED,
+            account_status=AccountStatus.UNKNOWN,
+            gaming_mode=False,
+            gaming_mode_available=True,
+        )
+    )
 
-    danmaku_widget.DanmakuWidget.setup_tray_icon(widget)
+    assert menu.action_for(MenuCommand.OPEN_LIVE_SETTINGS).text() == "开播设置"
+    assert menu.action_for(MenuCommand.OPEN_MIRROR_SETTINGS).text() == "Mirror 设置"
+    menu.action_for(MenuCommand.OPEN_SETTINGS).trigger()
+    menu.action_for(MenuCommand.TOGGLE_GAMING_MODE).trigger()
 
-    assert widget.tray_mirror_action.text == "BiliHUD Mirror"
-    widget.tray_mirror_action.triggered.emit()
-    assert events == ["mirror"]
-    assert widget.tray_mock_action.text == "弹幕模拟"
-    widget.tray_mock_action.triggered.emit()
-    assert events == ["mirror", "mock"]
+    assert commands == [
+        (MenuCommand.OPEN_SETTINGS, False),
+        (MenuCommand.TOGGLE_GAMING_MODE, True),
+    ]
+    menu.close()
 
 
 def test_danmaku_widget_injects_fixed_mock_messages_into_hud(monkeypatch):
@@ -210,58 +182,114 @@ def test_danmaku_widget_injects_fixed_mock_messages_into_hud(monkeypatch):
     assert len(received) == len(danmaku_widget.mock_message_batch())
 
 
-def test_danmaku_widget_opens_single_mirror_settings_dialog(monkeypatch):
-    class Signal:
-        def connect(self, _callback):
-            pass
-
-    class FakeDialog:
-        instances = []
-
-        def __init__(self, owner):
-            self.owner = owner
-            self.calls = []
-            self.mirror_enabled_requested = Signal()
-            self.instances.append(self)
-
-        def refresh(self, _state):
-            self.calls.append("refresh")
-
-        def show(self):
-            self.calls.append("show")
-
-        def raise_(self):
-            self.calls.append("raise")
-
-        def activateWindow(self):
-            self.calls.append("activate")
-
-    _app()
+def test_danmaku_widget_mirror_command_selects_unified_settings_tab():
+    calls = []
     widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
-    QWidget.__init__(widget)
     widget._shutting_down = False
-    widget._mirror_settings_dialog = None
-    widget.mirror_coordinator = type(
-        "Coordinator",
-        (),
-        {"state": MirrorCoordinatorState(False, False, 2233, "http://127.0.0.1:2233/bilihud-mirror")},
-    )()
-    monkeypatch.setattr(danmaku_widget, "MirrorSettingsDialog", FakeDialog)
+    widget.open_settings = calls.append
 
     danmaku_widget.DanmakuWidget.open_mirror_settings(widget)
-    danmaku_widget.DanmakuWidget.open_mirror_settings(widget)
 
-    assert len(FakeDialog.instances) == 1
-    assert FakeDialog.instances[0].calls == [
-        "refresh",
-        "show",
-        "raise",
-        "activate",
-        "refresh",
-        "show",
-        "raise",
-        "activate",
-    ]
+    assert calls == [SettingsPage.MIRROR]
+
+
+def test_danmaku_widget_live_tray_command_selects_unified_settings_tab():
+    calls = []
+    widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+    widget.open_settings = calls.append
+
+    danmaku_widget.DanmakuWidget._handle_menu_command(
+        widget,
+        MenuCommand.OPEN_LIVE_SETTINGS,
+    )
+
+    assert calls == [SettingsPage.LIVE]
+
+
+def test_danmaku_widget_logout_closes_authenticated_consumers_before_keyring_clear():
+    events = []
+
+    class FakeHudController:
+        async def disconnect(self):
+            events.append("hud-disconnect")
+
+    class FakeLiveService:
+        async def close(self):
+            events.append("live-close")
+
+    class FakeAuthService:
+        def logout(self):
+            events.append("auth-logout")
+            return True
+
+    class FakeTray:
+        def showMessage(self, *_args):
+            events.append("tray-message")
+
+    async def run_test():
+        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+        widget.hud_controller = FakeHudController()
+        widget.services = SimpleNamespace(live_control_service=FakeLiveService())
+        widget.auth_service = FakeAuthService()
+        widget._settings_dialog = None
+        widget._account_status = AccountStatus.LOGGED_IN
+        widget._account_profile = AccountProfile("123", "测试用户")
+        widget._account_refresh_generation = 0
+        widget._account_refresh_pending = True
+        widget._publish_account_state = lambda: events.append("publish")
+        widget.add_system_message = lambda *_args: events.append("system-message")
+        widget.tray_icon = FakeTray()
+
+        await danmaku_widget.DanmakuWidget._logout_account(widget)
+
+    asyncio.run(run_test())
+
+    assert events[:3] == ["hud-disconnect", "live-close", "auth-logout"]
+    assert events[-2:] == ["tray-message", "system-message"]
+
+
+def test_danmaku_widget_logout_attempts_keyring_clear_after_consumer_cleanup_failure():
+    events = []
+
+    class FakeHudController:
+        async def disconnect(self):
+            events.append("hud-disconnect")
+            raise RuntimeError("HUD still connected")
+
+    class FakeLiveService:
+        async def close(self):
+            events.append("live-close")
+
+    class FakeAuthService:
+        def logout(self):
+            events.append("auth-logout")
+            return True
+
+    class FakeTray:
+        def showMessage(self, *_args):
+            events.append("tray-message")
+
+    async def run_test():
+        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+        widget.hud_controller = FakeHudController()
+        widget.services = SimpleNamespace(live_control_service=FakeLiveService())
+        widget.auth_service = FakeAuthService()
+        widget._settings_dialog = None
+        widget._account_status = AccountStatus.LOGGED_IN
+        widget._account_profile = AccountProfile("123", "测试用户")
+        widget._account_refresh_generation = 0
+        widget._account_refresh_pending = True
+        widget._publish_account_state = lambda: events.append("publish")
+        widget.add_system_message = lambda *_args: events.append("system-message")
+        widget.tray_icon = FakeTray()
+
+        await danmaku_widget.DanmakuWidget._logout_account(widget)
+
+    asyncio.run(run_test())
+
+    assert events[:3] == ["hud-disconnect", "live-close", "auth-logout"]
+    assert "publish" in events
+    assert events[-2:] == ["tray-message", "system-message"]
 
 
 def test_danmaku_widget_keeps_mirror_enabled_config_when_shutting_down():

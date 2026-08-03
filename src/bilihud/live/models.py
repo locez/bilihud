@@ -181,6 +181,13 @@ class StartLiveStatus(StrEnum):
     ALREADY_LIVE = "already_live"
 
 
+class LiveVerificationKind(StrEnum):
+    """Identify the verification surface required before starting live."""
+
+    QR = "qr"
+    FACE = "face"
+
+
 @dataclass(frozen=True, slots=True)
 class StartLiveOutcome:
     """Typed result of the complete start-live workflow."""
@@ -189,6 +196,7 @@ class StartLiveOutcome:
     state: LiveControlState
     error: LiveControlError | None = None
     verification_url: str = ""
+    verification_kind: LiveVerificationKind = LiveVerificationKind.QR
     obs_started: bool = False
     notice: str = ""
 
@@ -313,6 +321,7 @@ __all__: Final[tuple[str, ...]] = (
     "LiveSessionInfo",
     "LiveStartResponse",
     "LiveVersion",
+    "LiveVerificationKind",
     "ObsCheckOutcome",
     "ObsSettings",
     "ObsStreamOutcome",

@@ -179,8 +179,7 @@ def test_danmaku_widget_shutdown_cancels_work_before_closing_resources():
         widget._task_scope = scope
         widget._action_tasks = set()
         widget._mirror_start_task = None
-        widget._live_control_dialog = None
-        widget._mirror_settings_dialog = None
+        widget._settings_dialog = None
         widget._qr_login_dialog = None
         widget._shutdown_complete = False
         widget._shutting_down = False

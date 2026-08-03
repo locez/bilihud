@@ -14,6 +14,7 @@ FEATURE_PACKAGE_NAMES: Final[tuple[str, ...]] = (
     "platform",
 )
 PURE_MODULE_PATHS: Final[tuple[str, ...]] = (
+    "app/menu.py",
     "app/hud.py",
     "danmaku/messages.py",
     "live/audience.py",
@@ -24,8 +25,16 @@ PURE_MODULE_PATHS: Final[tuple[str, ...]] = (
 PRESENTATION_MODULE_PATHS: Final[tuple[str, ...]] = (
     "danmaku_widget.py",
     "live_control_dialog.py",
+    "live_settings_page.py",
+    "live_settings_workflow.py",
+    "live_credentials.py",
+    "settings_account_page.py",
+    "mirror_settings_page.py",
+    "settings_style.py",
     "qr_login_dialog.py",
     "qt_window_host.py",
+    "settings_dialog.py",
+    "tray_menu.py",
 )
 MESSAGE_CONSUMER_MODULE_PATHS: Final[tuple[str, ...]] = (
     "danmaku/format.py",

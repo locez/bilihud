@@ -1,0 +1,315 @@
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtGui import QMouseEvent, QWheelEvent
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication, QCheckBox, QDialog, QLabel, QLineEdit, QPushButton, QToolButton, QWidget
+
+from bilihud.about_settings_page import AboutSettingsPage
+from bilihud.app.menu import AccountStatus
+from bilihud.app_metadata import GITHUB_URL, application_version
+from bilihud.auth.service import AccountProfile
+from bilihud.config.store import AppConfig, ThemeMode
+from bilihud.live.models import LiveVerificationKind
+from bilihud.live_settings_page import LiveSettingsPage
+from bilihud.live_settings_workflow import LiveAction
+from bilihud.mirror_settings_page import MirrorSettingsPage
+from bilihud.settings_account_page import AccountSettingsPage
+from bilihud.settings_dialog import SettingsDialog, SettingsPage, SettingsSaveRequest
+
+_QT_APP: QApplication | None = None
+
+
+def _app() -> QApplication:
+    global _QT_APP
+    _QT_APP = QApplication.instance() or QApplication([])
+    return _QT_APP
+
+
+def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
+    _app()
+    dialog = SettingsDialog(None, AppConfig(theme=ThemeMode.DARK, window_opacity=65))
+
+    assert [dialog.navigation.item(index).text() for index in range(dialog.navigation.count())] == [
+        "通用",
+        "面板",
+        "直播",
+        "Mirror",
+        "账号",
+        "关于",
+        "开发者",
+    ]
+    assert [dialog.theme_combo.itemData(index) for index in range(dialog.theme_combo.count())] == [
+        ThemeMode.SYSTEM,
+        ThemeMode.LIGHT,
+        ThemeMode.DARK,
+    ]
+    assert dialog.theme_combo.currentData() is ThemeMode.DARK
+    assert dialog.opacity_spinbox.value() == 65
+    assert dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
+
+    dialog.select_page(SettingsPage.LIVE)
+    assert dialog.navigation.currentRow() == 2
+    assert dialog.page_title.text() == "开播设置"
+    live_page = dialog.page_stack.currentWidget()
+    assert isinstance(live_page, LiveSettingsPage)
+    assert {button.text() for button in live_page.findChildren(QPushButton)} >= {
+        "开始直播",
+        "停止直播",
+        "检查 OBS",
+    }
+
+    dialog.select_page(SettingsPage.MIRROR)
+    mirror_page = dialog.page_stack.currentWidget()
+    assert isinstance(mirror_page, MirrorSettingsPage)
+    assert mirror_page.findChild(QCheckBox, "mirror_enabled") is not None
+    assert mirror_page.findChild(QLineEdit, "mirror_url") is not None
+
+    dialog.select_page(SettingsPage.DEVELOPER)
+    assert dialog.navigation.currentRow() == 6
+    assert dialog.simulation_button.text() == "弹幕模拟"
+
+    dialog.select_page(SettingsPage.ABOUT)
+    about_page = dialog.page_stack.currentWidget()
+    assert isinstance(about_page, AboutSettingsPage)
+    assert about_page.version_label.text() == f"v{application_version()}"
+    assert about_page.github_button.toolTip() == GITHUB_URL
+    assert about_page.github_button.isEnabled() is True
+
+    dialog.select_page(SettingsPage.ACCOUNT)
+    dialog.set_account_state(
+        AccountStatus.LOGGED_IN,
+        AccountProfile("123", "测试用户", following_count=12, follower_count=34, live_room_id=456),
+    )
+    account_page = dialog.page_stack.currentWidget()
+    assert isinstance(account_page, AccountSettingsPage)
+    assert account_page.account_name_label.text() == "测试用户"
+    assert account_page.account_id_label.text() == "UID 123"
+    assert account_page.following_value.text() == "12"
+    assert account_page.follower_value.text() == "34"
+    assert account_page.space_button.isHidden() is False
+    assert account_page.live_room_button.isHidden() is False
+    assert account_page.login_button.isHidden() is True
+    assert account_page.logout_button.isHidden() is False
+
+    dialog.set_account_state(AccountStatus.LOGGED_OUT, None)
+    assert account_page.account_name_label.text() == "未登录"
+    assert account_page.login_button.isHidden() is False
+    assert account_page.logout_button.isHidden() is True
+
+    dialog.close()
+
+
+def test_settings_dialog_emits_typed_apply_and_confirm_requests() -> None:
+    _app()
+    dialog = SettingsDialog(None, AppConfig())
+    requests: list[SettingsSaveRequest] = []
+    dialog.settings_requested.connect(requests.append)
+
+    dialog.theme_combo.setCurrentIndex(2)
+    dialog.opacity_spinbox.setValue(20)
+    dialog.apply_button.click()
+
+    assert len(requests) == 1
+    assert requests[0].config.theme is ThemeMode.DARK
+    assert requests[0].config.window_opacity == 20
+    assert requests[0].close_after_save is False
+
+    dialog.ok_button.click()
+    assert len(requests) == 2
+    assert requests[1].close_after_save is True
+
+    dialog.close()
+
+
+def test_settings_dialog_rejects_opacity_below_twenty_with_feedback() -> None:
+    _app()
+    dialog = SettingsDialog(None, AppConfig())
+    requests: list[SettingsSaveRequest] = []
+    dialog.settings_requested.connect(requests.append)
+
+    dialog.opacity_spinbox.setValue(10)
+    dialog.apply_button.click()
+
+    assert requests == []
+    assert dialog.feedback_label.text() == ""
+    assert dialog.navigation.currentRow() == 1
+    assert dialog.opacity_error_label is not None
+    assert dialog.opacity_error_label.text() == "HUD 背景不透明度需在 20% 到 100% 之间"
+    assert dialog.opacity_error_label.isHidden() is False
+    dialog.close()
+
+
+def test_settings_dialog_header_moves_frameless_window() -> None:
+    app = _app()
+    dialog = SettingsDialog(None, AppConfig())
+    dialog.show()
+    app.processEvents()
+    dialog.move(120, 140)
+    app.processEvents()
+    initial_position = dialog.pos()
+    initial_frame = dialog.frameGeometry().topLeft()
+
+    press = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(10, 10),
+        QPointF(10, 10),
+        QPointF(initial_frame.x() + 10, initial_frame.y() + 10),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    move = QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(60, 40),
+        QPointF(60, 40),
+        QPointF(initial_frame.x() + 60, initial_frame.y() + 40),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    release = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        QPointF(60, 40),
+        QPointF(60, 40),
+        QPointF(initial_frame.x() + 60, initial_frame.y() + 40),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    drag_region = dialog.findChild(QWidget, "window_drag_region")
+    assert drag_region is not None
+    close_button = dialog.findChild(QToolButton, "window_close")
+    assert close_button is not None
+    close_origin = close_button.mapTo(dialog, QPoint(0, 0))
+    assert drag_region.geometry().right() < close_origin.x()
+    assert close_origin.x() + close_button.width() == dialog.width() - 8
+    assert close_origin.y() == 8
+    assert dialog.eventFilter(drag_region, press) is True
+    assert dialog.eventFilter(drag_region, move) is True
+    assert dialog.pos() == initial_position + QPoint(50, 30)
+    assert dialog.eventFilter(drag_region, release) is True
+
+    dialog.select_page(SettingsPage.ACCOUNT)
+    first_item = dialog.navigation.item(0)
+    QTest.mouseClick(
+        dialog.navigation.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=dialog.navigation.visualItemRect(first_item).center(),
+    )
+    assert dialog.navigation.currentRow() == 0
+    dialog.close()
+
+
+def test_settings_dialog_clears_save_feedback_when_switching_pages() -> None:
+    _app()
+    dialog = SettingsDialog(None, AppConfig())
+    request = SettingsSaveRequest(AppConfig(), close_after_save=False)
+
+    dialog.report_save_result(request, True)
+    assert dialog.feedback_label.text() == "已应用"
+    dialog.select_page(SettingsPage.LIVE)
+    assert dialog.feedback_label.text() == ""
+    dialog.report_save_result(request, True)
+    dialog.select_page(SettingsPage.LIVE)
+    assert dialog.feedback_label.text() == ""
+    dialog.close()
+
+
+def test_modern_combo_does_not_change_from_a_closed_wheel_event() -> None:
+    _app()
+    dialog = SettingsDialog(None, AppConfig())
+    combo = dialog.theme_combo
+    combo.setCurrentIndex(0)
+    wheel = QWheelEvent(
+        QPointF(10, 10),
+        QPointF(10, 10),
+        QPoint(0, 120),
+        QPoint(0, 120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+
+    combo.wheelEvent(wheel)
+
+    assert combo.currentIndex() == 0
+    assert wheel.isAccepted() is False
+    dialog.close()
+
+
+def test_settings_dialog_hides_scrollbar_for_short_page() -> None:
+    app = _app()
+    dialog = SettingsDialog(None, AppConfig())
+    dialog.show()
+    app.processEvents()
+
+    scrollbar = dialog.page_scroll.verticalScrollBar()
+    assert scrollbar is not None
+    assert scrollbar.isVisible() is False
+
+    dialog.close()
+
+
+def test_settings_dialog_resets_scroll_when_switching_to_live_page() -> None:
+    app = _app()
+    dialog = SettingsDialog(None, AppConfig())
+    dialog.show()
+    app.processEvents()
+
+    dialog.select_page(SettingsPage.LIVE)
+    app.processEvents()
+    scrollbar = dialog.page_scroll.verticalScrollBar()
+    scrollbar.setValue(scrollbar.maximum())
+    assert scrollbar.value() > 0
+
+    dialog.select_page(SettingsPage.GENERAL)
+    dialog.select_page(SettingsPage.LIVE)
+    app.processEvents()
+
+    assert scrollbar.value() == scrollbar.minimum()
+    dialog.close()
+
+
+def test_live_action_buttons_show_owned_busy_state() -> None:
+    _app()
+    page = LiveSettingsPage()
+
+    page.set_busy(True, "正在开始直播...", action=LiveAction.START)
+
+    assert page.start_button.text() == "正在开始..."
+    assert page.start_button.isEnabled() is False
+    assert page.start_button.property("busy") is True
+    assert page.stop_button.text() == "停止直播"
+
+    page.set_busy(False)
+
+    assert page.start_button.text() == "开始直播"
+    assert page.start_button.property("busy") is False
+
+
+def test_live_face_verification_uses_face_auth_copy() -> None:
+    _app()
+    page = LiveSettingsPage()
+
+    page.show_verification("", LiveVerificationKind.FACE)
+    dialog = page.findChild(QDialog, "verification_dialog")
+
+    assert dialog is not None
+    assert dialog.windowTitle() == "人脸认证"
+    assert dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
+    card_title = dialog.findChild(QLabel, "card_title")
+    prompt = dialog.findChild(QLabel, "verification_prompt")
+    qr = dialog.findChild(QLabel, "verification_qr")
+    assert card_title is not None
+    assert prompt is not None
+    assert qr is not None
+    assert dialog.findChild(QToolButton, "window_close") is None
+    assert card_title.text() == "扫码完成认证"
+    assert "完成人脸认证" in prompt.text()
+    assert "重新点击“开始直播”" in prompt.text()
+    dialog.close()

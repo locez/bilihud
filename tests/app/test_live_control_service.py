@@ -11,6 +11,7 @@ from bilihud.live.models import (
     LiveControlErrorCode,
     LiveSessionInfo,
     LiveStartResponse,
+    LiveVerificationKind,
     LiveVersion,
     ObsSettings,
     RoomInfo,
@@ -188,6 +189,23 @@ def test_start_live_reports_missing_credentials_after_bilibili_accepts_request()
         assert outcome.success
         assert outcome.error is not None
         assert outcome.error.code is LiveControlErrorCode.CREDENTIALS_MISSING
+
+    run(scenario())
+    assert api.start_calls == 1
+
+
+def test_start_live_routes_face_auth_response_to_verification_outcome() -> None:
+    api = FakeLiveApi(start_response=LiveStartResponse(60043, "需要人脸认证"))
+    service = make_service(api, FakeObs())
+
+    async def scenario() -> None:
+        await service.initialize(7450109)
+        outcome = await service.start_live(7450109, "标题", "371", None)
+
+        assert outcome.status is StartLiveStatus.VERIFICATION_REQUIRED
+        assert outcome.error is not None
+        assert outcome.error.code is LiveControlErrorCode.VERIFICATION_REQUIRED
+        assert outcome.verification_kind is LiveVerificationKind.FACE
 
     run(scenario())
     assert api.start_calls == 1

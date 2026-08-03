@@ -2,6 +2,9 @@
 
 from .service import (
     QR_LOGIN_STATUS_NAMES,
+    AccountLookupResult,
+    AccountLookupStatus,
+    AccountProfile,
     AuthenticationService,
     AuthManager,
     BilibiliAuthService,
@@ -10,6 +13,9 @@ from .service import (
 )
 
 __all__ = (
+    "AccountLookupResult",
+    "AccountLookupStatus",
+    "AccountProfile",
     "AuthManager",
     "AuthenticationService",
     "BilibiliAuthService",
