@@ -20,11 +20,6 @@ class TrayMenu(QMenu):
         """Create a stable action tree whose state can be refreshed independently."""
         super().__init__(parent)
         self._actions_by_command: dict[MenuCommand, QAction] = {}
-        self._status_actions: tuple[QAction, QAction, QAction] = (
-            QAction(self),
-            QAction(self),
-            QAction(self),
-        )
         self._build_actions()
         self.set_theme(True)
 
@@ -32,18 +27,11 @@ class TrayMenu(QMenu):
         """Create QAction objects and connect them only to the command signal."""
         send_action = self._add_command_action(MenuCommand.SEND_DANMAKU)
         self.addAction(send_action)
-        self.addSeparator()
-
-        self.addAction(self._status_actions[0])
+        self.addAction(self._add_command_action(MenuCommand.OPEN_LIVE_SETTINGS))
         self.addAction(self._add_command_action(MenuCommand.TOGGLE_VISIBILITY))
         self.addAction(self._add_command_action(MenuCommand.TOGGLE_GAMING_MODE, checkable=True))
-        self.addAction(self._status_actions[1])
-        self.addAction(self._status_actions[2])
         self.addSeparator()
-
         self.addAction(self._add_command_action(MenuCommand.OPEN_LOGIN))
-        self.addAction(self._add_command_action(MenuCommand.OPEN_LIVE_SETTINGS))
-        self.addAction(self._add_command_action(MenuCommand.OPEN_MIRROR_SETTINGS))
         self.addAction(self._add_command_action(MenuCommand.OPEN_SETTINGS))
         self.addSeparator()
         self.addAction(self._add_command_action(MenuCommand.QUIT))
@@ -61,13 +49,8 @@ class TrayMenu(QMenu):
 
     def set_state(self, state: TrayMenuState) -> None:
         """Render labels, availability, and check state from one immutable snapshot."""
-        status_index = 0
         for item in tray_action_states(state):
-            if item.command is None:
-                action = self._status_actions[status_index]
-                status_index += 1
-            else:
-                action = self._actions_by_command[item.command]
+            action = self._actions_by_command[item.command]
 
             action.setText(item.label)
             action.setEnabled(item.enabled)

@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .hud import HudConnectionStatus
-
 
 class MenuCommand(StrEnum):
     """Identify a user command that can be requested by a menu surface."""
@@ -16,7 +14,6 @@ class MenuCommand(StrEnum):
     TOGGLE_GAMING_MODE = "toggle_gaming_mode"
     OPEN_LOGIN = "open_login"
     OPEN_LIVE_SETTINGS = "open_live_settings"
-    OPEN_MIRROR_SETTINGS = "open_mirror_settings"
     OPEN_SETTINGS = "open_settings"
     QUIT = "quit"
 
@@ -35,7 +32,7 @@ class AccountStatus(StrEnum):
 class MenuActionState:
     """Describe one rendered tray action without depending on Qt."""
 
-    command: MenuCommand | None
+    command: MenuCommand
     label: str
     enabled: bool = True
     checkable: bool = False
@@ -54,12 +51,9 @@ class TrayMenuState:
     """Immutable application snapshot rendered by the tray menu."""
 
     visible: bool
-    hud_connection: HudConnectionStatus
     gaming_mode: bool
     gaming_mode_available: bool
     gaming_mode_reason: str | None = None
-    mirror_status: str = "未启动"
-    account_status: AccountStatus = AccountStatus.UNKNOWN
 
 
 def tray_action_states(state: TrayMenuState) -> tuple[MenuActionState, ...]:
@@ -73,14 +67,8 @@ def tray_action_states(state: TrayMenuState) -> tuple[MenuActionState, ...]:
     return (
         MenuActionState(MenuCommand.SEND_DANMAKU, "发送弹幕"),
         MenuActionState(
-            None,
-            _hud_status_label(state.hud_connection),
-            enabled=False,
-        ),
-        MenuActionState(
-            None,
-            _account_status_label(state.account_status),
-            enabled=False,
+            MenuCommand.OPEN_LIVE_SETTINGS,
+            "开播设置",
         ),
         MenuActionState(
             MenuCommand.TOGGLE_VISIBILITY,
@@ -94,38 +82,10 @@ def tray_action_states(state: TrayMenuState) -> tuple[MenuActionState, ...]:
             checked=state.gaming_mode,
             disabled_reason=gaming_reason,
         ),
-        MenuActionState(
-            None,
-            f"Mirror：{state.mirror_status}",
-            enabled=False,
-        ),
         MenuActionState(MenuCommand.OPEN_LOGIN, "扫码登录"),
-        MenuActionState(MenuCommand.OPEN_LIVE_SETTINGS, "开播设置"),
-        MenuActionState(MenuCommand.OPEN_MIRROR_SETTINGS, "Mirror 设置"),
         MenuActionState(MenuCommand.OPEN_SETTINGS, "设置"),
         MenuActionState(MenuCommand.QUIT, "退出程序"),
     )
-
-
-def _hud_status_label(connection: HudConnectionStatus) -> str:
-    labels = {
-        HudConnectionStatus.DISCONNECTED: "连接：未连接",
-        HudConnectionStatus.CONNECTING: "连接：连接中",
-        HudConnectionStatus.CONNECTED: "连接：已连接",
-        HudConnectionStatus.DISCONNECTING: "连接：断开中",
-    }
-    return labels[connection]
-
-
-def _account_status_label(status: AccountStatus) -> str:
-    labels = {
-        AccountStatus.UNKNOWN: "账号：检查中",
-        AccountStatus.LOGGED_IN: "账号：已登录",
-        AccountStatus.LOGIN_EXPIRED: "账号：登录失效",
-        AccountStatus.LOGGED_OUT: "账号：未登录",
-        AccountStatus.UNAVAILABLE: "账号：暂时无法获取",
-    }
-    return labels[status]
 
 
 __all__ = (

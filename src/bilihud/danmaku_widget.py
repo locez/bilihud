@@ -835,7 +835,6 @@ class DanmakuWidget(QWidget):
 
     def _publish_account_state(self) -> None:
         """Push the normalized account state to every presentation surface."""
-        self.update_tray_menu_state()
         if self._settings_dialog is not None:
             self._settings_dialog.set_account_state(self._account_status, self._account_profile)
 
@@ -1116,7 +1115,6 @@ class DanmakuWidget(QWidget):
         self.tray_gaming_action = self.tray_menu.action_for(MenuCommand.TOGGLE_GAMING_MODE)
         self.tray_login_action = self.tray_menu.action_for(MenuCommand.OPEN_LOGIN)
         self.tray_live_settings_action = self.tray_menu.action_for(MenuCommand.OPEN_LIVE_SETTINGS)
-        self.tray_mirror_settings_action = self.tray_menu.action_for(MenuCommand.OPEN_MIRROR_SETTINGS)
         self.tray_settings_action = self.tray_menu.action_for(MenuCommand.OPEN_SETTINGS)
         self.tray_icon.setContextMenu(self.tray_menu)
         self.tray_icon.show()
@@ -1128,12 +1126,9 @@ class DanmakuWidget(QWidget):
         capabilities = self.overlay_platform.capabilities
         return TrayMenuState(
             visible=self.isVisible(),
-            hud_connection=self._hud_state.connection,
-            account_status=self._account_status,
             gaming_mode=self.is_gaming_mode,
             gaming_mode_available=capabilities.gaming_mode,
             gaming_mode_reason=capabilities.unavailable_reason,
-            mirror_status=self.mirror_coordinator.state.status_text,
         )
 
     def update_tray_menu_state(self) -> None:
@@ -1154,8 +1149,6 @@ class DanmakuWidget(QWidget):
             self.open_qr_login()
         elif command is MenuCommand.OPEN_LIVE_SETTINGS:
             self.open_settings(SettingsPage.LIVE)
-        elif command is MenuCommand.OPEN_MIRROR_SETTINGS:
-            self.open_settings(SettingsPage.MIRROR)
         elif command is MenuCommand.OPEN_SETTINGS:
             self.open_settings(SettingsPage.GENERAL)
         elif command is MenuCommand.QUIT:
@@ -1911,17 +1904,6 @@ class DanmakuWidget(QWidget):
             )
         else:
             self.add_system_message("已登出 B站账号。")
-
-    def _account_status_text(self) -> str:
-        """Return the account state label shared by settings and tray presentation."""
-        labels = {
-            AccountStatus.UNKNOWN: "检查中",
-            AccountStatus.LOGGED_IN: "已登录",
-            AccountStatus.LOGIN_EXPIRED: "登录失效",
-            AccountStatus.LOGGED_OUT: "未登录",
-            AccountStatus.UNAVAILABLE: "暂时无法获取",
-        }
-        return labels[self._account_status]
 
     def closeEvent(self, event: QCloseEvent):
         """覆盖关闭事件：最小化到系统托盘，而不是退出程序"""

@@ -151,15 +151,13 @@ def test_tray_menu_emits_commands_and_renders_state():
     menu.set_state(
         TrayMenuState(
             visible=True,
-            hud_connection=danmaku_widget.HudConnectionStatus.DISCONNECTED,
-            account_status=AccountStatus.UNKNOWN,
             gaming_mode=False,
             gaming_mode_available=True,
         )
     )
 
     assert menu.action_for(MenuCommand.OPEN_LIVE_SETTINGS).text() == "开播设置"
-    assert menu.action_for(MenuCommand.OPEN_MIRROR_SETTINGS).text() == "Mirror 设置"
+    assert menu.action_for(MenuCommand.OPEN_SETTINGS).text() == "设置"
     menu.action_for(MenuCommand.OPEN_SETTINGS).trigger()
     menu.action_for(MenuCommand.TOGGLE_GAMING_MODE).trigger()
 
