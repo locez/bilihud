@@ -103,7 +103,7 @@ ipython_config.py
 #   commonly ignored for libraries.
 #uv.lock
 
-# scikit-build-core in-place editable builds
+# CMake build trees used by scikit-build-core
 /CMakeCache.txt
 /CMakeFiles/
 /CMakeInit.txt

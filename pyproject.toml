@@ -1,16 +1,14 @@
 [build-system]
-requires = ["scikit-build-core>=0.10"]
+requires = ["scikit-build-core>=0.12"]
 build-backend = "scikit_build_core.build"
 
 [tool.scikit-build]
-minimum-version = "0.10"
+minimum-version = "0.12"
 cmake.version = ">=3.16"
+cmake.build-type = "Release"
+cmake.args = ["-DBILIHUD_INSTALL_DIR=bilihud"]
 wheel.packages = ["src/bilihud"]
 wheel.platlib = true
-
-[tool.scikit-build.editable]
-mode = "inplace"
-rebuild = true
 
 [tool.scikit-build.wheel.force-include]
 "vendor/blivedm/blivedm" = "bilihud/vendor/blivedm"

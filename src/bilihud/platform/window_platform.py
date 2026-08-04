@@ -17,7 +17,7 @@ from .layer_shell import (
     NiriLayerShellDragStrategy,
     load_layer_shell_bridge,
 )
-from .layer_shell_loader import should_disable_layer_shell
+from .layer_shell_loader import default_package_dir, should_disable_layer_shell
 from .overlay_contracts import (
     OverlayDragStrategy,
     OverlayPlatform,
@@ -252,7 +252,7 @@ class DefaultOverlayPlatformFactory:
         context = _PlatformContext(
             platform_name=QGuiApplication.platformName(),
             current_desktop=self._current_desktop(),
-            package_dir=Path(__file__).resolve().parent.parent,
+            package_dir=default_package_dir(Path(__file__).resolve().parent.parent),
         )
         logger.info(
             "Overlay platform probe: qt_platform=%s desktop=%s package_dir=%s",

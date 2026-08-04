@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
@@ -62,21 +64,13 @@ def test_cmake_auto_mode_falls_back_without_layer_shell_dependencies(tmp_path: P
 
 
 @pytest.mark.skipif(CMAKE is None, reason="cmake is required for build configuration tests")
-def test_cmake_inplace_mode_places_bridge_next_to_python_package(tmp_path: Path) -> None:
-    """An in-place editable build emits the bridge where the source import can load it."""
-    source_dir = tmp_path / "project"
-    package_dir = source_dir / "src" / "bilihud"
-    package_dir.mkdir(parents=True)
-    shutil.copy2(PROJECT_ROOT / "CMakeLists.txt", source_dir / "CMakeLists.txt")
-    shutil.copy2(
-        PROJECT_ROOT / "src" / "bilihud" / "layer_shell_bridge.cpp",
-        package_dir / "layer_shell_bridge.cpp",
-    )
-
+def test_cmake_native_install_uses_python_platlib_by_default(tmp_path: Path) -> None:
+    """A direct CMake install places the bridge beside the installed Python package."""
+    build_dir = tmp_path / "build"
     result = _configure_cmake(
-        source_dir,
+        build_dir,
         "-DBILIHUD_LAYER_SHELL=ON",
-        source_dir=source_dir,
+        f"-DPython3_EXECUTABLE={sys.executable}",
     )
     output = result.stdout + result.stderr
     if result.returncode != 0:
@@ -85,38 +79,22 @@ def test_cmake_inplace_mode_places_bridge_next_to_python_package(tmp_path: Path)
         assert result.returncode == 0, output
 
     subprocess.run(
-        ["cmake", "--build", str(source_dir)],
+        ["cmake", "--build", str(build_dir)],
         check=True,
         capture_output=True,
         text=True,
     )
 
-    assert (package_dir / "libbili-layer.so").is_file()
-
-
-@pytest.mark.skipif(CMAKE is None, reason="cmake is required for build configuration tests")
-def test_cmake_inplace_auto_mode_removes_stale_bridge_when_dependencies_are_missing(
-    tmp_path: Path,
-) -> None:
-    """An in-place fallback removes a previous native artifact before generic startup."""
-    source_dir = tmp_path / "project"
-    package_dir = source_dir / "src" / "bilihud"
-    package_dir.mkdir(parents=True)
-    shutil.copy2(PROJECT_ROOT / "CMakeLists.txt", source_dir / "CMakeLists.txt")
-    stale_bridge = package_dir / "libbili-layer.so"
-    stale_bridge.write_bytes(b"stale bridge")
-
-    result = _configure_cmake(
-        source_dir,
-        "-DBILIHUD_LAYER_SHELL=AUTO",
-        "-DCMAKE_DISABLE_FIND_PACKAGE_Qt6=TRUE",
-        "-DCMAKE_DISABLE_FIND_PACKAGE_LayerShellQt=TRUE",
-        "-DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE",
-        source_dir=source_dir,
+    install_dir = tmp_path / "install"
+    subprocess.run(
+        ["cmake", "--install", str(build_dir), "--prefix", str(install_dir)],
+        check=True,
+        capture_output=True,
+        text=True,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert not stale_bridge.exists()
+    platlib = Path(sysconfig.get_path("platlib", vars={"base": "", "platbase": ""}).lstrip("/"))
+    assert (install_dir / platlib / "bilihud" / "libbili-layer.so").is_file()
 
 
 @pytest.mark.skipif(CMAKE is None, reason="cmake is required for build configuration tests")

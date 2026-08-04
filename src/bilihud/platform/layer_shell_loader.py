@@ -1,3 +1,4 @@
+import sysconfig
 from pathlib import Path
 
 LAYER_SHELL_LIBRARY_NAME = "libbili-layer.so"
@@ -25,3 +26,12 @@ def find_layer_shell_library(package_dir: str | Path) -> str | None:
         return str(candidates[0])
 
     return None
+
+
+def default_package_dir(source_package_dir: str | Path) -> Path:
+    """Prefer the installed package directory when it contains the native bridge."""
+    source_path = Path(source_package_dir)
+    installed_path = Path(sysconfig.get_path("platlib")) / source_path.name
+    if find_layer_shell_library(installed_path) is not None:
+        return installed_path
+    return source_path

@@ -1,4 +1,6 @@
+import bilihud.platform.layer_shell_loader as layer_shell_loader
 from bilihud.platform.layer_shell_loader import (
+    default_package_dir,
     find_layer_shell_library,
     should_disable_layer_shell,
 )
@@ -22,6 +24,35 @@ def test_find_layer_shell_library_accepts_debian_python_abi_suffix(tmp_path):
 
 def test_find_layer_shell_library_returns_none_when_missing(tmp_path):
     assert find_layer_shell_library(tmp_path) is None
+
+
+def test_default_package_dir_prefers_installed_package_with_bridge(tmp_path, monkeypatch):
+    source_package = tmp_path / "src" / "bilihud"
+    installed_package = tmp_path / "venv" / "lib" / "python3.14" / "site-packages" / "bilihud"
+    source_package.mkdir(parents=True)
+    installed_package.mkdir(parents=True)
+    (installed_package / "libbili-layer.so").touch()
+    monkeypatch.setattr(
+        layer_shell_loader.sysconfig,
+        "get_path",
+        lambda _name: str(installed_package.parent),
+    )
+
+    assert default_package_dir(source_package) == installed_package
+
+
+def test_default_package_dir_falls_back_to_source_without_bridge(tmp_path, monkeypatch):
+    source_package = tmp_path / "src" / "bilihud"
+    installed_package = tmp_path / "venv" / "lib" / "python3.14" / "site-packages" / "bilihud"
+    source_package.mkdir(parents=True)
+    installed_package.mkdir(parents=True)
+    monkeypatch.setattr(
+        layer_shell_loader.sysconfig,
+        "get_path",
+        lambda _name: str(installed_package.parent),
+    )
+
+    assert default_package_dir(source_package) == source_package
 
 
 def test_should_disable_layer_shell_on_gnome_wayland():

@@ -98,7 +98,7 @@ uv sync
 source .venv/bin/activate
 ```
 
-开发模式下，`uv sync` 会安装 scikit-build-core 的 in-place editable 配置；之后执行 `uv run bilihud` 时会在导入阶段自动触发 CMake 增量构建，bridge 输出到 `src/bilihud/`。正式 wheel 仍在隔离构建目录中生成 native bridge。
+开发模式下，`uv sync` 会通过 scikit-build-core 构建 editable bridge，并将产物放在虚拟环境的 Python `platlib` 包目录；`uv run bilihud` 会优先加载这里的已安装 bridge。修改 C++ 后可执行 `uv sync --reinstall-package bilihud` 触发重新构建。构建过程不会向 `src/bilihud/` 写入 native 文件；正式 wheel 和发行版打包都使用同一套 CMake 安装路径。
 
 构建时可以显式关闭或要求 bridge：
 

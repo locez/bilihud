@@ -51,10 +51,11 @@ root merely because it is convenient.
 ## Native Build Boundary
 
 The PEP 517 backend is `scikit_build_core.build`; CMake is the only native build
-entry point. CMake installs the optional Layer Shell bridge directly into the
-`bilihud` package directory, which is the path consumed by
-`platform.layer_shell_loader`. Python application code does not know how the
-bridge was compiled.
+entry point. CMake derives a prefix-relative Python `platlib` package path for
+normal installs, while the wheel configuration overrides it to `bilihud` inside
+the wheel staging directory. `platform.layer_shell_loader` prefers the installed
+package path when it contains the bridge, so Python application code does not
+know how the bridge was compiled.
 
 `BILIHUD_LAYER_SHELL=AUTO` is the default. It builds the bridge only for Linux
 when the C++ compiler, Qt6 Core/Gui private development files, LayerShellQt, and
