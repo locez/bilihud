@@ -49,26 +49,32 @@ BiliHUD 的全屏浮窗能力依赖 compositor 支持 `wlr-layer-shell` 协议�
 
 #### 系统依赖 (System Dependencies)
 
-由于引入了 `layer-shell-qt`，如果您从源码运行，请先根据您的发行版安装必要的依赖：
+Linux 的 Layer Shell bridge 是可选 native 组件。CMake 默认使用 `AUTO` 模式：只有 Linux 且编译器、Qt6 private headers、LayerShellQt 和 Wayland 开发文件都可用时才编译 bridge；其他平台或缺少这些依赖时仍可安装通用 Qt 窗口路径。
+
+如果需要 Linux 全屏浮窗，请根据您的发行版安装以下构建依赖：
 
 **Ubuntu / Debian:**
 ```bash
-sudo apt install liblayershellqtinterface-dev build-essential libwayland-dev qt6-base-dev libqt6waylandclient6
+sudo apt install cmake ninja-build pkg-config build-essential \
+  liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev libwayland-dev
 ```
 
 **Fedora:**
 ```bash
-sudo dnf install gcc-c++ qt6-qtbase-devel layer-shell-qt-devel wayland-devel
+sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel \
+  qt6-qtbase-private-devel layer-shell-qt-devel wayland-devel
 ```
 
 **Arch Linux:**
 ```bash
-sudo pacman -S qt6-base qt6-wayland layer-shell-qt
+sudo pacman -S cmake ninja gcc pkgconf python-scikit-build-core \
+  qt6-base qt6-wayland layer-shell-qt
 ```
 
 **Gentoo Linux:**
 ```bash
-sudo emerge -a kde-plasma/layer-shell-qt dev-qt/qtwayland
+sudo emerge -a dev-build/cmake dev-build/ninja dev-util/pkgconf \
+  dev-qt/qtbase:6 dev-qt/qtwayland kde-plasma/layer-shell-qt
 ```
 
 #### 通用步骤
@@ -90,6 +96,18 @@ uv sync
 
 # 激活环境
 source .venv/bin/activate
+```
+
+开发模式下，`uv sync` 会安装 scikit-build-core 的 in-place editable 配置；之后执行 `uv run bilihud` 时会在导入阶段自动触发 CMake 增量构建，bridge 输出到 `src/bilihud/`。正式 wheel 仍在隔离构建目录中生成 native bridge。
+
+构建时可以显式关闭或要求 bridge：
+
+```bash
+# 不需要 Layer Shell 时跳过所有 Linux native 依赖探测
+uv build -Ccmake.define.BILIHUD_LAYER_SHELL=OFF
+
+# 要求 bridge；依赖不完整时让构建明确失败
+uv build -Ccmake.define.BILIHUD_LAYER_SHELL=ON
 ```
 
 ### 2. 启动

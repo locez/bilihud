@@ -48,6 +48,21 @@ Dependencies should point toward stable contracts and business meaning. The
 package name must make the owner apparent; a new module must not be added to the
 root merely because it is convenient.
 
+## Native Build Boundary
+
+The PEP 517 backend is `scikit_build_core.build`; CMake is the only native build
+entry point. CMake installs the optional Layer Shell bridge directly into the
+`bilihud` package directory, which is the path consumed by
+`platform.layer_shell_loader`. Python application code does not know how the
+bridge was compiled.
+
+`BILIHUD_LAYER_SHELL=AUTO` is the default. It builds the bridge only for Linux
+when the C++ compiler, Qt6 Core/Gui private development files, LayerShellQt, and
+Wayland client development files are discoverable. `ON` makes missing native
+dependencies an explicit build error; `OFF` produces the generic Qt package
+without the Linux-only artifact. Unsupported platforms never enter the Linux
+dependency discovery path.
+
 ## Ownership Rules
 
 - `danmaku.messages` owns HUD message variants, author metadata, badges, and

@@ -2,7 +2,7 @@ Source: bilihud
 Section: utils
 Priority: optional
 Maintainer: Locez <locez@locez.com>
-Build-Depends: debhelper-compat (= 13), dh-python, pybuild-plugin-pyproject, python3-all (>= 3.13), python3-hatchling, python3-aiohttp, python3-pyqt6, python3-qrcode, liblayershellqtinterface-dev, build-essential
+Build-Depends: debhelper-compat (= 13), dh-python, pybuild-plugin-pyproject, python3-all (>= 3.13), python3-scikit-build-core, cmake, ninja-build, python3-aiohttp, python3-pyqt6, python3-qrcode, liblayershellqtinterface-dev, qt6-base-dev, qt6-base-private-dev, libwayland-dev, pkg-config, build-essential
 Standards-Version: 4.6.2
 Homepage: https://github.com/locez/bilihud
 

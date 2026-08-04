@@ -10,10 +10,13 @@ URL:            https://github.com/locez/bilihud
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  python3-devel >= 3.13
-BuildRequires:  python3-hatchling
-# BuildRequires:  python3-hatch-build-scripts  <-- unavailable in Fedora repos, installed via pip in CI
+BuildRequires:  python3-scikit-build-core
+BuildRequires:  cmake
+BuildRequires:  ninja-build
 BuildRequires:  gcc-c++
+BuildRequires:  pkgconf-pkg-config
 BuildRequires:  qt6-qtbase-devel
+BuildRequires:  qt6-qtbase-private-devel
 BuildRequires:  layer-shell-qt-devel
 BuildRequires:  wayland-devel
 
@@ -29,9 +32,6 @@ designed for Linux with Wayland support via Layer Shell.
 %autosetup
 
 %build
-export PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-export PYTHONPATH=$PYTHONPATH:/usr/local/lib/python${PY_VER}/site-packages:/usr/local/lib64/python${PY_VER}/site-packages
-export USE_SYSTEM_LIBS=1
 %pyproject_wheel
 
 %install

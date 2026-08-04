@@ -4,11 +4,11 @@ _pkgname=bilihud
 pkgver=0.2.0.r0.gIT_REV_Here
 pkgrel=1
 pkgdesc="B站弹幕阅读器 - 一个可以在游戏全屏时显示弹幕的Qt应用程序"
-arch=('any')
+arch=('x86_64')
 url="https://github.com/locez/bilihud"
 license=('MIT')
 depends=(
-    'python>=3.10'
+    'python>=3.13'
     'python-pyqt6'
     'python-aiohttp'
     'python-qasync'
@@ -25,8 +25,11 @@ makedepends=(
     'git'
     'python-build'
     'python-installer'
-    'python-hatchling'
-    'python-hatch-build-scripts' # Needed for custom build hook
+    'python-scikit-build-core'
+    'cmake'
+    'ninja'
+    'gcc'
+    'pkgconf'
     'python-wheel'
 )
 provides=("$_pkgname")

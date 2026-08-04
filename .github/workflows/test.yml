@@ -32,12 +32,40 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y xvfb libegl1 libdbus-1-3 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0 x11-utils \
-        qt6-base-dev qt6-base-private-dev libwayland-dev liblayershellqtinterface-dev pkg-config build-essential
+        cmake ninja-build qt6-base-dev qt6-base-private-dev libwayland-dev liblayershellqtinterface-dev pkg-config build-essential
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install ".[test]"
+
+    - name: Build sdist and wheel
+      run: |
+        python -m pip install build
+        python -m build --sdist --wheel --outdir /tmp/bilihud-dist
+        python - <<'PY'
+        from pathlib import Path
+        import tarfile
+        import zipfile
+
+        output_dir = Path("/tmp/bilihud-dist")
+        wheel = next(output_dir.glob("*.whl"))
+        sdist = next(output_dir.glob("*.tar.gz"))
+
+        with zipfile.ZipFile(wheel) as archive:
+            names = set(archive.namelist())
+            assert "bilihud/libbili-layer.so" in names
+            wheel_metadata = archive.read(next(name for name in names if name.endswith(".dist-info/WHEEL")))
+            assert b"Root-Is-Purelib: false" in wheel_metadata
+            assert b"Tag: cp" in wheel_metadata
+            assert b"-linux_" in wheel_metadata
+
+        with tarfile.open(sdist) as archive:
+            names = set(archive.getnames())
+            assert any(name.endswith("/CMakeLists.txt") for name in names)
+            assert any(name.endswith("/src/bilihud/layer_shell_bridge.cpp") for name in names)
+            assert any(name.endswith("/vendor/blivedm/blivedm/__init__.py") for name in names)
+        PY
 
     - name: Lint with ruff
       run: |

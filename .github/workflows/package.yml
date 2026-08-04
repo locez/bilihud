@@ -20,8 +20,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          dnf install -y rpm-build python3-devel gcc-c++ libstdc++-static qt6-qtbase-devel qt6-qtbase-private-devel layer-shell-qt-devel wayland-devel python3-hatchling git tar python3-pip
-          pip install hatch-build-scripts
+          dnf install -y rpm-build python3-devel gcc-c++ cmake ninja-build pkgconf-pkg-config python3-scikit-build-core qt6-qtbase-devel qt6-qtbase-private-devel layer-shell-qt-devel wayland-devel git tar python3-pip
 
       - name: Get Version
         id: get_version
@@ -58,6 +57,12 @@ jobs:
       - name: Build RPM
         run: rpmbuild -bb packaging/fedora/bilihud.spec
 
+      - name: Verify RPM native artifact
+        run: |
+          rpm_file=$(find ~/rpmbuild/RPMS -type f -name '*.rpm' -print -quit)
+          test -n "$rpm_file"
+          rpm -qpl "$rpm_file" | grep -Eq '(^|/)bilihud/libbili-layer\.so$'
+
       - uses: actions/upload-artifact@v7
         with:
           name: bilihud-rpm
@@ -79,9 +84,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y devscripts debhelper dh-python pybuild-plugin-pyproject python3-all python3-hatchling python3-aiohttp python3-brotli python3-keyring python3-pil python3-pyqt6 python3-qasync python3-qrcode liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev pkg-config libwayland-dev build-essential python3-pip
-          # Force install non-deb build requirement system-wide
-          python3 -m pip install hatch-build-scripts --break-system-packages
+          apt-get install -y devscripts debhelper dh-python pybuild-plugin-pyproject python3-all python3-scikit-build-core cmake ninja-build python3-aiohttp python3-brotli python3-keyring python3-pil python3-pyqt6 python3-qasync python3-qrcode liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev pkg-config libwayland-dev build-essential python3-pip
 
       - name: Get Version
         id: get_version
@@ -119,9 +122,17 @@ jobs:
         run: |
           apt-get install -y ./bilihud_*.deb
           python3 - <<'PY'
+          from pathlib import Path
+
           import bilihud.main
+          from bilihud.platform.layer_shell_loader import find_layer_shell_library
           import pure_protobuf.annotations
           import blivedm.models.web
+
+          package_dir = Path(bilihud.main.__file__).resolve().parent
+          bridge = find_layer_shell_library(package_dir)
+          assert bridge is not None, package_dir
+          assert Path(bridge).is_file(), bridge
           PY
 
       - uses: actions/upload-artifact@v7
