@@ -55,6 +55,7 @@ BDEPEND="
 
 python_configure_all() {
 	DISTUTILS_ARGS=(
+		-DBILIHUD_INSTALL_DIR=bilihud
 		-DBILIHUD_LAYER_SHELL=ON
 	)
 }
