@@ -10,6 +10,7 @@ import blivedm
 import blivedm.clients.ws_base as ws_base
 import blivedm.models.web as web_models
 
+from ..app.lifecycle import run_owned_blocking
 from ..auth.service import AuthenticationService, AuthManager
 from ..live.audience import AudienceSnapshot, parse_anchor_uid, parse_audience_snapshot
 from ..live.emoticons import (
@@ -86,12 +87,14 @@ class DanmakuClient:
 
     async def start(self) -> None:
         """Load authentication, create owned network resources, and start receiving messages."""
-        loop = asyncio.get_running_loop()
         auth_manager = self.auth_service if self.auth_service is not None else AuthManager()
         login_failure_message: str | None = None
 
         try:
-            loaded_cookies, is_keyring = await loop.run_in_executor(None, auth_manager.load_auth_cookies)
+            loaded_cookies, is_keyring = await run_owned_blocking(
+                auth_manager.load_auth_cookies,
+                thread_name="bilihud-auth",
+            )
             if is_keyring:
                 if not await auth_manager.validate_session(loaded_cookies):
                     logger.info("Keyring cookies expired")

@@ -17,12 +17,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .app.lifecycle import TaskScope, TaskSupervisor, cancel_task
-from .app.services import create_default_services
-from .appearance import Appearance, resolve_appearance
-from .auth.service import QR_LOGIN_STATUS_NAMES, AuthenticationService
-from .config.store import ThemeMode
-from .settings_style import settings_stylesheet
+from bilihud.app.lifecycle import TaskScope, TaskSupervisor, cancel_task, run_owned_blocking
+from bilihud.auth.service import QR_LOGIN_STATUS_NAMES, AuthenticationService
+from bilihud.config.store import ThemeMode
+from bilihud.ui.appearance import Appearance, resolve_appearance
+from bilihud.ui.settings.style import settings_stylesheet
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,8 @@ class QRLoginDialog(QDialog):
     def __init__(
         self,
         parent: QWidget | None = None,
-        auth_service: AuthenticationService | None = None,
+        *,
+        auth_service: AuthenticationService,
         task_scope: TaskScope | None = None,
         appearance: Appearance | None = None,
     ) -> None:
@@ -79,9 +79,7 @@ class QRLoginDialog(QDialog):
             """,
         )
 
-        self.auth_service = (
-            auth_service if auth_service is not None else create_default_services().auth_service
-        )
+        self.auth_service = auth_service
         if task_scope is None:
             task_supervisor = TaskSupervisor()
             self._task_supervisor: TaskSupervisor | None = task_supervisor
@@ -251,8 +249,10 @@ class QRLoginDialog(QDialog):
                 self._show_qr_failure("无法获取二维码，请检查网络后重试。")
                 return
 
-            loop = asyncio.get_running_loop()
-            image_bytes = await loop.run_in_executor(None, self.auth_service.generate_qr_image, url)
+            image_bytes = await run_owned_blocking(
+                lambda: self.auth_service.generate_qr_image(url),
+                thread_name="bilihud-qr",
+            )
             if not self._is_current_generation(generation):
                 return
             if image_bytes is None:

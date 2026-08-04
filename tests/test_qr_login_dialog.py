@@ -5,9 +5,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QToolButton
 
-from bilihud.appearance import resolve_appearance
 from bilihud.config.store import ThemeMode
-from bilihud.qr_login_dialog import QRLoginDialog, _qr_status_presentation
+from bilihud.ui.appearance import resolve_appearance
+from bilihud.ui.auth.qr_login import QRLoginDialog, _qr_status_presentation
 
 
 def test_qr_login_protocol_statuses_keep_unscanned_and_scanned_distinct() -> None:
@@ -18,7 +18,12 @@ def test_qr_login_protocol_statuses_keep_unscanned_and_scanned_distinct() -> Non
 def test_qr_login_dialog_uses_unified_settings_visual_language() -> None:
     app = QApplication.instance() or QApplication([])
     assert app is not None
+
+    class FakeAuthService:
+        pass
+
     dialog = QRLoginDialog(
+        auth_service=FakeAuthService(),
         appearance=resolve_appearance(ThemeMode.LIGHT),
     )
 

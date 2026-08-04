@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from .app.lifecycle import TaskScope, cancel_task
-from .live.models import (
+from bilihud.app.lifecycle import TaskScope, cancel_task
+from bilihud.live.models import (
     LiveControlOperationResult,
     LiveControlState,
     LiveVerificationKind,
@@ -25,6 +25,8 @@ from .live.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+LiveStartedHandler = Callable[[int], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,11 +158,14 @@ class LiveSettingsWorkflow:
         service: LiveSettingsService | None,
         task_scope: TaskScope | None,
         view: LiveSettingsView,
+        *,
+        on_live_started: LiveStartedHandler | None = None,
     ) -> None:
         """Create a workflow owner with an explicit service and task scope."""
         self._service = service
         self._task_scope = task_scope
         self._view = view
+        self._on_live_started = on_live_started
         self._tasks: set[asyncio.Task[None]] = set()
         self._initial_load_task: asyncio.Task[None] | None = None
         self._room_info_task: asyncio.Task[None] | None = None
@@ -219,7 +224,7 @@ class LiveSettingsWorkflow:
         return self._create_task(self._stop_obs(), name="stop-obs")
 
     async def shutdown(self) -> None:
-        """Cancel page workflows and close the shared live-control service."""
+        """Cancel page workflows without closing the shared application service."""
         if self._shutdown_complete:
             return
         self._shutting_down = True
@@ -232,8 +237,6 @@ class LiveSettingsWorkflow:
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
-        if self._service is not None:
-            await self._service.shutdown()
         self._shutdown_complete = True
 
     def _create_task(
@@ -382,7 +385,8 @@ class LiveSettingsWorkflow:
                     allow_obs_switch=True,
                 )
             self._view.apply_service_state(outcome.state)
-            self._present_start_outcome(outcome, config_saved=config_saved)
+            hud_error = await self._connect_hud_after_start(outcome, values.room_id)
+            self._present_start_outcome(outcome, config_saved=config_saved, hud_error=hud_error)
         except asyncio.CancelledError:
             raise
         except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
@@ -418,9 +422,36 @@ class LiveSettingsWorkflow:
         finally:
             self._view.set_busy(False)
 
-    def _present_start_outcome(self, outcome: StartLiveOutcome, *, config_saved: bool) -> None:
+    async def _connect_hud_after_start(
+        self,
+        outcome: StartLiveOutcome,
+        room_id: int,
+    ) -> str | None:
+        """Connect the HUD only after Bilibili has accepted the live start."""
+        if self._on_live_started is None or outcome.status not in (
+            StartLiveStatus.STARTED,
+            StartLiveStatus.STARTED_WITHOUT_CREDENTIALS,
+        ):
+            return None
+        try:
+            await self._on_live_started(room_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("Failed to connect HUD after live started")
+            return str(exc).strip() or "连接失败"
+        return None
+
+    def _present_start_outcome(
+        self,
+        outcome: StartLiveOutcome,
+        *,
+        config_saved: bool,
+        hud_error: str | None = None,
+    ) -> None:
         """Render every start-live state without turning partial success into success."""
         persistence_notice = "" if config_saved else "设置保存失败，请检查权限后重试。"
+        hud_notice = f"HUD 连接失败: {hud_error}" if hud_error else ""
         if outcome.status is StartLiveStatus.VERIFICATION_REQUIRED:
             self._view.show_verification(outcome.verification_url, outcome.verification_kind)
             message = (
@@ -437,7 +468,7 @@ class LiveSettingsWorkflow:
         if outcome.status is StartLiveStatus.STARTED_WITHOUT_CREDENTIALS:
             message = outcome.error.message if outcome.error is not None else "接口未返回可识别的推流凭证。"
             self._view.set_status(
-                self._join_messages(outcome.notice, f"直播已开始，但{message}", persistence_notice),
+                self._join_messages(outcome.notice, f"直播已开始，但{message}", hud_notice, persistence_notice),
                 error=True,
             )
             return
@@ -446,13 +477,16 @@ class LiveSettingsWorkflow:
             if outcome.error is not None:
                 message = f"直播已开始，但 {outcome.error.message}"
                 self._view.set_status(
-                    self._join_messages(outcome.notice, message, persistence_notice),
+                    self._join_messages(outcome.notice, message, hud_notice, persistence_notice),
                     error=True,
                 )
             else:
                 message = "直播已开始，OBS 推流已启动。" if outcome.obs_started else "直播已开始。"
-                if persistence_notice:
-                    self._view.set_status(self._join_messages(outcome.notice, message, persistence_notice), error=True)
+                if persistence_notice or hud_notice:
+                    self._view.set_status(
+                        self._join_messages(outcome.notice, message, hud_notice, persistence_notice),
+                        error=True,
+                    )
                 else:
                     self._view.set_status(self._join_messages(outcome.notice, message), success=True)
             return
@@ -519,5 +553,6 @@ __all__ = (
     "LiveSettingsForm",
     "LiveSettingsService",
     "LiveSettingsView",
+    "LiveStartedHandler",
     "LiveSettingsWorkflow",
 )

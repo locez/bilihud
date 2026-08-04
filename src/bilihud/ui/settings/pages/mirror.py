@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .app.mirror_coordinator import MirrorCoordinatorState
+from bilihud.app.mirror_coordinator import MirrorCoordinatorState
 
 
 class MirrorSettingsPage(QWidget):

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .config.store import AppConfig
+from bilihud.config.store import AppConfig
 
 
 class SettingsPage(StrEnum):

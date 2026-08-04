@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QApplication
 
-from .config.store import ThemeMode
+from bilihud.config.store import ThemeMode
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,4 +1,4 @@
-from bilihud.live_control_dialog import (
+from bilihud.live.models import (
     obs_cleanup_after_stop_state,
     start_live_confirmation_needed,
 )

@@ -6,7 +6,7 @@ from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QClipboard, QGuiApplication
 from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
-from .live.models import StreamCredential
+from bilihud.live.models import StreamCredential
 
 
 class LiveCredentials(QWidget):

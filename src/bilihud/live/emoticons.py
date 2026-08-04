@@ -48,6 +48,19 @@ def _as_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _as_string_mapping(value: object) -> dict[str, Any] | None:
+    """Normalize one JSON object before passing it to the typed parser."""
+    if not isinstance(value, dict):
+        return None
+
+    normalized: dict[str, Any] = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            return None
+        normalized[key] = item
+    return normalized
+
+
 def _parse_emoticon(raw: dict[str, Any], package_type: int, package_name: str) -> LiveEmoticon | None:
     emoji = str(raw.get("emoji") or raw.get("descript") or "").strip()
     url = str(raw.get("url") or "").strip()
@@ -95,13 +108,15 @@ def parse_live_emoticon_packages(payload: dict[str, Any]) -> list[LiveEmoticonPa
         raw_emoticons = raw_package.get("emoticons")
         if not isinstance(raw_emoticons, list):
             raw_emoticons = []
-        emoticons = tuple(
-            emoticon
-            for emoticon in (
-                _parse_emoticon(raw, package_type, name) for raw in raw_emoticons if isinstance(raw, dict)
-            )
-            if emoticon is not None
-        )
+        parsed_emoticons: list[LiveEmoticon] = []
+        for raw in raw_emoticons:
+            raw_mapping = _as_string_mapping(raw)
+            if raw_mapping is None:
+                continue
+            emoticon = _parse_emoticon(raw_mapping, package_type, name)
+            if emoticon is not None:
+                parsed_emoticons.append(emoticon)
+        emoticons = tuple(parsed_emoticons)
 
         package = LiveEmoticonPackage(
             package_id=_as_int(raw_package.get("pkg_id")),

@@ -6,7 +6,7 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QFormLayout, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from .app_metadata import GITHUB_URL, LICENSE_NAME, application_version
+from bilihud.app_metadata import GITHUB_URL, LICENSE_NAME, application_version
 
 
 class AboutSettingsPage(QWidget):

@@ -7,17 +7,18 @@ from PyQt6.QtGui import QMouseEvent, QWheelEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QCheckBox, QDialog, QLabel, QLineEdit, QPushButton, QToolButton, QWidget
 
-from bilihud.about_settings_page import AboutSettingsPage
 from bilihud.app.menu import AccountStatus
 from bilihud.app_metadata import GITHUB_URL, application_version
 from bilihud.auth.service import AccountProfile
 from bilihud.config.store import AppConfig, ThemeMode
 from bilihud.live.models import LiveVerificationKind
-from bilihud.live_settings_page import LiveSettingsPage
-from bilihud.live_settings_workflow import LiveAction
-from bilihud.mirror_settings_page import MirrorSettingsPage
-from bilihud.settings_account_page import AccountSettingsPage
-from bilihud.settings_dialog import SettingsDialog, SettingsPage, SettingsSaveRequest
+from bilihud.ui.settings.dialog import SettingsDialog
+from bilihud.ui.settings.models import SettingsPage, SettingsSaveRequest
+from bilihud.ui.settings.pages.about import AboutSettingsPage
+from bilihud.ui.settings.pages.account import AccountSettingsPage
+from bilihud.ui.settings.pages.live.page import LiveSettingsPage
+from bilihud.ui.settings.pages.live.workflow import LiveAction
+from bilihud.ui.settings.pages.mirror import MirrorSettingsPage
 
 _QT_APP: QApplication | None = None
 

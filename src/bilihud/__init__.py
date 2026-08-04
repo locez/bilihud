@@ -15,10 +15,10 @@ if os.path.exists(_local_vendor):
     # Also add site-packages inside vendor if pip installs there (e.g. vendor/lib/pythonX.Y/site-packages)
     # But for simplicity, we will instruct pip to install flatly or we handle it in CI.
     # Actually, simpler: We will install dependencies into src/bilihud/vendor directly.
-    # So imports like 'import qasync' will work if 'src/bilihud/vendor/qasync' exists AND 'src/bilihud/vendor' is in sys.path.
+    # So imports like 'import qasync' will work when the vendored package is
+    # present and its parent directory is on sys.path.
 
 elif os.path.exists(_dev_vendor):
     # Only for blivedm submodule in dev mode
     if _dev_vendor not in sys.path:
         sys.path.insert(0, _dev_vendor)
-

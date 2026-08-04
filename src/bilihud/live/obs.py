@@ -131,11 +131,17 @@ def pick_primary_credential(credentials: Sequence[StreamCredential]) -> StreamCr
 
 
 class ObsWebSocketClient:
-    def __init__(self, host: str = "127.0.0.1", port: int = 4455, password: str = "", timeout: float = 5.0):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 4455,
+        password: str = "",
+        timeout: float = 5.0,
+    ) -> None:
         self.host = host
         self.port = port
         self.password = password
-        self.timeout = timeout
+        self.timeout: float = timeout
 
     @property
     def url(self) -> str:
@@ -144,7 +150,7 @@ class ObsWebSocketClient:
     async def set_stream_service_settings(self, credential: StreamCredential) -> None:
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.ws_connect(self.url, timeout=self.timeout) as ws:
+                async with session.ws_connect(self.url, timeout=self.timeout) as ws:  # ty: ignore[no-matching-overload]
                     await self._identify(ws)
                     await self._send_request(ws, build_set_stream_service_request(credential.address, credential.key))
             except TimeoutError as exc:
@@ -155,7 +161,7 @@ class ObsWebSocketClient:
     async def check_connection(self) -> None:
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.ws_connect(self.url, timeout=self.timeout) as ws:
+                async with session.ws_connect(self.url, timeout=self.timeout) as ws:  # ty: ignore[no-matching-overload]
                     await self._identify(ws)
             except TimeoutError as exc:
                 raise ObsApiError("连接 OBS WebSocket 超时。") from exc
@@ -165,7 +171,7 @@ class ObsWebSocketClient:
     async def set_stream_service_settings_and_start(self, credential: StreamCredential) -> None:
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.ws_connect(self.url, timeout=self.timeout) as ws:
+                async with session.ws_connect(self.url, timeout=self.timeout) as ws:  # ty: ignore[no-matching-overload]
                     await self._identify(ws)
                     for request in obs_start_stream_requests(credential):
                         await self._send_request(ws, request)
@@ -177,7 +183,7 @@ class ObsWebSocketClient:
     async def stop_stream(self) -> None:
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.ws_connect(self.url, timeout=self.timeout) as ws:
+                async with session.ws_connect(self.url, timeout=self.timeout) as ws:  # ty: ignore[no-matching-overload]
                     await self._identify(ws)
                     await self._send_request(ws, build_stop_stream_request())
             except TimeoutError as exc:
@@ -188,7 +194,7 @@ class ObsWebSocketClient:
     async def is_streaming(self) -> bool:
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.ws_connect(self.url, timeout=self.timeout) as ws:
+                async with session.ws_connect(self.url, timeout=self.timeout) as ws:  # ty: ignore[no-matching-overload]
                     await self._identify(ws)
                     response = await self._send_request(ws, build_get_stream_status_request())
                     return parse_stream_status_response(response)

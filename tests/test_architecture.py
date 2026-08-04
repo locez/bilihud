@@ -23,22 +23,38 @@ PURE_MODULE_PATHS: Final[tuple[str, ...]] = (
     "live/validation.py",
 )
 PRESENTATION_MODULE_PATHS: Final[tuple[str, ...]] = (
-    "danmaku_widget.py",
-    "live_control_dialog.py",
-    "live_settings_page.py",
-    "live_settings_workflow.py",
-    "live_credentials.py",
-    "settings_account_page.py",
-    "mirror_settings_page.py",
-    "settings_style.py",
-    "qr_login_dialog.py",
-    "qt_window_host.py",
-    "settings_dialog.py",
-    "tray_menu.py",
+    "ui/appearance.py",
+    "ui/auth/qr_login.py",
+    "ui/hud/audience.py",
+    "ui/hud/emoticon_picker.py",
+    "ui/hud/input.py",
+    "ui/hud/layout.py",
+    "ui/hud/message_list.py",
+    "ui/hud/account_controller.py",
+    "ui/hud/mirror_controller.py",
+    "ui/hud/resize.py",
+    "ui/hud/state_view.py",
+    "ui/hud/window.py",
+    "ui/hud/window_mode.py",
+    "ui/settings/dialog.py",
+    "ui/settings/controller.py",
+    "ui/settings/models.py",
+    "ui/settings/pages/about.py",
+    "ui/settings/pages/account.py",
+    "ui/settings/pages/live/credentials.py",
+    "ui/settings/pages/live/page.py",
+    "ui/settings/pages/live/verification.py",
+    "ui/settings/pages/live/workflow.py",
+    "ui/settings/pages/mirror.py",
+    "ui/settings/stack.py",
+    "ui/settings/style.py",
+    "ui/tray/menu.py",
+    "ui/tray/controller.py",
+    "ui/window_host.py",
 )
 MESSAGE_CONSUMER_MODULE_PATHS: Final[tuple[str, ...]] = (
     "danmaku/format.py",
-    "danmaku_widget.py",
+    "ui/hud/message_list.py",
     "mirror/state.py",
     "danmaku/mock.py",
 )
@@ -143,6 +159,9 @@ def _is_forbidden(module: str, prefixes: frozenset[str]) -> bool:
 def test_feature_packages_have_explicit_ownership() -> None:
     """Keep the feature-first package boundary present for future migrations."""
     assert all((_path(name) / "__init__.py").is_file() for name in FEATURE_PACKAGE_NAMES)
+    assert (_path("ui") / "__init__.py").is_file()
+    assert (_path("ui/hud") / "__init__.py").is_file()
+    assert (_path("ui/settings") / "__init__.py").is_file()
     assert not (_path("domain") / "__init__.py").exists()
     assert not (_path("infrastructure") / "__init__.py").exists()
 
@@ -228,15 +247,24 @@ def test_mirror_application_keeps_http_and_presentation_outside_application() ->
     _assert_application_imports_allowed(("app/mirror_coordinator.py", "app/mirror_server.py"))
 
 
-def test_danmaku_widget_uses_hud_controller_instead_of_concrete_client() -> None:
-    modules = _imported_modules(_path("danmaku_widget.py"))
+def test_application_shell_workflows_keep_presentation_and_adapters_outside_application() -> None:
+    _assert_application_imports_allowed(
+        (
+            "app/account_controller.py",
+            "app/application_controller.py",
+        )
+    )
 
-    assert "bilihud.app.hud_controller" in modules
+
+def test_danmaku_widget_uses_application_controller_instead_of_concrete_client() -> None:
+    modules = _imported_modules(_path("ui/hud/window.py"))
+
+    assert "bilihud.app.application_controller" in modules
     assert "bilihud.danmaku.client" not in modules
 
 
 def test_danmaku_widget_uses_overlay_contracts_instead_of_platform_implementation() -> None:
-    modules = _imported_modules(_path("danmaku_widget.py"))
+    modules = _imported_modules(_path("ui/hud/window.py"))
 
     assert "bilihud.platform.overlay_contracts" in modules
     assert "bilihud.platform.window_platform" not in modules

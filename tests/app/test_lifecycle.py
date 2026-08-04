@@ -6,9 +6,8 @@ from PyQt6.QtWidgets import QApplication
 
 from bilihud import main as main_module
 from bilihud.app.lifecycle import TaskSupervisor
-from bilihud.danmaku_widget import DanmakuWidget
 from bilihud.main import ApplicationRuntime
-from bilihud.qr_login_dialog import QRLoginDialog
+from bilihud.ui.auth.qr_login import QRLoginDialog
 
 
 def test_task_supervisor_cancels_owned_tasks_and_is_idempotent():
@@ -80,10 +79,23 @@ def test_application_runtime_stops_widget_and_supervised_tasks(monkeypatch):
     events = []
     pending_task = None
 
+    class FakeConfigStore:
+        def load(self):
+            return object()
+
+    class FakeServices:
+        config_store = FakeConfigStore()
+
+    services = FakeServices()
+
+    class FakeApplication:
+        def __init__(self, *, services, **_kwargs):
+            self.services = services
+
     class FakeWidget:
-        def __init__(self, _room_id, *, services, task_supervisor):
+        def __init__(self, _room_id, *, application, task_supervisor):
             nonlocal pending_task
-            events.append(("create", services))
+            events.append(("create", application.services))
             scope = task_supervisor.create_scope("fake-widget")
 
             async def wait_forever():
@@ -104,9 +116,10 @@ def test_application_runtime_stops_widget_and_supervised_tasks(monkeypatch):
             events.append("widget-shutdown")
 
     monkeypatch.setattr(main_module, "DanmakuWidget", FakeWidget)
+    monkeypatch.setattr(main_module, "ApplicationController", FakeApplication)
 
     async def run_test():
-        runtime = ApplicationRuntime(object(), 7450109, services="services")
+        runtime = ApplicationRuntime(object(), 7450109, services=services)
         await runtime.start()
         await runtime.start()
         await runtime.stop()
@@ -116,14 +129,33 @@ def test_application_runtime_stops_widget_and_supervised_tasks(monkeypatch):
 
     asyncio.run(run_test())
 
-    assert events == [("create", "services"), "activate", "show", "start", "widget-shutdown"]
+    assert events == [
+        ("create", services),
+        "activate",
+        "show",
+        "start",
+        "widget-shutdown",
+    ]
 
 
 def test_application_runtime_can_retry_after_widget_shutdown_failure(monkeypatch):
+    class FakeConfigStore:
+        def load(self):
+            return object()
+
+    class FakeServices:
+        config_store = FakeConfigStore()
+
+    services = FakeServices()
+
+    class FakeApplication:
+        def __init__(self, *, services, **_kwargs):
+            self.services = services
+
     class FakeWidget:
         shutdown_calls = 0
 
-        def __init__(self, _room_id, *, services, task_supervisor):
+        def __init__(self, _room_id, *, application, task_supervisor):
             pass
 
         def activate_layer_shell(self):
@@ -141,6 +173,8 @@ def test_application_runtime_can_retry_after_widget_shutdown_failure(monkeypatch
                 raise RuntimeError("close failed")
 
     monkeypatch.setattr(main_module, "DanmakuWidget", FakeWidget)
+    monkeypatch.setattr(main_module, "ApplicationController", FakeApplication)
+    monkeypatch.setattr(main_module, "create_default_services", lambda: services)
 
     async def run_test():
         runtime = ApplicationRuntime(object(), 7450109)
@@ -154,54 +188,6 @@ def test_application_runtime_can_retry_after_widget_shutdown_failure(monkeypatch
         assert runtime._stopped is True
         assert runtime.widget is not None
         assert runtime.widget.shutdown_calls == 2
-
-    asyncio.run(run_test())
-
-
-def test_danmaku_widget_shutdown_cancels_work_before_closing_resources():
-    async def run_test():
-        supervisor = TaskSupervisor()
-        scope = supervisor.create_scope("danmaku-widget")
-        started = asyncio.Event()
-        events = []
-
-        async def wait_for_send():
-            started.set()
-            await asyncio.Event().wait()
-
-        class HudController:
-            async def shutdown(self):
-                events.append("client-stop")
-
-        widget = DanmakuWidget.__new__(DanmakuWidget)
-        widget._task_supervisor = supervisor
-        widget._owns_task_supervisor = False
-        widget._task_scope = scope
-        widget._action_tasks = set()
-        widget._mirror_start_task = None
-        widget._settings_dialog = None
-        widget._qr_login_dialog = None
-        widget._shutdown_complete = False
-        widget._shutting_down = False
-        widget.hud_controller = HudController()
-
-        send_task = DanmakuWidget._create_action_task(
-            widget,
-            wait_for_send(),
-            name="send-danmaku",
-        )
-        await started.wait()
-
-        async def shutdown_mirror_server():
-            events.append("mirror-stop")
-
-        widget.shutdown_mirror_server = shutdown_mirror_server
-
-        await DanmakuWidget.shutdown(widget)
-        await DanmakuWidget.shutdown(widget)
-
-        assert send_task.cancelled()
-        assert events == ["client-stop", "mirror-stop"]
 
     asyncio.run(run_test())
 

@@ -19,7 +19,8 @@ bilihud/
   live/            live-room models, parsing, Bilibili/OBS adapters, validation
   mirror/          mirror state, serialization, and HTTP server
   platform/        overlay contracts and desktop/native window adapters
-  *.py             Qt presentation and process entry points (T10 scope)
+  ui/              Qt presentation grouped by HUD, settings, auth, tray, and window hosting
+  main.py          process entry point and Qt application composition
 ```
 
 There is intentionally no generic `domain/`, `infrastructure/`, or `shared/`
@@ -31,8 +32,8 @@ whose external contract it implements.
 `app/services.py` is the composition root exception: it is allowed to import
 concrete adapters so one object graph can be assembled. Application workflows
 and capability contracts under `app/` must remain independent from those implementations.
-The Qt presentation files remain at the package root until T10 decides whether
-they need a dedicated `presentation/` package.
+The `ui/` package owns Qt presentation and groups widgets by their user-facing
+responsibility; process composition remains in `main.py`.
 
 ## Layers
 
@@ -59,6 +60,11 @@ root merely because it is convenient.
 - `app.hud` owns HUD workflow state/events; `app.hud_controller` owns room
   transitions, audience refresh tasks, normalized send commands, and shutdown.
   `app.hud_client` defines the injected client capability.
+- `app.account_controller` owns account lookup state, logout ordering, and the
+  boundary between secure-session removal and authenticated consumers.
+- `app.application_controller` owns the application composition after process
+  startup. It starts and shuts down account, HUD, live-control, Mirror, and
+  application task resources in a deterministic order.
 - `app.live_control_service` owns live-control workflow state transitions and
   operation lifecycles. `app.live_control_api` defines the Bilibili capability;
   `app.obs_control` defines the OBS capability; `app.credential_store` owns the
@@ -72,7 +78,7 @@ root merely because it is convenient.
 - `platform.overlay_contracts` owns toolkit-neutral window geometry, capability,
   result, and drag-strategy contracts. `platform.window_platform`,
   `platform.qt_window_platform`, `platform.layer_shell`, `platform.x11`, and
-  `platform.native` isolate desktop integrations. `qt_window_host` is the Qt
+  `platform.native` isolate desktop integrations. `ui.window_host` is the Qt
   presentation binding for those contracts.
 - `config.store` owns typed non-sensitive settings and `config.compat` owns
   legacy migration. `config.legacy` is a temporary caller facade; it must not
@@ -80,6 +86,9 @@ root merely because it is convenient.
 - `auth.service` owns authentication sessions and secure keyring access. UI
   code receives its protocol through application services rather than creating
   an authentication implementation.
+- `ui.hud.window` composes the HUD widgets and delegates mode, account, Mirror,
+  settings, tray, and state rendering to focused presentation controllers. It
+  must not become the owner of those application workflows.
 - External data is parsed, validated, and normalized before entering feature
   contracts or application workflows. Raw third-party objects do not cross an
   adapter boundary.

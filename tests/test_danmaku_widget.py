@@ -1,18 +1,13 @@
 import asyncio
 import os
 from dataclasses import replace
-from types import SimpleNamespace
 
-import pytest
 from PyQt6.QtCore import QEvent
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication, QLabel
 
-from bilihud import danmaku_widget
-from bilihud.app.menu import AccountStatus, MenuCommand, TrayMenuState
-from bilihud.app.mirror_coordinator import MirrorCoordinatorState, MirrorOperationResult
+from bilihud.app.menu import MenuCommand, TrayMenuState
 from bilihud.app.services import create_default_services
-from bilihud.auth.service import AccountProfile
 from bilihud.danmaku.messages import (
     DanmakuMessage,
     GiftMessage,
@@ -35,8 +30,11 @@ from bilihud.platform.overlay_contracts import (
     WindowPoint,
     WindowRectangle,
 )
-from bilihud.settings_dialog import SettingsPage
-from bilihud.tray_menu import TrayMenu
+from bilihud.ui.hud import emoticon_picker, message_list
+from bilihud.ui.hud import input as hud_input
+from bilihud.ui.hud import window as danmaku_widget
+from bilihud.ui.settings.models import SettingsPage
+from bilihud.ui.tray.menu import TrayMenu
 
 _QT_APP = None
 
@@ -204,150 +202,6 @@ def test_danmaku_widget_live_tray_command_selects_unified_settings_tab():
     assert calls == [SettingsPage.LIVE]
 
 
-def test_danmaku_widget_logout_closes_authenticated_consumers_before_keyring_clear():
-    events = []
-
-    class FakeHudController:
-        async def disconnect(self):
-            events.append("hud-disconnect")
-
-    class FakeLiveService:
-        async def close(self):
-            events.append("live-close")
-
-    class FakeAuthService:
-        def logout(self):
-            events.append("auth-logout")
-            return True
-
-    class FakeTray:
-        def showMessage(self, *_args):
-            events.append("tray-message")
-
-    async def run_test():
-        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
-        widget.hud_controller = FakeHudController()
-        widget.services = SimpleNamespace(live_control_service=FakeLiveService())
-        widget.auth_service = FakeAuthService()
-        widget._settings_dialog = None
-        widget._account_status = AccountStatus.LOGGED_IN
-        widget._account_profile = AccountProfile("123", "测试用户")
-        widget._account_refresh_generation = 0
-        widget._account_refresh_pending = True
-        widget._publish_account_state = lambda: events.append("publish")
-        widget.add_system_message = lambda *_args: events.append("system-message")
-        widget.tray_icon = FakeTray()
-
-        await danmaku_widget.DanmakuWidget._logout_account(widget)
-
-    asyncio.run(run_test())
-
-    assert events[:3] == ["hud-disconnect", "live-close", "auth-logout"]
-    assert events[-2:] == ["tray-message", "system-message"]
-
-
-def test_danmaku_widget_logout_attempts_keyring_clear_after_consumer_cleanup_failure():
-    events = []
-
-    class FakeHudController:
-        async def disconnect(self):
-            events.append("hud-disconnect")
-            raise RuntimeError("HUD still connected")
-
-    class FakeLiveService:
-        async def close(self):
-            events.append("live-close")
-
-    class FakeAuthService:
-        def logout(self):
-            events.append("auth-logout")
-            return True
-
-    class FakeTray:
-        def showMessage(self, *_args):
-            events.append("tray-message")
-
-    async def run_test():
-        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
-        widget.hud_controller = FakeHudController()
-        widget.services = SimpleNamespace(live_control_service=FakeLiveService())
-        widget.auth_service = FakeAuthService()
-        widget._settings_dialog = None
-        widget._account_status = AccountStatus.LOGGED_IN
-        widget._account_profile = AccountProfile("123", "测试用户")
-        widget._account_refresh_generation = 0
-        widget._account_refresh_pending = True
-        widget._publish_account_state = lambda: events.append("publish")
-        widget.add_system_message = lambda *_args: events.append("system-message")
-        widget.tray_icon = FakeTray()
-
-        await danmaku_widget.DanmakuWidget._logout_account(widget)
-
-    asyncio.run(run_test())
-
-    assert events[:3] == ["hud-disconnect", "live-close", "auth-logout"]
-    assert "publish" in events
-    assert events[-2:] == ["tray-message", "system-message"]
-
-
-def test_danmaku_widget_keeps_mirror_enabled_config_when_shutting_down():
-    class FakeCoordinator:
-        def __init__(self):
-            self.shutdown_calls = 0
-            self.state = MirrorCoordinatorState(True, True, 2233, "http://127.0.0.1:2233/bilihud-mirror")
-
-        async def shutdown(self):
-            self.shutdown_calls += 1
-            self.state = MirrorCoordinatorState(True, False, 2233, "http://127.0.0.1:2233/bilihud-mirror")
-            return MirrorOperationResult(self.state)
-
-    async def run_test():
-        coordinator = FakeCoordinator()
-        events = []
-        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
-        widget.mirror_coordinator = coordinator
-        widget.refresh_mirror_settings = lambda: events.append("refresh")
-
-        await danmaku_widget.DanmakuWidget.shutdown_mirror_server(widget)
-
-        assert coordinator.shutdown_calls == 1
-        assert coordinator.state.enabled is True
-        assert coordinator.state.running is False
-        assert events == ["refresh"]
-
-    asyncio.run(run_test())
-
-
-def test_danmaku_widget_keeps_mirror_reference_when_stop_fails():
-    class FakeCoordinator:
-        def __init__(self):
-            self.shutdown_calls = 0
-            self.state = MirrorCoordinatorState(True, True, 2233, "http://127.0.0.1:2233/bilihud-mirror")
-
-        async def shutdown(self):
-            self.shutdown_calls += 1
-            if self.shutdown_calls == 1:
-                raise RuntimeError("mirror close failed")
-            self.state = MirrorCoordinatorState(True, False, 2233, "http://127.0.0.1:2233/bilihud-mirror")
-            return MirrorOperationResult(self.state)
-
-    async def run_test():
-        coordinator = FakeCoordinator()
-        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
-        widget.mirror_coordinator = coordinator
-        widget.refresh_mirror_settings = lambda: None
-
-        with pytest.raises(RuntimeError, match="mirror close failed"):
-            await danmaku_widget.DanmakuWidget.shutdown_mirror_server(widget)
-        assert coordinator.state.running is True
-
-        await danmaku_widget.DanmakuWidget.shutdown_mirror_server(widget)
-        assert coordinator.state.running is False
-        assert coordinator.shutdown_calls == 2
-
-    asyncio.run(run_test())
-
-
 def test_emoticon_picker_requests_bilibili_headers(monkeypatch):
     class FakeRequest:
         class KnownHeaders:
@@ -383,10 +237,10 @@ def test_emoticon_picker_requests_bilibili_headers(monkeypatch):
         pass
 
     _app()
-    picker = danmaku_widget.EmoticonPickerPopup()
+    picker = emoticon_picker.EmoticonPickerPopup()
     manager = NetworkManager()
     picker._network_manager = manager
-    monkeypatch.setattr(danmaku_widget, "QNetworkRequest", FakeRequest)
+    monkeypatch.setattr(emoticon_picker, "QNetworkRequest", FakeRequest)
 
     picker._load_icon(Button(), "https://i0.hdslb.com/bfs/live/emote.png")
 
@@ -396,7 +250,7 @@ def test_emoticon_picker_requests_bilibili_headers(monkeypatch):
 
 
 def test_danmaku_delegate_renders_local_system_messages():
-    html = danmaku_widget.DanmakuDelegate().get_html_for_message(
+    html = message_list.DanmakuDelegate().get_html_for_message(
         make_system_message("BiliHUD Mirror 已启动: <url>")
     )
 
@@ -418,7 +272,7 @@ def test_danmaku_delegate_renders_gift_and_interaction_variants():
         segments=(TextSegment("关注了主播"),),
         interaction=InteractionKind.FOLLOW,
     )
-    delegate = danmaku_widget.DanmakuDelegate()
+    delegate = message_list.DanmakuDelegate()
 
     gift_html = delegate.get_html_for_message(gift)
     interact_html = delegate.get_html_for_message(interact)
@@ -445,7 +299,7 @@ def test_danmaku_delegate_renders_compact_author_badges():
         segments=(TextSegment("测试"),),
     )
 
-    html = danmaku_widget.DanmakuDelegate().get_html_for_message(message)
+    html = message_list.DanmakuDelegate().get_html_for_message(message)
 
     assert "meta-badge medal-badge" in html
     assert "小狐 26" in html
@@ -467,7 +321,7 @@ def test_danmaku_delegate_renders_reply_target_prefix():
         segments=(ReplySegment("@绚下的小恐龙 "), TextSegment("test")),
     )
 
-    html = danmaku_widget.DanmakuDelegate().get_html_for_message(message)
+    html = message_list.DanmakuDelegate().get_html_for_message(message)
 
     assert ".reply { color: #FF79C6;" in html
     assert '<span class="reply">@绚下的小恐龙&nbsp;</span>test' in html
@@ -482,8 +336,8 @@ def test_danmaku_delegate_does_not_reuse_document_for_reused_message_id(monkeypa
             segments=(TextSegment(text),),
         )
 
-    delegate = danmaku_widget.DanmakuDelegate()
-    monkeypatch.setattr(danmaku_widget, "id", lambda _message: 7450109, raising=False)
+    delegate = message_list.DanmakuDelegate()
+    monkeypatch.setattr(message_list, "id", lambda _message: 7450109, raising=False)
 
     first_doc = delegate._get_document(message("旧消息"), 320, QFont())
     second_doc = delegate._get_document(message("新消息"), 320, QFont())
@@ -521,9 +375,6 @@ def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
             self._count -= 1
             return RemovedItem()
 
-        def itemDelegate(self):
-            return FakeDelegate()
-
         def scrollToBottom(self):
             calls.append("scroll")
 
@@ -538,6 +389,7 @@ def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
 
     widget = Widget()
     widget.danmaku_list = FakeList()
+    widget._danmaku_delegate = FakeDelegate()
     widget.mirror_coordinator = MirrorCoordinator()
     message = DanmakuMessage(
         author=MessageAuthor(uid=1, name="Locez", color="#66CCFF"),
@@ -552,7 +404,7 @@ def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
 
 def test_modern_input_widget_exposes_emoticon_button_signal():
     _app()
-    widget = danmaku_widget.ModernInputWidget()
+    widget = hud_input.ModernInputWidget()
 
     seen = []
     widget.emoticon_requested.connect(lambda: seen.append(True))
@@ -563,14 +415,14 @@ def test_modern_input_widget_exposes_emoticon_button_signal():
 
 def test_modern_input_widget_can_hide_emoticon_button():
     _app()
-    widget = danmaku_widget.ModernInputWidget(show_emoticon_button=False)
+    widget = hud_input.ModernInputWidget(show_emoticon_button=False)
 
     assert widget.emoticon_btn.isHidden()
 
 
 def test_emoticon_picker_does_not_emit_locked_emoticons():
     _app()
-    picker = danmaku_widget.EmoticonPickerPopup()
+    picker = emoticon_picker.EmoticonPickerPopup()
     locked = LiveEmoticon(
         emoji="疑惑",
         url="http://i0.hdslb.com/bfs/live/locked.png",
@@ -604,7 +456,7 @@ def test_emoticon_picker_does_not_emit_locked_emoticons():
 
 def test_emoticon_picker_hides_after_available_emoticon_click():
     app = _app()
-    picker = danmaku_widget.EmoticonPickerPopup()
+    picker = emoticon_picker.EmoticonPickerPopup()
     emoticon = LiveEmoticon(
         emoji="啊",
         url="http://i0.hdslb.com/bfs/live/a.png",
@@ -629,7 +481,7 @@ def test_emoticon_picker_hides_after_available_emoticon_click():
 
 def test_emoticon_picker_deletes_old_tab_pages_when_refreshing():
     app = _app()
-    picker = danmaku_widget.EmoticonPickerPopup()
+    picker = emoticon_picker.EmoticonPickerPopup()
 
     for _ in range(5):
         picker.set_loading()
@@ -643,7 +495,7 @@ def test_emoticon_picker_deletes_old_tab_pages_when_refreshing():
 
 def test_emoticon_picker_keeps_one_tab_per_package():
     _app()
-    picker = danmaku_widget.EmoticonPickerPopup()
+    picker = emoticon_picker.EmoticonPickerPopup()
     emoticon = LiveEmoticon(
         emoji="啊",
         url="http://i0.hdslb.com/bfs/live/a.png",
@@ -691,49 +543,4 @@ def test_danmaku_widget_sends_selected_live_emoticon():
 
         assert controller.sent == [emoticon]
 
-    asyncio.run(run_test())
-
-
-def test_live_control_uses_authenticated_anchor_room(monkeypatch):
-    class Session:
-        def __init__(self):
-            self.closed = False
-            self.close_calls = 0
-
-        async def close(self):
-            self.closed = True
-            self.close_calls += 1
-
-    class AuthManager:
-        def __init__(self):
-            self.session = Session()
-
-        async def create_authenticated_session(self):
-            return self.session, True
-
-    async def get_anchor_room(session):
-        assert session is auth_manager.session
-        return 998877
-
-    async def run_test():
-        nonlocal auth_manager
-        auth_manager = AuthManager()
-        connected_rooms = []
-        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
-        widget.auth_service = auth_manager
-
-        class Controller:
-            async def connect(self, room_id):
-                connected_rooms.append(room_id)
-
-        widget.hud_controller = Controller()
-        monkeypatch.setattr(danmaku_widget, "get_anchor_live_room_id", get_anchor_room)
-
-        room_id = await danmaku_widget.DanmakuWidget._ensure_live_control_room(widget)
-
-        assert room_id == 998877
-        assert connected_rooms == [998877]
-        assert auth_manager.session.close_calls == 1
-
-    auth_manager = None
     asyncio.run(run_test())

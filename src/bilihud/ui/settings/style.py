@@ -6,7 +6,7 @@ from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QColor, QPainter, QPaintEvent, QPalette, QPen, QWheelEvent
 from PyQt6.QtWidgets import QComboBox, QListView, QSpinBox, QWidget
 
-from .appearance import Appearance
+from bilihud.ui.appearance import Appearance
 
 
 class ModernComboBox(QComboBox):

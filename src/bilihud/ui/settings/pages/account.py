@@ -7,8 +7,8 @@ from PyQt6.QtGui import QDesktopServices, QImage, QPainter, QPainterPath, QPixma
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from .app.menu import AccountStatus
-from .auth.service import AccountProfile
+from bilihud.app.menu import AccountStatus
+from bilihud.auth.service import AccountProfile
 
 
 class AccountSettingsPage(QWidget):

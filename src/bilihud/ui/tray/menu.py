@@ -8,7 +8,7 @@ from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QMenu, QWidget
 
-from .app.menu import MenuCommand, TrayMenuState, tray_action_states
+from bilihud.app.menu import MenuCommand, TrayMenuState, tray_action_states
 
 
 class TrayMenu(QMenu):

@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Awaitable, Callable
 
 from bilihud.app.lifecycle import TaskSupervisor
 from bilihud.live.models import (
@@ -16,7 +17,7 @@ from bilihud.live.models import (
     StartLiveStatus,
     StopLiveOutcome,
 )
-from bilihud.live_settings_workflow import LiveAction, LiveSettingsForm, LiveSettingsWorkflow
+from bilihud.ui.settings.pages.live.workflow import LiveAction, LiveSettingsForm, LiveSettingsWorkflow
 
 
 class FakeLiveService:
@@ -127,13 +128,18 @@ def _started_outcome() -> StartLiveOutcome:
     return StartLiveOutcome(StartLiveStatus.STARTED, LiveControlState())
 
 
-def _run_start_sync(service: FakeLiveService, view: FakeLiveView) -> None:
+def _run_start_sync(
+    service: FakeLiveService,
+    view: FakeLiveView,
+    *,
+    on_live_started: Callable[[int], Awaitable[None]] | None = None,
+) -> None:
     """Run one public workflow command to completion in an isolated supervisor."""
 
     async def run() -> None:
         supervisor = TaskSupervisor()
         scope = supervisor.create_scope("live-settings-test")
-        workflow = LiveSettingsWorkflow(service, scope, view)
+        workflow = LiveSettingsWorkflow(service, scope, view, on_live_started=on_live_started)
         task = workflow.start_live()
         if task is None:
             raise AssertionError("start workflow was not scheduled")
@@ -142,6 +148,17 @@ def _run_start_sync(service: FakeLiveService, view: FakeLiveView) -> None:
         await supervisor.shutdown()
 
     asyncio.run(run())
+
+
+def test_start_live_connects_hud_to_the_started_room() -> None:
+    connected_rooms: list[int] = []
+
+    async def connect_hud(room_id: int) -> None:
+        connected_rooms.append(room_id)
+
+    _run_start_sync(FakeLiveService([_started_outcome()]), FakeLiveView(), on_live_started=connect_hud)
+
+    assert connected_rooms == [7450109]
 
 
 def test_start_live_confirms_obs_switch_and_retries_with_explicit_permission() -> None:

@@ -2,13 +2,41 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
 TaskResult = TypeVar("TaskResult")
+
+
+async def run_owned_blocking[BlockingResult](
+    function: Callable[[], BlockingResult],
+    *,
+    thread_name: str,
+) -> BlockingResult:
+    """Run one blocking call in an explicitly owned, short-lived worker.
+
+    The worker is isolated from asyncio's process-wide default executor. The
+    caller's cancellation is propagated only after the blocking operation has
+    finished so the worker can be joined before this function returns.
+    """
+    loop = asyncio.get_running_loop()
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=thread_name)
+    future = loop.run_in_executor(executor, function)
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        try:
+            await asyncio.shield(future)
+        except BaseException:
+            # Preserve cancellation while still waiting for the owned worker.
+            pass
+        raise
+    finally:
+        executor.shutdown(wait=True)
 
 
 async def cancel_task(task: asyncio.Task[Any] | None) -> None:

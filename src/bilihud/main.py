@@ -1,8 +1,11 @@
+# Qt API selection must happen before importing Qt and qasync.
+# ruff: noqa: E402
 import os
 import sys
 
-# [Security] Prevent accidental loading of PyQt5 which causes conflicts
-sys.modules["PyQt5"] = None
+# Prevent accidental PyQt5 loading before qasync selects the PyQt6 backend.
+# Remove the sentinel if PyQt5 support is added.
+sys.modules["PyQt5"] = None  # ty: ignore[invalid-assignment]
 
 # [Environment] Force Qt6
 os.environ["QT_API"] = "pyqt6"
@@ -17,9 +20,10 @@ import qasync
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
+from .app.application_controller import ApplicationController
 from .app.lifecycle import TaskSupervisor
 from .app.services import AppServices, create_default_services
-from .danmaku_widget import DanmakuWidget
+from .ui.hud.window import DanmakuWidget
 
 
 def configure_logging() -> None:
@@ -52,6 +56,7 @@ class ApplicationRuntime:
         self.services = services
         self.task_supervisor = task_supervisor if task_supervisor is not None else TaskSupervisor()
         self.widget: DanmakuWidget | None = None
+        self.application: ApplicationController | None = None
         self._stop_lock = asyncio.Lock()
         self._stopped = False
 
@@ -62,19 +67,34 @@ class ApplicationRuntime:
         if self.widget is not None:
             return
 
-        widget = DanmakuWidget(
-            self.room_id,
-            services=self.services,
-            task_supervisor=self.task_supervisor,
-        )
-        self.widget = widget
+        application: ApplicationController | None = None
+        widget: DanmakuWidget | None = None
         try:
+            app_services = self.services if self.services is not None else create_default_services()
+            config = app_services.config_store.load()
+            application = ApplicationController(
+                room_id=self.room_id,
+                sessdata="",
+                services=app_services,
+                config=config,
+                task_scope=self.task_supervisor.create_scope("application"),
+            )
+            self.application = application
+            widget = DanmakuWidget(
+                self.room_id,
+                application=application,
+                task_supervisor=self.task_supervisor,
+            )
+            self.widget = widget
             widget.activate_layer_shell()
             widget.show()
             await widget.start()
         except BaseException:
             try:
-                await widget.shutdown()
+                if widget is not None:
+                    await widget.shutdown()
+                elif application is not None:
+                    await application.shutdown()
             finally:
                 await self.task_supervisor.shutdown()
             raise

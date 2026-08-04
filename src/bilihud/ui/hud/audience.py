@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .live.audience import AudienceSnapshot
+from bilihud.live.audience import AudienceSnapshot
 
 
 class AudienceStatusWidget(QWidget):

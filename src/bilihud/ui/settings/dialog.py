@@ -21,27 +21,28 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .about_settings_page import AboutSettingsPage
-from .app.lifecycle import TaskScope
-from .app.menu import AccountStatus
-from .app.mirror_coordinator import MirrorCoordinatorState
-from .app.services import AppServices
-from .appearance import Appearance, resolve_appearance
-from .auth.service import AccountProfile
-from .config.store import (
+from bilihud.app.lifecycle import TaskScope
+from bilihud.app.menu import AccountStatus
+from bilihud.app.mirror_coordinator import MirrorCoordinatorState
+from bilihud.app.services import AppServices
+from bilihud.auth.service import AccountProfile
+from bilihud.config.store import (
     DEFAULT_WINDOW_OPACITY,
     MAX_WINDOW_OPACITY,
     MIN_WINDOW_OPACITY,
     AppConfig,
     ThemeMode,
 )
-from .live_settings_page import LiveSettingsPage
-from .mirror_settings_page import MirrorSettingsPage
-from .settings_account_page import AccountSettingsPage
-from .settings_models import PAGE_DEFINITIONS as _PAGE_DEFINITIONS
-from .settings_models import SettingsPage, SettingsSaveRequest
-from .settings_stack import AdaptiveStackedWidget
-from .settings_style import ModernComboBox, ModernSpinBox, settings_stylesheet
+from bilihud.ui.appearance import Appearance, resolve_appearance
+from bilihud.ui.settings.models import PAGE_DEFINITIONS as _PAGE_DEFINITIONS
+from bilihud.ui.settings.models import SettingsPage, SettingsSaveRequest
+from bilihud.ui.settings.pages.about import AboutSettingsPage
+from bilihud.ui.settings.pages.account import AccountSettingsPage
+from bilihud.ui.settings.pages.live.page import LiveSettingsPage
+from bilihud.ui.settings.pages.live.workflow import LiveStartedHandler
+from bilihud.ui.settings.pages.mirror import MirrorSettingsPage
+from bilihud.ui.settings.stack import AdaptiveStackedWidget
+from bilihud.ui.settings.style import ModernComboBox, ModernSpinBox, settings_stylesheet
 
 
 class SettingsDialog(QDialog):
@@ -68,6 +69,7 @@ class SettingsDialog(QDialog):
         *,
         services: AppServices | None = None,
         task_scope: TaskScope | None = None,
+        on_live_started: LiveStartedHandler | None = None,
     ) -> None:
         """Create a reusable settings window with explicitly injected feature owners."""
         super().__init__(parent)
@@ -75,6 +77,7 @@ class SettingsDialog(QDialog):
         self._active_page = SettingsPage.GENERAL
         self._services = services
         self._task_scope = task_scope
+        self._on_live_started = on_live_started
         self._live_page: LiveSettingsPage | None = None
         self._mirror_page: MirrorSettingsPage | None = None
         self._account_page: AccountSettingsPage | None = None
@@ -86,7 +89,8 @@ class SettingsDialog(QDialog):
         self._system_dragging = False
         self.opacity_error_label: QLabel | None = None
         self.setWindowTitle("BiliHUD 设置")
-        self.setWindowIcon(QIcon(str(Path(__file__).parent / "assets" / "icon.png")))
+        icon_path = Path(__file__).resolve().parents[2] / "assets" / "icon.png"
+        self.setWindowIcon(QIcon(str(icon_path)))
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(760, 540)
         self.resize(900, 620)
@@ -108,7 +112,8 @@ class SettingsDialog(QDialog):
         brand_row = QHBoxLayout()
         brand_row.setSpacing(9)
         brand_icon = QLabel()
-        brand_icon.setPixmap(QIcon(str(Path(__file__).parent / "assets" / "icon.png")).pixmap(28, 28))
+        icon_path = Path(__file__).resolve().parents[2] / "assets" / "icon.png"
+        brand_icon.setPixmap(QIcon(str(icon_path)).pixmap(28, 28))
         brand_row.addWidget(brand_icon)
         brand_label = QLabel("BiliHUD 设置")
         brand_label.setObjectName("brand_label")
@@ -273,7 +278,12 @@ class SettingsDialog(QDialog):
     def _create_live_page(self) -> QWidget:
         service = None if self._services is None else self._services.live_control_service
         task_scope = None if self._task_scope is None else self._task_scope.child("live-settings")
-        page = LiveSettingsPage(self.page_stack, service=service, task_scope=task_scope)
+        page = LiveSettingsPage(
+            self.page_stack,
+            service=service,
+            task_scope=task_scope,
+            on_live_started=self._on_live_started,
+        )
         page.setObjectName("settings_page")
         page.live_status_changed.connect(self.live_status_changed.emit)
         self._live_page = page
