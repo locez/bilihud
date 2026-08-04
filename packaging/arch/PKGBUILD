@@ -25,7 +25,7 @@ makedepends=(
     'git'
     'python-build'
     'python-installer'
-    'python-scikit-build-core>=0.12'
+    'python-scikit-build-core'
     'cmake'
     'ninja'
     'gcc'

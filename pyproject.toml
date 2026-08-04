@@ -1,20 +1,18 @@
 [build-system]
-requires = ["scikit-build-core>=0.12"]
+requires = ["scikit-build-core>=0.10"]
 build-backend = "scikit_build_core.build"
 
 [tool.scikit-build]
-minimum-version = "0.12"
+minimum-version = "0.10"
 cmake.version = ">=3.16"
 cmake.build-type = "Release"
 cmake.args = ["-DBILIHUD_INSTALL_DIR=bilihud"]
-wheel.packages = ["src/bilihud"]
+wheel.packages = {"bilihud" = "src/bilihud", "bilihud/vendor/blivedm" = "vendor/blivedm/blivedm"}
 wheel.platlib = true
+wheel.exclude = ["**/*.cpp"]
 
-[tool.scikit-build.wheel.force-include]
-"vendor/blivedm/blivedm" = "bilihud/vendor/blivedm"
-
-[tool.scikit-build.sdist.force-include]
-"vendor/blivedm/blivedm" = "vendor/blivedm/blivedm"
+[tool.scikit-build.sdist]
+include = ["vendor/blivedm/blivedm/*.py", "vendor/blivedm/blivedm/**/*.py"]
 
 
 [project]

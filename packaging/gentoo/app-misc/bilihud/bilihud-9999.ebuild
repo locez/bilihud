@@ -49,7 +49,7 @@ DEPEND="
 BDEPEND="
 	dev-build/cmake
 	dev-build/ninja
-	>=dev-python/scikit-build-core-0.12[${PYTHON_USEDEP}]
+	dev-python/scikit-build-core[${PYTHON_USEDEP}]
 	virtual/pkgconfig
 "
 

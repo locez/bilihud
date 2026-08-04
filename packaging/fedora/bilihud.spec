@@ -10,7 +10,7 @@ URL:            https://github.com/locez/bilihud
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  python3-devel >= 3.13
-BuildRequires:  python3-scikit-build-core >= 0.12
+BuildRequires:  python3-scikit-build-core
 BuildRequires:  cmake
 BuildRequires:  ninja-build
 BuildRequires:  gcc-c++
