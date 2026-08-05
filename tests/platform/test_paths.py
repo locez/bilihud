@@ -40,7 +40,9 @@ def test_linux_paths_use_absolute_xdg_config_home(tmp_path: Path) -> None:
 def test_linux_paths_fall_back_when_xdg_config_home_is_missing_or_relative(tmp_path: Path) -> None:
     home = tmp_path / "home"
 
-    missing = resolve_user_config_paths(create_platform_context("linux", home=home))
+    missing = resolve_user_config_paths(
+        create_platform_context("linux", environment={}, home=home)
+    )
     relative = resolve_user_config_paths(
         create_platform_context("linux", environment={"XDG_CONFIG_HOME": "relative"}, home=home)
     )
