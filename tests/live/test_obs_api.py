@@ -1,3 +1,9 @@
+from pathlib import Path
+
+import pytest
+
+from bilihud.app.obs_control import ObsAdapterError, ObsProcessError, ObsProcessFailureCode
+from bilihud.live.adapters import ObsWebSocketAdapter
 from bilihud.live.api import StreamCredential
 from bilihud.live.obs import (
     build_get_stream_status_request,
@@ -78,6 +84,31 @@ def test_is_obs_process_name_matches_common_obs_binary_names():
     assert is_obs_process_name("/usr/bin/obs-studio")
     assert not is_obs_process_name("obsidian")
     assert not is_obs_process_name("python")
+
+
+class FailingObsProcess:
+    """Expose one typed process failure for adapter-boundary verification."""
+
+    def find_executable(self) -> Path | None:
+        """Return no executable for this failure-path fake."""
+        return None
+
+    def is_running(self) -> bool:
+        """Raise the process query failure the platform adapter would provide."""
+        raise ObsProcessError(ObsProcessFailureCode.PROCESS_QUERY_FAILED, "查询失败")
+
+    def launch(self) -> None:
+        """Raise the same failure if launch is accidentally attempted."""
+        raise ObsProcessError(ObsProcessFailureCode.PROCESS_QUERY_FAILED, "查询失败")
+
+
+def test_obs_websocket_adapter_preserves_typed_process_failure_code() -> None:
+    adapter = ObsWebSocketAdapter(process=FailingObsProcess())
+
+    with pytest.raises(ObsAdapterError) as raised:
+        adapter.is_process_running()
+
+    assert raised.value.process_code is ObsProcessFailureCode.PROCESS_QUERY_FAILED
 
 
 def test_obs_check_button_state_only_depends_on_port_and_check_busy_state():

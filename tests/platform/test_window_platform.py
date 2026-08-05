@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 from PyQt6.QtWidgets import QApplication
@@ -266,6 +267,28 @@ def test_generic_qt_platform_keeps_gaming_mode_on_non_wayland(monkeypatch, platf
         ),
         WindowPolicy(),
     ]
+
+
+def test_non_linux_qt_provider_does_not_attempt_to_load_layer_shell_bridge(monkeypatch) -> None:
+    """Windows and macOS use generic Qt activation without touching the Linux bridge."""
+    _app()
+    monkeypatch.setattr(window_platform.QGuiApplication, "platformName", lambda: "windows")
+
+    def fail_if_probed(_package_dir: Path) -> tuple[None, str]:
+        """Fail the test if a non-Linux provider probes the Linux bridge."""
+        raise AssertionError("Layer Shell must not be probed")
+
+    monkeypatch.setattr(
+        window_platform,
+        "load_layer_shell_bridge",
+        fail_if_probed,
+    )
+
+    platform = window_platform.DefaultOverlayPlatformFactory()(FakeWindowHost())
+
+    assert platform.capabilities.layer_shell is False
+    assert platform.prepare() == OverlayOperationResult.success()
+    assert platform.activate() == OverlayOperationResult.success()
 
 
 def test_platform_probe_logs_backend_and_selected_provider(monkeypatch, caplog) -> None:

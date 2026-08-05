@@ -10,6 +10,7 @@ from ..danmaku.client import DanmakuClient
 from ..live.adapters import BilibiliLiveControlApi, ObsWebSocketAdapter
 from ..mirror.server import MirrorServer
 from ..mirror.state import MirrorState
+from ..platform.obs_process import create_obs_process
 from ..platform.overlay_contracts import OverlayPlatformFactory
 from ..platform.window_platform import create_default_overlay_platform
 from .hud_client import HudClientFactory
@@ -57,7 +58,7 @@ def create_default_services(config_path: Path | None = None) -> AppServices:
         hud_client_factory=create_default_hud_client,
         live_control_service=LiveControlService(
             api=BilibiliLiveControlApi(auth_service),
-            obs=ObsWebSocketAdapter(),
+            obs=ObsWebSocketAdapter(process=create_obs_process()),
             config_store=config_store,
             obs_password_store=auth_service,
             qr_image_generator=auth_service,

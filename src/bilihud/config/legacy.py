@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_config_path() -> Path:
-    """Return the XDG configuration path without creating it."""
+    """Return the current platform's canonical configuration path without creating it."""
     return default_config_path()
 
 

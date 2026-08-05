@@ -9,7 +9,7 @@ from typing import TypeVar
 import aiohttp
 
 from ..app.live_control_api import LiveControlApiError
-from ..app.obs_control import ObsAdapterError
+from ..app.obs_control import ObsAdapterError, ObsProcess, ObsProcessError
 from ..auth.service import AuthenticationService
 from .api import (
     LiveApiError,
@@ -35,7 +35,7 @@ from .models import (
     SessionStatus,
     StreamCredential,
 )
-from .obs import ObsApiError, ObsWebSocketClient, is_obs_process_running, launch_obs
+from .obs import ObsApiError, ObsWebSocketClient
 
 Result = TypeVar("Result")
 
@@ -134,6 +134,10 @@ class BilibiliLiveControlApi:
 class ObsWebSocketAdapter:
     """Adapt the concrete OBS WebSocket client to the typed OBS capability."""
 
+    def __init__(self, process: ObsProcess) -> None:
+        """Create an adapter with an explicit platform process capability."""
+        self._process = process
+
     async def check_connection(self, settings: ObsSettings) -> None:
         """Check one OBS endpoint and normalize its expected failures."""
         await self._request(_obs_client(settings).check_connection())
@@ -159,16 +163,16 @@ class ObsWebSocketAdapter:
     def is_process_running(self) -> bool:
         """Return whether OBS is running through the platform process adapter."""
         try:
-            return is_obs_process_running()
-        except OSError as exc:
-            raise ObsAdapterError(f"检查 OBS 进程失败: {exc}") from exc
+            return self._process.is_running()
+        except ObsProcessError as exc:
+            raise ObsAdapterError(str(exc), process_code=exc.code) from exc
 
     def launch(self) -> None:
         """Launch OBS through the existing process adapter."""
         try:
-            launch_obs()
-        except (ObsApiError, OSError) as exc:
-            raise ObsAdapterError(str(exc)) from exc
+            self._process.launch()
+        except ObsProcessError as exc:
+            raise ObsAdapterError(str(exc), process_code=exc.code) from exc
 
     async def _request(self, operation: Awaitable[Result]) -> Result:
         """Normalize concrete OBS failures without hiding cancellation."""

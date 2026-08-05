@@ -42,6 +42,7 @@ BiliHUD 的全屏浮窗能力依赖 compositor 支持 `wlr-layer-shell` 协议�
 * KDE Plasma Wayland / KWin：预期支持全屏应用上方浮窗。
 * wlroots 系 compositor：如 compositor 提供 `wlr-layer-shell`，预期可用。
 * GNOME Wayland / Mutter：不支持 `wlr-layer-shell`，因此不支持全屏应用上方浮窗，也不保证普通窗口置顶。BiliHUD 会回退为普通窗口，仍可在桌面环境中移动和使用。
+* macOS / Windows：不编译或加载 Linux Layer Shell bridge，使用通用 Qt 窗口 backend；这不提供 Linux compositor overlay 语义。
 
 ## 极速上手
 
@@ -158,6 +159,16 @@ Mirror 默认仅监听 `127.0.0.1`，用于本机浏览器源或本机浏览器�
 首次使用或本地会话失效时，请在托盘图标右键菜单中选择“扫码登录”。扫码获得的 Bilibili 会话凭证会保存到系统 keyring，后续启动会从 keyring 恢复。
 
 如果没有有效会话，BiliHUD 会提示重新扫码登录。会话凭证只用于访问 Bilibili API，不会写入项目配置文件或发送到第三方服务。
+
+### 配置位置
+
+普通配置只保存非敏感设置，OBS WebSocket 密码保存于系统 keyring。默认配置文件位置为：
+
+* Linux：`$XDG_CONFIG_HOME/bilihud/config.json`；未设置有效的 `XDG_CONFIG_HOME` 时使用 `~/.config/bilihud/config.json`
+* macOS：`~/Library/Application Support/bilihud/config.json`
+* Windows：`%APPDATA%/bilihud/config.json`；`APPDATA` 不可用时使用用户目录下的 `AppData/Roaming/bilihud/config.json`
+
+Windows 和 macOS 是新平台路径，不会读取 Linux 的 `~/.config/bilihud` 配置。
 
 
 

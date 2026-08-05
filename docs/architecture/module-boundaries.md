@@ -18,7 +18,7 @@ bilihud/
   danmaku/         message contracts, formatting, blivedm adapter, client
   live/            live-room models, parsing, Bilibili/OBS adapters, validation
   mirror/          mirror state, serialization, and HTTP server
-  platform/        overlay contracts and desktop/native window adapters
+  platform/        overlay contracts, desktop/native adapters, and OS capabilities
   ui/              Qt presentation grouped by HUD, settings, auth, tray, and window hosting
   main.py          process entry point and Qt application composition
 ```
@@ -64,6 +64,11 @@ dependencies an explicit build error; `OFF` produces the generic Qt package
 without the Linux-only artifact. Unsupported platforms never enter the Linux
 dependency discovery path.
 
+At runtime, `platform.window_platform` selects Layer Shell only for a compatible
+Wayland compositor with a loadable bridge. Linux X11, macOS, and Windows use the
+generic Qt window adapter; a failed Layer Shell activation falls back to the
+ordinary Wayland adapter without changing the UI contract.
+
 ## Ownership Rules
 
 - `danmaku.messages` owns HUD message variants, author metadata, badges, and
@@ -94,8 +99,10 @@ dependency discovery path.
 - `platform.overlay_contracts` owns toolkit-neutral window geometry, capability,
   result, and drag-strategy contracts. `platform.window_platform`,
   `platform.qt_window_platform`, `platform.layer_shell`, `platform.x11`, and
-  `platform.native` isolate desktop integrations. `ui.window_host` is the Qt
-  presentation binding for those contracts.
+  `platform.native` isolate desktop integrations. `platform.system` captures
+  operating-system facts once, while `platform.paths` and
+  `platform.obs_process` own configuration-path and OBS-process adapters.
+  `ui.window_host` is the Qt presentation binding for overlay contracts.
 - `config.store` owns typed non-sensitive settings and `config.compat` owns
   legacy migration. `config.legacy` is a temporary caller facade; it must not
   become a second configuration model.

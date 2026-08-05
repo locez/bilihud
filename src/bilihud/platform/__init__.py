@@ -1,4 +1,4 @@
-"""Toolkit-neutral overlay contracts and desktop platform adapters."""
+"""Toolkit-neutral overlay contracts and desktop/OS platform adapters."""
 
 from .overlay_contracts import (
     DragMode,

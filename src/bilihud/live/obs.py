@@ -1,7 +1,5 @@
 import base64
 import hashlib
-import shutil
-import subprocess
 import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -9,6 +7,14 @@ from typing import Any
 
 import aiohttp
 
+from ..app.obs_control import ObsProcessError
+from ..platform.obs_process import (
+    LinuxObsProcess,
+    create_obs_process,
+)
+from ..platform.obs_process import (
+    is_obs_process_name as _is_obs_process_name,
+)
 from .models import (
     StreamCredential,
 )
@@ -27,50 +33,32 @@ class ObsApiError(RuntimeError):
 
 
 def is_obs_process_name(command: str) -> bool:
-    name = Path(command).name
-    return name in {"obs", "obs-studio"}
+    """Keep the historical helper export backed by the platform process adapter."""
+    return _is_obs_process_name(command)
+
+
+def is_obs_process_running(proc_root: str = "/proc") -> bool:
+    """Keep the historical Linux helper backed by the Linux process adapter."""
+    return LinuxObsProcess(proc_root=Path(proc_root)).is_running()
+
+
+def find_obs_executable() -> str | None:
+    """Keep the historical executable lookup backed by the selected platform adapter."""
+    executable = create_obs_process().find_executable()
+    return None if executable is None else str(executable)
+
+
+def launch_obs() -> None:
+    """Keep the historical launch helper while preserving its OBS error type."""
+    try:
+        create_obs_process().launch()
+    except ObsProcessError as exc:
+        raise ObsApiError(str(exc)) from exc
 
 
 def obs_check_button_state(port_valid: bool, checking: bool, connected: bool) -> tuple[bool, str]:
     """Keep the historical OBS helper name while delegating pure domain logic."""
     return _obs_check_button_state(port_valid, checking, connected)
-
-
-def is_obs_process_running(proc_root: str = "/proc") -> bool:
-    proc_path = Path(proc_root)
-    if not proc_path.exists():
-        return False
-
-    for entry in proc_path.iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            command = (entry / "comm").read_text(encoding="utf-8").strip()
-        except OSError:
-            continue
-        if is_obs_process_name(command):
-            return True
-    return False
-
-
-def find_obs_executable() -> str | None:
-    for command in ("obs", "obs-studio"):
-        executable = shutil.which(command)
-        if executable:
-            return executable
-    return None
-
-
-def launch_obs() -> subprocess.Popen[Any]:
-    executable = find_obs_executable()
-    if not executable:
-        raise ObsApiError("未找到 OBS 可执行文件，请先安装 OBS 或确认命令 obs/obs-studio 在 PATH 中。")
-    return subprocess.Popen(
-        [executable],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
 
 
 def compute_obs_auth(password: str, salt: str, challenge: str) -> str:

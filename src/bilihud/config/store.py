@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
+from ..platform.paths import default_user_config_paths
 from .compat import ConfigMigrator, LegacyConfigMigrator
 
 logger = logging.getLogger(__name__)
@@ -100,12 +100,12 @@ class JsonConfigStore:
 
     def __init__(self, path: Path | None = None, migrator: ConfigMigrator | None = None) -> None:
         """Create a store using the supplied path and compatibility adapter."""
-        self.path = path or default_config_path()
+        self.path: Path = path if path is not None else default_config_path()
         if migrator is None:
             from ..auth.service import KeyringSessionStore
 
             migrator = LegacyConfigMigrator(KeyringSessionStore())
-        self.migrator = migrator
+        self.migrator: ConfigMigrator = migrator
 
     def load(self) -> AppConfig:
         """Read configuration, migrate legacy secrets, and return normalized settings."""
@@ -151,10 +151,8 @@ class JsonConfigStore:
 
 
 def default_config_path() -> Path:
-    """Return the XDG-compatible configuration path without creating it."""
-    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
-    config_home = Path(xdg_config_home) if xdg_config_home else Path.home() / ".config"
-    return config_home / "bilihud" / "config.json"
+    """Return the current platform's canonical configuration path without creating it."""
+    return default_user_config_paths().file
 
 
 def _read_mapping(path: Path) -> dict[str, object] | None:
