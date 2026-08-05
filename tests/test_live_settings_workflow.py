@@ -16,16 +16,26 @@ from bilihud.live.models import (
     StartLiveOutcome,
     StartLiveStatus,
     StopLiveOutcome,
+    StopLiveStatus,
 )
 from bilihud.ui.settings.pages.live.workflow import LiveAction, LiveSettingsForm, LiveSettingsWorkflow
 
 
 class FakeLiveService:
-    def __init__(self, outcomes: list[StartLiveOutcome]) -> None:
+    def __init__(
+        self,
+        outcomes: list[StartLiveOutcome],
+        *,
+        stop_outcome: StopLiveOutcome | None = None,
+    ) -> None:
         self.state = LiveControlState(
             session=LiveSessionInfo(status=SessionStatus.AUTHENTICATED),
         )
         self._outcomes = outcomes
+        self._stop_outcome = stop_outcome if stop_outcome is not None else StopLiveOutcome(
+            StopLiveStatus.STOPPED,
+            self.state,
+        )
         self.start_calls: list[bool] = []
 
     async def initialize(self, room_id: int | None) -> LiveControlOperationResult:
@@ -59,7 +69,7 @@ class FakeLiveService:
 
     async def stop_live(self, room_id: int | None, obs_settings: ObsSettings | None) -> StopLiveOutcome:
         del room_id, obs_settings
-        raise AssertionError("not used in this test")
+        return self._stop_outcome
 
     async def check_obs(self, settings: ObsSettings | None) -> ObsCheckOutcome:
         del settings
@@ -79,6 +89,7 @@ class FakeLiveView:
         self._save_success = save_success
         self.busy_actions: list[LiveAction | None] = []
         self.statuses: list[tuple[str, bool, bool]] = []
+        self.warnings: list[tuple[str, str, str]] = []
         self.verifications: list[tuple[str, LiveVerificationKind]] = []
         self.confirmation_count = 0
 
@@ -107,6 +118,9 @@ class FakeLiveView:
 
     def show_verification(self, url: str, kind: LiveVerificationKind) -> None:
         self.verifications.append((url, kind))
+
+    def show_warning(self, title: str, message: str, details: str) -> None:
+        self.warnings.append((title, message, details))
 
     async def confirm_obs_switch(self) -> bool:
         self.confirmation_count += 1
@@ -143,6 +157,23 @@ def _run_start_sync(
         task = workflow.start_live()
         if task is None:
             raise AssertionError("start workflow was not scheduled")
+        await task
+        await workflow.shutdown()
+        await supervisor.shutdown()
+
+    asyncio.run(run())
+
+
+def _run_stop_sync(service: FakeLiveService, view: FakeLiveView) -> None:
+    """Run one public stop workflow to completion in an isolated supervisor."""
+
+    async def run() -> None:
+        supervisor = TaskSupervisor()
+        scope = supervisor.create_scope("live-settings-test")
+        workflow = LiveSettingsWorkflow(service, scope, view)
+        task = workflow.stop_live()
+        if task is None:
+            raise AssertionError("stop workflow was not scheduled")
         await task
         await workflow.shutdown()
         await supervisor.shutdown()
@@ -197,6 +228,44 @@ def test_start_live_does_not_report_missing_credentials_as_full_success() -> Non
     assert "设置保存失败" in message
     assert error is True
     assert success is False
+
+
+def test_start_live_surfaces_obs_failure_in_a_warning_dialog() -> None:
+    outcome = StartLiveOutcome(
+        StartLiveStatus.STARTED,
+        LiveControlState(),
+        LiveControlError(LiveControlErrorCode.OBS_FAILURE, "OBS WebSocket 连接失败"),
+    )
+    view = FakeLiveView()
+
+    _run_start_sync(FakeLiveService([outcome]), view)
+
+    assert view.warnings == [
+        (
+            "OBS 推流未启动",
+            "Bilibili 直播已开始，但 OBS 推流未成功启动。",
+            "OBS WebSocket 连接失败\n\n请检查 OBS 是否已启动以及 WebSocket 配置。",
+        )
+    ]
+
+
+def test_stop_live_surfaces_unconfirmed_obs_state_in_a_warning_dialog() -> None:
+    outcome = StopLiveOutcome(
+        StopLiveStatus.STOPPED_WITH_OBS_FAILURE,
+        LiveControlState(),
+        LiveControlError(LiveControlErrorCode.OBS_FAILURE, "OBS 推流未能自动确认"),
+    )
+    view = FakeLiveView()
+
+    _run_stop_sync(FakeLiveService([], stop_outcome=outcome), view)
+
+    assert view.warnings == [
+        (
+            "OBS 推流状态未确认",
+            "Bilibili 直播已停止，但 OBS 推流未能自动确认。",
+            "请打开 OBS 手动确认推流状态。",
+        )
+    ]
 
 
 def test_start_live_presents_face_auth_and_requires_retry_after_verification() -> None:

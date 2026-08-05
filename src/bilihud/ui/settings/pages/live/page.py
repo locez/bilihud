@@ -36,6 +36,7 @@ from bilihud.live.models import (
 from bilihud.live.validation import validate_room_id
 from bilihud.ui.settings.pages.live.credentials import LiveCredentials
 from bilihud.ui.settings.pages.live.verification import LiveVerificationDialog
+from bilihud.ui.settings.pages.live.warning import LiveWarningDialog
 from bilihud.ui.settings.pages.live.workflow import (
     LiveAction,
     LiveSettingsForm,
@@ -71,6 +72,7 @@ class LiveSettingsPage(QWidget):
         self._shutting_down = False
         self._verification_dialog: QDialog | None = None
         self._confirmation_dialog: QMessageBox | None = None
+        self._warning_dialog: LiveWarningDialog | None = None
         self._workflow = LiveSettingsWorkflow(
             service,
             task_scope,
@@ -237,6 +239,8 @@ class LiveSettingsPage(QWidget):
         self._shutting_down = True
         if self._confirmation_dialog is not None:
             self._confirmation_dialog.close()
+        if self._warning_dialog is not None:
+            self._warning_dialog.close()
         if self._verification_dialog is not None:
             self._verification_dialog.close()
         await self._workflow.shutdown()
@@ -458,6 +462,17 @@ class LiveSettingsPage(QWidget):
         dialog.finished.connect(lambda _result: self._clear_verification_dialog(dialog))
         dialog.open()
 
+    def show_warning(self, title: str, message: str, details: str) -> None:
+        """Show one non-blocking warning while keeping the page status available underneath."""
+        current = self._warning_dialog
+        if current is not None:
+            current.close()
+
+        dialog = LiveWarningDialog(self, title, message, details)
+        dialog.finished.connect(lambda _result: self._clear_warning_dialog(dialog))
+        self._warning_dialog = dialog
+        dialog.open()
+
     async def confirm_obs_switch(self) -> bool:
         """Ask asynchronously before stopping an existing OBS stream."""
         loop = asyncio.get_running_loop()
@@ -495,6 +510,11 @@ class LiveSettingsPage(QWidget):
         """Release the latest verification window after it closes."""
         if self._verification_dialog is dialog:
             self._verification_dialog = None
+
+    def _clear_warning_dialog(self, dialog: LiveWarningDialog) -> None:
+        """Release the latest warning window after it closes."""
+        if self._warning_dialog is dialog:
+            self._warning_dialog = None
 
     def _mark_obs_unchecked(self) -> None:
         self._obs_connected = False

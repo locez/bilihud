@@ -148,6 +148,26 @@ def settings_stylesheet(appearance: Appearance) -> str:
         QLabel#verification_qr {{ background: #ffffff; border: 1px solid {appearance.border}; border-radius: 10px; }}
         QLabel#verification_url {{ color: {appearance.muted_text}; }}
         QFrame#verification_header {{ background: transparent; }}
+        QDialog#live_warning_dialog {{ background: transparent; }}
+        QFrame#warning_surface {{
+            background: {appearance.surface};
+            border: 1px solid {appearance.border};
+            border-radius: 10px;
+        }}
+        QFrame#warning_mark {{
+            background: #fff1d6;
+            border: 1px solid #f3c878;
+            border-radius: 20px;
+        }}
+        QLabel#warning_mark_label {{ color: #a76600; font-size: 21px; font-weight: 800; }}
+        QLabel#warning_title {{ color: {appearance.text}; font-size: 17px; font-weight: 700; }}
+        QLabel#warning_message {{ color: {appearance.text}; font-size: 13px; }}
+        QFrame#warning_details_frame {{
+            background: {appearance.surface_alt};
+            border: 1px solid {appearance.border};
+            border-radius: 6px;
+        }}
+        QLabel#warning_details {{ color: {appearance.muted_text}; font-size: 12px; }}
         QListWidget#navigation {{
             background: transparent;
             border: none;

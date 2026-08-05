@@ -11,6 +11,7 @@ from typing import Protocol
 
 from bilihud.app.lifecycle import TaskScope, cancel_task
 from bilihud.live.models import (
+    LiveControlErrorCode,
     LiveControlOperationResult,
     LiveControlState,
     LiveVerificationKind,
@@ -131,6 +132,10 @@ class LiveSettingsView(Protocol):
 
     def show_verification(self, url: str, kind: LiveVerificationKind) -> None:
         """Show non-blocking verification UI when the service requires it."""
+        ...
+
+    def show_warning(self, title: str, message: str, details: str) -> None:
+        """Show a non-blocking warning for a completed action with an unresolved side effect."""
         ...
 
     async def confirm_obs_switch(self) -> bool:
@@ -406,6 +411,12 @@ class LiveSettingsWorkflow:
             config_saved = self._view.save_form_config()
             outcome = await service.stop_live(values.room_id, values.obs)
             self._view.apply_service_state(outcome.state)
+            if outcome.status is StopLiveStatus.STOPPED_WITH_OBS_FAILURE:
+                self._view.show_warning(
+                    "OBS 推流状态未确认",
+                    "Bilibili 直播已停止，但 OBS 推流未能自动确认。",
+                    "请打开 OBS 手动确认推流状态。",
+                )
             if outcome.status is StopLiveStatus.STOPPED:
                 if config_saved:
                     self._view.set_status("直播已停止。", success=True)
@@ -480,6 +491,12 @@ class LiveSettingsWorkflow:
                     self._join_messages(outcome.notice, message, hud_notice, persistence_notice),
                     error=True,
                 )
+                if outcome.error.code is LiveControlErrorCode.OBS_FAILURE:
+                    self._view.show_warning(
+                        "OBS 推流未启动",
+                        "Bilibili 直播已开始，但 OBS 推流未成功启动。",
+                        f"{outcome.error.message}\n\n请检查 OBS 是否已启动以及 WebSocket 配置。",
+                    )
             else:
                 message = "直播已开始，OBS 推流已启动。" if outcome.obs_started else "直播已开始。"
                 if persistence_notice or hud_notice:

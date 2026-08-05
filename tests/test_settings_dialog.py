@@ -314,3 +314,31 @@ def test_live_face_verification_uses_face_auth_copy() -> None:
     assert "完成人脸认证" in prompt.text()
     assert "重新点击“开始直播”" in prompt.text()
     dialog.close()
+
+
+def test_live_warning_uses_the_settings_visual_language() -> None:
+    _app()
+    page = LiveSettingsPage()
+
+    page.show_warning(
+        "OBS 推流状态未确认",
+        "Bilibili 直播已停止，但 OBS 推流未能自动确认。",
+        "请打开 OBS 手动确认推流状态。",
+    )
+    dialog = page.findChild(QDialog, "live_warning_dialog")
+
+    assert dialog is not None
+    assert dialog.windowFlags() & Qt.WindowType.FramelessWindowHint
+    assert dialog.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    title = dialog.findChild(QLabel, "warning_title")
+    message = dialog.findChild(QLabel, "warning_message")
+    details = dialog.findChild(QLabel, "warning_details")
+    assert title is not None
+    assert message is not None
+    assert details is not None
+    assert title.text() == "OBS 推流状态未确认"
+    assert "Bilibili 直播已停止" in message.text()
+    assert details.text() == "请打开 OBS 手动确认推流状态。"
+
+    dialog.close()
+    page.close()
