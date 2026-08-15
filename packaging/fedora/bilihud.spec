@@ -17,11 +17,13 @@ BuildRequires:  gcc-c++
 BuildRequires:  pkgconf-pkg-config
 BuildRequires:  qt6-qtbase-devel
 BuildRequires:  qt6-qtbase-private-devel
+BuildRequires:  qt6-qtmultimedia-devel
 BuildRequires:  layer-shell-qt-devel
 BuildRequires:  wayland-devel
 
 Requires:       python3 >= 3.13
 Requires:       python3-pyqt6
+Requires:       qt6-qtmultimedia
 Requires:       layer-shell-qt
 
 %description

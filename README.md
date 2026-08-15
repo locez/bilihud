@@ -59,19 +59,19 @@ Linux 的 Layer Shell bridge 是可选 native 组件。CMake 默认使用 `AUTO`
 **Ubuntu / Debian:**
 ```bash
 sudo apt install cmake ninja-build pkg-config build-essential \
-  liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev libwayland-dev
+  liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev libwayland-dev libpulse0
 ```
 
 **Fedora:**
 ```bash
 sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel \
-  qt6-qtbase-private-devel layer-shell-qt-devel wayland-devel
+  qt6-qtbase-private-devel qt6-qtmultimedia layer-shell-qt-devel wayland-devel pulseaudio-libs
 ```
 
 **Arch Linux:**
 ```bash
 sudo pacman -S cmake ninja gcc pkgconf python-scikit-build-core \
-  qt6-base qt6-wayland layer-shell-qt
+  qt6-base qt6-multimedia qt6-wayland layer-shell-qt libpulse
 ```
 
 **Gentoo Linux:**
