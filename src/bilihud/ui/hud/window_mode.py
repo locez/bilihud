@@ -50,7 +50,7 @@ class WindowModeController:
         self._platform = platform
 
     def activate_layer_shell(self) -> OverlayOperationResult:
-        """Activate the platform adapter after the Qt surface has been mapped."""
+        """Finish platform activation after the Qt surface has been mapped."""
         result = self._platform.activate()
         self.update_availability()
         if not result.succeeded:

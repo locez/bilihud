@@ -15,9 +15,13 @@ logger = logging.getLogger(__name__)
 
 CONFIG_VERSION = 1
 DEFAULT_MIRROR_PORT = 2233
+DEFAULT_MIRROR_DANMAKU_X = 4
+DEFAULT_MIRROR_DANMAKU_Y = 4
 DEFAULT_OBS_HOST = "127.0.0.1"
 DEFAULT_OBS_PORT = 4455
 DEFAULT_WINDOW_OPACITY = 80
+DEFAULT_HUD_FONT_FAMILY = ""
+MAX_HUD_FONT_FAMILY_LENGTH = 128
 MIN_WINDOW_OPACITY = 20
 MAX_WINDOW_OPACITY = 100
 
@@ -52,6 +56,11 @@ class AppConfig:
     live_area_id: str = ""  # Saved Bilibili sub-area identifier.
     mirror_enabled: bool = False  # Whether the local Mirror server starts with the app.
     mirror_port: int = DEFAULT_MIRROR_PORT  # Local port owned by the Mirror server.
+    mirror_gift_effects_enabled: bool = False  # Whether Mirror plays transient gift effects.
+    overlay_gift_effects_enabled: bool = False  # Whether the desktop overlay plays gift effects.
+    hud_font_family: str = DEFAULT_HUD_FONT_FAMILY  # Shared message font for desktop HUD and Mirror.
+    mirror_danmaku_x: int = DEFAULT_MIRROR_DANMAKU_X  # Mirror danmaku left position as a percentage.
+    mirror_danmaku_y: int = DEFAULT_MIRROR_DANMAKU_Y  # Mirror danmaku top position as a percentage.
     obs_host: str = DEFAULT_OBS_HOST  # OBS WebSocket host; the password is not stored here.
     obs_port: int = DEFAULT_OBS_PORT  # OBS WebSocket port.
     theme: ThemeMode = ThemeMode.SYSTEM  # Appearance preference for the settings window.
@@ -67,6 +76,11 @@ class AppConfig:
             live_area_id=_string_value(values.get("live_area_id"), ""),
             mirror_enabled=_bool_value(values.get("mirror_enabled"), False),
             mirror_port=_port_value(values.get("mirror_port"), DEFAULT_MIRROR_PORT),
+            mirror_gift_effects_enabled=_bool_value(values.get("mirror_gift_effects_enabled"), False),
+            overlay_gift_effects_enabled=_bool_value(values.get("overlay_gift_effects_enabled"), False),
+            hud_font_family=_font_family_value(values.get("hud_font_family"), DEFAULT_HUD_FONT_FAMILY),
+            mirror_danmaku_x=_percentage_value(values.get("mirror_danmaku_x"), DEFAULT_MIRROR_DANMAKU_X),
+            mirror_danmaku_y=_percentage_value(values.get("mirror_danmaku_y"), DEFAULT_MIRROR_DANMAKU_Y),
             obs_host=_non_empty_string(values.get("obs_host"), DEFAULT_OBS_HOST),
             obs_port=_port_value(values.get("obs_port"), DEFAULT_OBS_PORT),
             theme=_theme_value(values.get("theme"), ThemeMode.SYSTEM),
@@ -88,6 +102,11 @@ class AppConfig:
             "live_area_id": self.live_area_id,
             "mirror_enabled": self.mirror_enabled,
             "mirror_port": self.mirror_port,
+            "mirror_gift_effects_enabled": self.mirror_gift_effects_enabled,
+            "overlay_gift_effects_enabled": self.overlay_gift_effects_enabled,
+            "hud_font_family": self.hud_font_family,
+            "mirror_danmaku_x": self.mirror_danmaku_x,
+            "mirror_danmaku_y": self.mirror_danmaku_y,
             "obs_host": self.obs_host,
             "obs_port": self.obs_port,
             "theme": self.theme.value,
@@ -197,8 +216,34 @@ def _non_empty_string(value: object, default: str) -> str:
     return parsed or default
 
 
+def _font_family_value(value: object, default: str) -> str:
+    """Normalize a font family before it reaches Qt styles or Mirror CSS."""
+    if not isinstance(value, str):
+        return default
+    parsed = value.strip()
+    forbidden = "\r\n\"'\\;{}<>"
+    if not parsed or len(parsed) > MAX_HUD_FONT_FAMILY_LENGTH or any(char in parsed for char in forbidden):
+        return default
+    return parsed
+
+
 def _bool_value(value: object, default: bool) -> bool:
     return value if isinstance(value, bool) else default
+
+
+def _percentage_value(value: object, default: int) -> int:
+    """Normalize a zero-to-one-hundred percentage from external configuration."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value if 0 <= value <= 100 else default
+    if isinstance(value, str):
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            return default
+        return parsed if 0 <= parsed <= 100 else default
+    return default
 
 
 def _theme_value(value: object, default: ThemeMode) -> ThemeMode:

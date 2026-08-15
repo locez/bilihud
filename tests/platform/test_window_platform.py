@@ -30,6 +30,7 @@ class FakeWindowHost:
     def __init__(self) -> None:
         self.system_move_available = True
         self.native_pointer: int | None = None
+        self.full_screen_overlay_enabled = False
         self.policies: list[WindowPolicy] = []
         self.moved_positions: list[WindowPoint] = []
         self.set_geometry_calls: list[WindowRectangle] = []
@@ -52,6 +53,9 @@ class FakeWindowHost:
 
     def screen_geometry(self) -> WindowRectangle | None:
         return WindowRectangle(0, 0, 1920, 1080)
+
+    def full_screen_overlay(self) -> bool:
+        return self.full_screen_overlay_enabled
 
     def set_geometry(self, geometry: WindowRectangle) -> None:
         self.set_geometry_calls.append(geometry)
@@ -82,10 +86,12 @@ class FakeLayerShellBridge:
     """Native-free Layer Shell fake for strategy-provider integration tests."""
 
     def __init__(self) -> None:
+        self.overlay_calls: list[tuple[int, bool]] = []
         self.anchor_positions: list[tuple[int, int, int]] = []
 
-    def make_overlay(self, _window_pointer: int) -> None:
-        pass
+    def make_overlay(self, window_pointer: int, *, full_screen: bool = False) -> bool:
+        self.overlay_calls.append((window_pointer, full_screen))
+        return True
 
     def set_passthrough(self, _window_pointer: int, _enabled: bool) -> None:
         pass
@@ -157,7 +163,8 @@ def test_layer_shell_activation_falls_back_to_an_ordinary_window(monkeypatch) ->
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
 
     class FailingLayerShellBridge(FakeLayerShellBridge):
-        def make_overlay(self, _window_pointer: int) -> None:
+        def make_overlay(self, _window_pointer: int, *, full_screen: bool = False) -> bool:
+            del full_screen
             raise RuntimeError("test activation failure")
 
     bridge = FailingLayerShellBridge()
@@ -174,7 +181,7 @@ def test_layer_shell_activation_falls_back_to_an_ordinary_window(monkeypatch) ->
     assert platform.capabilities.gaming_mode is False
     assert platform.capabilities.drag is True
     assert platform.capabilities.unavailable_reason == (
-        "Layer Shell 激活失败: test activation failure"
+        "Layer Shell 预配置失败: test activation failure"
     )
     assert platform.begin_drag(WindowPoint(20, 20), WindowPoint(100, 100)).mode is DragMode.SYSTEM
     assert platform.set_gaming_mode(True).succeeded is False
@@ -238,6 +245,25 @@ def test_niri_layer_shell_provider_uses_global_drag_deltas(monkeypatch) -> None:
     assert platform.update_drag(WindowPoint(20, 20), WindowPoint(5000, 0)) == OverlayOperationResult.success()
     assert platform.update_drag(WindowPoint(20, 20), WindowPoint(4999, 0)) == OverlayOperationResult.success()
     assert bridge.anchor_positions[-2:] == [(123, 1870, 0), (123, 1869, 0)]
+
+
+def test_layer_shell_full_screen_surface_is_configured_before_mapping(monkeypatch) -> None:
+    """Gift surfaces use four-edge Layer Shell anchors and skip movable HUD margins."""
+    _app()
+    monkeypatch.setattr(window_platform.QGuiApplication, "platformName", lambda: "wayland")
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    bridge = FakeLayerShellBridge()
+    monkeypatch.setattr(window_platform, "load_layer_shell_bridge", lambda _package_dir: (bridge, None))
+
+    host = FakeWindowHost()
+    host.native_pointer = 123
+    host.full_screen_overlay_enabled = True
+    platform = window_platform.DefaultOverlayPlatformFactory()(host)
+
+    assert platform.prepare() == OverlayOperationResult.success()
+    assert bridge.overlay_calls == [(123, True)]
+    assert platform.activate() == OverlayOperationResult.success()
+    assert bridge.anchor_positions == []
 
 
 @pytest.mark.parametrize("platform_name", ["cocoa", "windows"])

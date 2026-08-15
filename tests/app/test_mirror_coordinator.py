@@ -5,7 +5,7 @@ import pytest
 from bilihud.app.mirror_coordinator import MirrorCoordinator
 from bilihud.config.store import AppConfig
 from bilihud.danmaku.messages import DanmakuMessage, MessageAuthor, TextSegment
-from bilihud.mirror.state import MirrorEntry, MirrorState
+from bilihud.mirror.state import MirrorDisplaySettings, MirrorEntry, MirrorState
 
 
 class FakeConfigStore:
@@ -32,6 +32,7 @@ class FakeServer:
         self.start_calls = 0
         self.stop_calls = 0
         self.entries: list[MirrorEntry] = []
+        self.display_settings = MirrorDisplaySettings()
 
     async def start(self) -> None:
         self.start_calls += 1
@@ -46,13 +47,19 @@ class FakeServer:
     def publish_append(self, entry: MirrorEntry) -> None:
         self.entries.append(entry)
 
+    def set_display_settings(self, settings: MirrorDisplaySettings) -> None:
+        self.display_settings = settings
+
 
 def test_mirror_coordinator_owns_start_stop_and_message_publication():
-    config_store = FakeConfigStore(AppConfig(mirror_enabled=True, mirror_port=9876))
+    config_store = FakeConfigStore(
+        AppConfig(mirror_enabled=True, mirror_port=9876, hud_font_family="Noto Sans CJK SC")
+    )
     server = FakeServer(9876)
 
-    def factory(_state: MirrorState, *, port: int) -> FakeServer:
+    def factory(_state: MirrorState, *, port: int, display_settings: MirrorDisplaySettings) -> FakeServer:
         assert port == 9876
+        server.display_settings = display_settings
         return server
 
     coordinator = MirrorCoordinator(config_store=config_store, server_factory=factory)
@@ -62,6 +69,22 @@ def test_mirror_coordinator_owns_start_stop_and_message_publication():
         started = await coordinator.start()
         assert started.state.running is True
         assert started.notices[0].text.startswith("BiliHUD Mirror 已启动")
+        assert server.display_settings.font_family == "Noto Sans CJK SC"
+
+        coordinator.apply_display_settings(
+            MirrorDisplaySettings(
+                gift_effects_enabled=True,
+                font_family="Microsoft YaHei",
+                danmaku_x=20,
+                danmaku_y=70,
+            )
+        )
+        assert server.display_settings == MirrorDisplaySettings(
+            gift_effects_enabled=True,
+            font_family="Microsoft YaHei",
+            danmaku_x=20,
+            danmaku_y=70,
+        )
 
         message = DanmakuMessage(
             author=MessageAuthor(uid=1, name="Locez", color="#66CCFF"),
@@ -90,8 +113,9 @@ def test_mirror_coordinator_persists_enabled_preference_without_dropping_other_c
     )
     server = FakeServer(9877)
 
-    def factory(_state: MirrorState, *, port: int) -> FakeServer:
+    def factory(_state: MirrorState, *, port: int, display_settings: MirrorDisplaySettings) -> FakeServer:
         assert port == 9877
+        server.display_settings = display_settings
         return server
 
     coordinator = MirrorCoordinator(config_store=config_store, server_factory=factory)
@@ -116,8 +140,9 @@ def test_mirror_coordinator_keeps_failed_server_for_retry_during_shutdown():
     config_store = FakeConfigStore(AppConfig(mirror_enabled=True))
     server = FakeServer(2233, stop_failures=1)
 
-    def factory(_state: MirrorState, *, port: int) -> FakeServer:
+    def factory(_state: MirrorState, *, port: int, display_settings: MirrorDisplaySettings) -> FakeServer:
         assert port == 2233
+        server.display_settings = display_settings
         return server
 
     coordinator = MirrorCoordinator(config_store=config_store, server_factory=factory)
@@ -140,7 +165,8 @@ def test_mirror_coordinator_reports_bind_failure_without_claiming_server_ownersh
     config_store = FakeConfigStore(AppConfig(mirror_enabled=True, mirror_port=9988))
     server = FakeServer(9988, start_failure=True)
 
-    def factory(_state: MirrorState, *, port: int) -> FakeServer:
+    def factory(_state: MirrorState, *, port: int, display_settings: MirrorDisplaySettings) -> FakeServer:
+        server.display_settings = display_settings
         return server
 
     coordinator = MirrorCoordinator(config_store=config_store, server_factory=factory)

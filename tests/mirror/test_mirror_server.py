@@ -12,7 +12,15 @@ from bilihud.mirror.server import (
     mirror_event_payload,
     mirror_html,
 )
-from bilihud.mirror.state import MIRROR_EVENTS_ROUTE, MIRROR_IMAGE_ROUTE, MIRROR_ROUTE, MirrorState
+from bilihud.mirror.state import (
+    MIRROR_EVENTS_ROUTE,
+    MIRROR_ICON_ROUTE,
+    MIRROR_IMAGE_ROUTE,
+    MIRROR_MEDIA_ROUTE,
+    MIRROR_ROUTE,
+    MirrorDisplaySettings,
+    MirrorState,
+)
 
 
 def _site_port(site: web.TCPSite) -> int:
@@ -24,7 +32,9 @@ def _site_port(site: web.TCPSite) -> int:
 def test_mirror_routes_are_bilihud_named():
     assert MIRROR_ROUTE == "/bilihud-mirror"
     assert MIRROR_EVENTS_ROUTE == "/bilihud-mirror/events"
+    assert MIRROR_ICON_ROUTE == "/bilihud-mirror/icon.png"
     assert MIRROR_IMAGE_ROUTE == "/bilihud-mirror/image"
+    assert MIRROR_MEDIA_ROUTE == "/bilihud-mirror/media"
     assert "obs" not in MIRROR_ROUTE.lower()
     assert "obs" not in MIRROR_EVENTS_ROUTE.lower()
     assert "obs" not in MIRROR_IMAGE_ROUTE.lower()
@@ -34,24 +44,45 @@ def test_mirror_html_uses_transparent_page_and_event_source():
     page = mirror_html(MIRROR_EVENTS_ROUTE)
 
     assert "background: transparent" in page
+    assert f'<link rel="icon" type="image/png" href="{MIRROR_ICON_ROUTE}">' in page
     assert f'new EventSource("{MIRROR_EVENTS_ROUTE}")' in page
     assert "/obs" not in page.lower()
     assert "textContent" in page
     assert 'createElement("img")' in page
     assert "proxyImageUrl(segment.url)" in page
     assert f'"{MIRROR_IMAGE_ROUTE}?url="' in page
+    assert "proxyMediaUrl(entry.giftEffectUrl)" in page
+    assert f'"{MIRROR_MEDIA_ROUTE}?url="' in page
     assert "entry.badges || []" in page
     assert 'badge.className = "meta-badge " + badgeClass;' in page
     assert "border: 1px solid currentColor;" in page
     assert "badge.style.borderColor = badgeData.color;" in page
     assert "row.appendChild(badge);" in page
+    assert "width: fit-content;" in page
+    assert "pointerdown" in page
+    assert "setPanelPosition" in page
+    assert "PANEL_LAYOUT_STORAGE_KEY" in page
+    assert "readPanelLayout" in page
+    assert "persistPanelLayout" in page
+    assert "setPanelSize" in page
+    assert "is-resizing" in page
 
 
 def test_mirror_html_defaults_to_2k_stream_readable_styles():
     page = mirror_html(MIRROR_EVENTS_ROUTE)
 
     assert "padding: 14px;" in page
-    assert "background: rgba(0, 0, 0, 0.56);" in page
+    assert "background: rgba(0, 0, 0, 0.28);" in page
+    assert "#effect-layer" in page
+    assert "gift-effect-compositor" in page
+    assert "gift-effect-canvas" in page
+    assert "clearActiveGiftEffect" in page
+    assert "effectLayer.replaceChildren()" in page
+    assert "transform: translate(-50%, -50%);" in page
+    assert "playMaskedGiftEffect" in page
+    assert "centerGiftCanvas" in page
+    assert "getImageData" in page
+    assert "events.addEventListener(\"settings\"" in page
     assert "line-height: 1.32;" in page
     assert "margin: 0 0 6px;" in page
     assert "font-size: 18px;" in page
@@ -60,6 +91,31 @@ def test_mirror_html_defaults_to_2k_stream_readable_styles():
     assert "max-height: 44px;" in page
     assert "max-width: 180px;" in page
     assert "scaleImageSize(segment.width, segment.height)" in page
+    assert "scrollbar-width: none;" in page
+    assert "#panel::-webkit-scrollbar" in page
+    assert "display: none;" in page
+    assert "resize: none;" in page
+    assert "#panel::after" not in page
+    assert "localStorage.setItem" in page
+
+
+def test_mirror_html_embeds_opt_in_effect_and_position_settings():
+    page = mirror_html(
+        settings=MirrorDisplaySettings(
+            gift_effects_enabled=True,
+            font_family="Noto Sans CJK SC",
+            danmaku_x=23,
+            danmaku_y=71,
+        )
+    )
+
+    assert (
+        'applySettings({"giftEffects":true,"fontFamily":"Noto Sans CJK SC",'
+        '"danmakuX":23,"danmakuY":71});'
+    ) in page
+    assert "--hud-font-family" in page
+    assert "left: var(--danmaku-x);" in page
+    assert "top: var(--danmaku-y);" in page
 
 
 def test_mirror_event_payload_serializes_named_event():
@@ -130,6 +186,42 @@ def test_mirror_server_registers_image_proxy_route():
                 async with session.get(image_url, params={"url": "file:///tmp/emote.png"}) as response:
                     assert response.status == 400
                     assert await response.text() == "Invalid image URL"
+        finally:
+            await mirror_server.stop()
+
+    asyncio.run(run_test())
+
+
+def test_mirror_server_serves_bilihud_icon():
+    async def run_test():
+        mirror_server = MirrorServer(MirrorState(), port=0)
+        await mirror_server.start()
+
+        try:
+            icon_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_ICON_ROUTE}"
+            async with ClientSession() as session:
+                async with session.get(icon_url) as response:
+                    assert response.status == 200
+                    assert response.headers["Content-Type"].startswith("image/png")
+                    assert response.headers["Cache-Control"] == "public, max-age=86400"
+                    assert (await response.read()).startswith(b"\x89PNG\r\n\x1a\n")
+        finally:
+            await mirror_server.stop()
+
+    asyncio.run(run_test())
+
+
+def test_mirror_server_registers_media_proxy_route():
+    async def run_test():
+        mirror_server = MirrorServer(MirrorState(), port=0)
+        await mirror_server.start()
+
+        try:
+            media_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_MEDIA_ROUTE}"
+            async with ClientSession() as session:
+                async with session.get(media_url, params={"url": "file:///tmp/gift.mp4"}) as response:
+                    assert response.status == 400
+                    assert await response.text() == "Invalid media URL"
         finally:
             await mirror_server.stop()
 
@@ -235,6 +327,53 @@ def test_mirror_image_proxy_fetches_image_with_bilibili_headers():
                     assert response.status == 200
                     assert await response.read() == b"image-bytes"
                     assert response.headers["Content-Type"] == "image/png"
+
+            assert seen_headers == IMAGE_PROXY_HEADERS
+        finally:
+            await mirror_server.stop()
+            await source_runner.cleanup()
+
+    asyncio.run(run_test())
+
+
+def test_mirror_media_proxy_fetches_video_with_bilibili_headers():
+    async def run_test():
+        seen_headers: dict[str, str | None] = {}
+
+        async def handle_source_video(request: web.Request) -> web.Response:
+            seen_headers["Referer"] = request.headers.get("Referer")
+            seen_headers["User-Agent"] = request.headers.get("User-Agent")
+            return web.Response(body=b"video-bytes", headers={"Content-Type": "audio/mp4"})
+
+        source_app = web.Application()
+        source_app.router.add_get("/gift.mp4", handle_source_video)
+        source_runner = web.AppRunner(source_app)
+        await source_runner.setup()
+        source_site = web.TCPSite(source_runner, "127.0.0.1", 0)
+        await source_site.start()
+
+        mirror_server = MirrorServer(
+            MirrorState(),
+            port=0,
+            media_proxy_policy=ImageProxyPolicy(
+                allowed_hosts=frozenset({"127.0.0.1"}),
+                allowed_host_suffixes=frozenset(),
+                allowed_content_types=frozenset({"audio/mp4"}),
+                allow_private_addresses=True,
+            ),
+        )
+        await mirror_server.start()
+
+        try:
+            source_url = f"http://127.0.0.1:{_site_port(source_site)}/gift.mp4"
+            mirror_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_MEDIA_ROUTE}"
+
+            async with ClientSession() as session:
+                async with session.get(mirror_url, params={"url": source_url}) as response:
+                    assert response.status == 200
+                    assert await response.read() == b"video-bytes"
+                    assert response.headers["Content-Type"] == "video/mp4"
+                    assert response.headers["Cache-Control"] == "no-store"
 
             assert seen_headers == IMAGE_PROXY_HEADERS
         finally:

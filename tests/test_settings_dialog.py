@@ -37,7 +37,7 @@ def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
         "通用",
         "面板",
         "直播",
-        "Mirror",
+        "显示",
         "账号",
         "关于",
         "开发者",
@@ -63,6 +63,7 @@ def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
     }
 
     dialog.select_page(SettingsPage.MIRROR)
+    assert dialog.page_title.text() == "显示与特效"
     mirror_page = dialog.page_stack.currentWidget()
     assert isinstance(mirror_page, MirrorSettingsPage)
     assert mirror_page.findChild(QCheckBox, "mirror_enabled") is not None
@@ -71,6 +72,18 @@ def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
     dialog.select_page(SettingsPage.DEVELOPER)
     assert dialog.navigation.currentRow() == 6
     assert dialog.simulation_button.text() == "弹幕模拟"
+    assert dialog.gift_effect_combo is not None
+    assert [
+        dialog.gift_effect_combo.itemText(index)
+        for index in range(dialog.gift_effect_combo.count())
+    ] == ["选择测试礼物", "总督开通", "提督开通", "舰长开通", "浪漫城堡"]
+
+    selected_effects: list[str] = []
+    dialog.gift_effect_simulation_requested.connect(selected_effects.append)
+    dialog.gift_effect_combo.setCurrentIndex(4)
+    dialog.gift_effect_combo.setCurrentIndex(4)
+    assert selected_effects == ["castle", "castle"]
+    assert dialog.gift_effect_combo.currentIndex() == 0
 
     dialog.select_page(SettingsPage.ABOUT)
     about_page = dialog.page_stack.currentWidget()
@@ -122,6 +135,34 @@ def test_settings_dialog_emits_typed_apply_and_confirm_requests() -> None:
     assert len(requests) == 2
     assert requests[1].close_after_save is True
 
+    dialog.close()
+
+
+def test_settings_dialog_saves_both_gift_effect_switches_and_mirror_position() -> None:
+    _app()
+    dialog = SettingsDialog(None, AppConfig())
+    requests: list[SettingsSaveRequest] = []
+    dialog.settings_requested.connect(requests.append)
+
+    dialog.select_page(SettingsPage.MIRROR)
+    mirror_page = dialog.page_stack.currentWidget()
+    assert isinstance(mirror_page, MirrorSettingsPage)
+    mirror_page.mirror_gift_effects_checkbox.setChecked(True)
+    mirror_page.overlay_gift_effects_checkbox.setChecked(True)
+    font_index = 1 if mirror_page.font_family_combo.count() > 1 else 0
+    mirror_page.font_family_combo.setCurrentIndex(font_index)
+    expected_font = mirror_page.font_family_combo.currentData()
+    assert isinstance(expected_font, str)
+    mirror_page.danmaku_x_spinbox.setValue(28)
+    mirror_page.danmaku_y_spinbox.setValue(74)
+    dialog.apply_button.click()
+
+    assert len(requests) == 1
+    assert requests[0].config.mirror_gift_effects_enabled is True
+    assert requests[0].config.overlay_gift_effects_enabled is True
+    assert requests[0].config.hud_font_family == expected_font
+    assert requests[0].config.mirror_danmaku_x == 28
+    assert requests[0].config.mirror_danmaku_y == 74
     dialog.close()
 
 

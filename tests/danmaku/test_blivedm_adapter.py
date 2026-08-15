@@ -4,6 +4,9 @@ import pytest
 
 from bilihud.danmaku.blivedm_adapter import (
     MessageConversionError,
+    parse_guard_purchase,
+    to_hud_gift_message,
+    to_hud_guard_message,
     to_hud_message,
     to_hud_message_or_system,
 )
@@ -76,6 +79,8 @@ def test_to_hud_message_converts_gift_and_interaction_variants():
             num=2,
             price=1000,
             coin_type="gold",
+            gift_id=123,
+            gift_img_basic="https://i0.hdslb.com/bfs/live/laitiao.png",
         )
     )
     interact = to_hud_message(web_models.InteractWordV2Message(uid=4, username="新观众", msg_type=2))
@@ -86,11 +91,79 @@ def test_to_hud_message_converts_gift_and_interaction_variants():
     assert gift.unit_price == 1000
     assert gift.currency is GiftCurrency.GOLD
     assert gift.total_price == 2000
+    assert gift.gift_id == 123
+    assert gift.gift_image_url == "https://i0.hdslb.com/bfs/live/laitiao.png"
     assert gift.segments == (TextSegment("赠送 辣条 x2"),)
     assert isinstance(interact, InteractMessage)
     assert interact.author.name == "新观众"
     assert interact.interaction is InteractionKind.FOLLOW
     assert interact.segments == (TextSegment("关注了主播"),)
+
+
+def test_to_hud_gift_message_keeps_normalized_official_effect_urls():
+    raw_message = web_models.GiftMessage(gift_id=32132, gift_name="浪漫城堡", num=1)
+
+    gift = to_hud_gift_message(
+        raw_message,
+        gift_effect_url="https://i0.hdslb.com/bfs/live/castle.mp4",
+        gift_animation_url="https://i0.hdslb.com/bfs/live/castle.gif",
+    )
+
+    assert gift.gift_effect_url == "https://i0.hdslb.com/bfs/live/castle.mp4"
+    assert gift.gift_animation_url == "https://i0.hdslb.com/bfs/live/castle.gif"
+
+
+def test_guard_purchase_uses_the_anchor_effect_instead_of_the_buyer_effect():
+    purchase = parse_guard_purchase(
+        {
+            "uid": 7,
+            "username": "舰长用户",
+            "guard_level": 3,
+            "num": 1,
+            "price": 198000,
+            "gift_id": 10003,
+            "gift_name": "舰长",
+            "start_time": 123,
+            "effect_id": 397,
+        }
+    )
+
+    assert purchase is not None
+    assert purchase.effect_id == 590
+    gift = to_hud_guard_message(
+        purchase,
+        gift_effect_url="https://i0.hdslb.com/bfs/live/captain.mp4",
+    )
+
+    assert gift.action == "开通"
+    assert gift.gift_name == "舰长"
+    assert gift.gift_id == 10003
+    assert gift.gift_effect_url.endswith("captain.mp4")
+    assert gift.author.badges[0].kind is MessageBadgeKind.PRIVILEGE
+
+
+def test_guard_toast_parser_uses_room_effect_and_filters_gifted_duplicate():
+    raw_toast = {
+        "sender_uinfo": {"uid": 8, "base": {"name": "提督用户"}},
+        "guard_info": {"guard_level": 2, "start_time": 456},
+        "pay_info": {"num": 1, "price": 1998000},
+        "gift_info": {"gift_id": 10002, "gift_name": "提督"},
+        "option": {"source": 0, "is_group": False},
+        "effect_info": {"room_effect_id": 591, "room_group_effect_id": 1337},
+    }
+
+    purchase = parse_guard_purchase(raw_toast)
+    duplicate = parse_guard_purchase(
+        {
+            **raw_toast,
+            "option": {"source": 2, "is_group": False},
+        }
+    )
+
+    assert purchase is not None
+    assert purchase.effect_id == 591
+    assert purchase.event_id == "456"
+    assert duplicate is None
 
 
 @pytest.mark.parametrize(

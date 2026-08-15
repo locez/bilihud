@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 
 from PyQt6.QtWidgets import QWidget
 
@@ -31,7 +32,9 @@ class SettingsController:
         on_login: Callable[[], UiCommandResult],
         on_logout: Callable[[], UiCommandResult],
         on_simulation: Callable[[], None],
+        on_gift_effect_simulation: Callable[[str], None],
         on_opacity_changed: Callable[[int], None],
+        on_hud_font_changed: Callable[[str], None],
         on_live_started: LiveStartedHandler | None = None,
     ) -> None:
         """Create a lazy settings owner with explicit application and UI callbacks."""
@@ -40,11 +43,13 @@ class SettingsController:
         self._task_scope = task_scope
         self._on_mirror_toggle = on_mirror_toggle
         self._on_opacity_changed = on_opacity_changed
+        self._on_hud_font_changed = on_hud_font_changed
         self._dialog: SettingsDialog | None = None
         self._live_status_callback = on_live_status
         self._login_callback = on_login
         self._logout_callback = on_logout
         self._simulation_callback = on_simulation
+        self._gift_effect_simulation_callback = on_gift_effect_simulation
         self._live_started_callback = on_live_started
 
     @property
@@ -111,6 +116,7 @@ class SettingsController:
         dialog.login_requested.connect(self._login_callback)
         dialog.logout_requested.connect(self._logout_callback)
         dialog.simulation_requested.connect(self._simulation_callback)
+        dialog.gift_effect_simulation_requested.connect(self._gift_effect_simulation_callback)
         self._dialog = dialog
         return dialog
 
@@ -119,12 +125,20 @@ class SettingsController:
         dialog = self._dialog
         if dialog is None:
             return
-        result = self._application.save_config(request.config)
+        mirror_state = self._application.mirror_coordinator.state
+        config = replace(
+            request.config,
+            mirror_enabled=mirror_state.enabled,
+            mirror_port=mirror_state.port,
+        )
+        effective_request = replace(request, config=config)
+        result = self._application.save_config(config)
         if not result.succeeded:
-            dialog.report_save_result(request, False, "设置保存失败")
+            dialog.report_save_result(effective_request, False, "设置保存失败")
             return
         self._on_opacity_changed(result.config.window_opacity)
-        dialog.report_save_result(request, True)
+        self._on_hud_font_changed(result.config.hud_font_family)
+        dialog.report_save_result(effective_request, True)
 
 
 __all__ = ("SettingsController",)

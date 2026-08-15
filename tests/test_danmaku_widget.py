@@ -20,6 +20,7 @@ from bilihud.danmaku.messages import (
     TextSegment,
     make_system_message,
 )
+from bilihud.danmaku.mock import MOCK_CASTLE_GIFT_ID, MockGiftEffectId
 from bilihud.live.emoticons import LiveEmoticon, LiveEmoticonPackage
 from bilihud.platform.layer_shell import LayerShellAnchorDragStrategy
 from bilihud.platform.overlay_contracts import (
@@ -176,6 +177,31 @@ def test_danmaku_widget_injects_fixed_mock_messages_into_hud(monkeypatch):
     danmaku_widget.DanmakuWidget.trigger_danmaku_simulation(widget)
 
     assert len(received) == len(danmaku_widget.mock_message_batch())
+    assert not any(
+        isinstance(message, GiftMessage) and message.gift_id == MOCK_CASTLE_GIFT_ID
+        for message in received
+    )
+
+
+def test_danmaku_widget_injects_one_selected_gift_effect_fixture():
+    _app()
+    widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+    widget._shutting_down = False
+    received = []
+    widget.add_message = received.append
+
+    danmaku_widget.DanmakuWidget.trigger_gift_effect_simulation(
+        widget,
+        MockGiftEffectId.CASTLE.value,
+    )
+
+    assert len(received) == 1
+    castle = received[0]
+    assert isinstance(castle, GiftMessage)
+    assert castle.gift_id == MOCK_CASTLE_GIFT_ID
+    assert castle.gift_effect_url.endswith(".mp4")
+    assert castle.gift_animation_url.endswith(".gif")
+    assert castle.gift_effect_layout is not None
 
 
 def test_danmaku_widget_mirror_command_selects_unified_settings_tab():
@@ -257,6 +283,15 @@ def test_danmaku_delegate_renders_local_system_messages():
     assert "BiliHUD Mirror 已启动" in html
     assert "&lt;url&gt;" in html
     assert html.strip()
+
+
+def test_danmaku_delegate_applies_the_selected_hud_font():
+    delegate = message_list.DanmakuDelegate()
+    delegate.set_font_family("Noto Sans CJK SC")
+
+    html = delegate.get_html_for_message(make_system_message("测试字体"))
+
+    assert "font-family: 'Noto Sans CJK SC';" in html
 
 
 def test_danmaku_delegate_renders_gift_and_interaction_variants():

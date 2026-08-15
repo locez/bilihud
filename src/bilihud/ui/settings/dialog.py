@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QMouseEvent, QRegion, QResizeEvent
 from PyQt6.QtWidgets import (
     QDialog,
@@ -33,6 +33,7 @@ from bilihud.config.store import (
     AppConfig,
     ThemeMode,
 )
+from bilihud.danmaku.mock import mock_gift_effect_options
 from bilihud.ui.appearance import Appearance, resolve_appearance
 from bilihud.ui.settings.models import PAGE_DEFINITIONS as _PAGE_DEFINITIONS
 from bilihud.ui.settings.models import SettingsPage, SettingsSaveRequest
@@ -61,6 +62,7 @@ class SettingsDialog(QDialog):
     login_requested = pyqtSignal()
     logout_requested = pyqtSignal()
     simulation_requested = pyqtSignal()
+    gift_effect_simulation_requested = pyqtSignal(str)
 
     def __init__(
         self,
@@ -88,6 +90,8 @@ class SettingsDialog(QDialog):
         self._drag_offset: QPoint | None = None
         self._system_dragging = False
         self.opacity_error_label: QLabel | None = None
+        self.simulation_button: QPushButton | None = None
+        self.gift_effect_combo: ModernComboBox | None = None
         self.setWindowTitle("BiliHUD 设置")
         icon_path = Path(__file__).resolve().parents[2] / "assets" / "icon.png"
         self.setWindowIcon(QIcon(str(icon_path)))
@@ -315,12 +319,38 @@ class SettingsDialog(QDialog):
         description.setObjectName("muted_label")
         self.simulation_button = QPushButton("弹幕模拟", card)
         self.simulation_button.clicked.connect(self.simulation_requested.emit)
+        effect_row = QHBoxLayout()
+        effect_label = QLabel("高级礼物特效", card)
+        self.gift_effect_combo = ModernComboBox(card)
+        self.gift_effect_combo.setObjectName("gift_effect_simulation")
+        self.gift_effect_combo.setMinimumWidth(220)
+        self.gift_effect_combo.setToolTip("选择后立即注入一条对应的测试礼物")
+        self.gift_effect_combo.addItem("选择测试礼物", "")
+        for option in mock_gift_effect_options():
+            self.gift_effect_combo.addItem(option.title, option.effect_id.value)
+        self.gift_effect_combo.currentIndexChanged.connect(self._on_gift_effect_simulation_changed)
+        effect_row.addWidget(effect_label)
+        effect_row.addWidget(self.gift_effect_combo, 1)
         layout.addWidget(description)
         layout.addWidget(self.simulation_button, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addLayout(effect_row)
         page_layout = self._page_layout(page)
         page_layout.addWidget(card)
         page_layout.addStretch(1)
         return page
+
+    def _on_gift_effect_simulation_changed(self, index: int) -> None:
+        """Emit one selected fixture and reset the picker for repeatable checks."""
+        combo = self.gift_effect_combo
+        if combo is None or index <= 0:
+            return
+        effect_id = combo.itemData(index)
+        if not isinstance(effect_id, str) or not effect_id:
+            return
+        blocker = QSignalBlocker(combo)
+        combo.setCurrentIndex(0)
+        del blocker
+        self.gift_effect_simulation_requested.emit(effect_id)
 
     def _new_page(self) -> QWidget:
         page = QWidget(self.page_stack)
@@ -440,6 +470,8 @@ class SettingsDialog(QDialog):
         self.theme_combo.setCurrentIndex(theme_index if theme_index >= 0 else 0)
         self.theme_combo.blockSignals(False)
         self.opacity_spinbox.setValue(config.window_opacity)
+        if self._mirror_page is not None:
+            self._mirror_page.set_config(config)
         self._clear_feedback_state()
         self._preview_theme()
 
@@ -512,10 +544,32 @@ class SettingsDialog(QDialog):
         """Build an immutable application configuration from the visible controls."""
         value = self.theme_combo.currentData()
         theme = value if isinstance(value, ThemeMode) else ThemeMode.SYSTEM
+        mirror_page = self._mirror_page
+        if mirror_page is None:
+            mirror_gift_effects, overlay_gift_effects, hud_font_family = (
+                self._config_snapshot.mirror_gift_effects_enabled,
+                self._config_snapshot.overlay_gift_effects_enabled,
+                self._config_snapshot.hud_font_family,
+            )
+            danmaku_x = self._config_snapshot.mirror_danmaku_x
+            danmaku_y = self._config_snapshot.mirror_danmaku_y
+        else:
+            (
+                mirror_gift_effects,
+                overlay_gift_effects,
+                hud_font_family,
+                danmaku_x,
+                danmaku_y,
+            ) = mirror_page.config_values()
         return replace(
             self._config_snapshot,
             theme=theme,
             window_opacity=self.opacity_spinbox.value(),
+            mirror_gift_effects_enabled=mirror_gift_effects,
+            overlay_gift_effects_enabled=overlay_gift_effects,
+            hud_font_family=hud_font_family,
+            mirror_danmaku_x=danmaku_x,
+            mirror_danmaku_y=danmaku_y,
         )
 
     def _reset_current_page(self) -> None:
@@ -523,6 +577,8 @@ class SettingsDialog(QDialog):
             self.theme_combo.setCurrentIndex(0)
         elif self._active_page is SettingsPage.PANEL:
             self.opacity_spinbox.setValue(DEFAULT_WINDOW_OPACITY)
+        elif self._active_page is SettingsPage.MIRROR and self._mirror_page is not None:
+            self._mirror_page.reset_config()
         else:
             self.feedback_label.setText("本页暂无可重置的保存项")
 

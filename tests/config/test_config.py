@@ -98,3 +98,32 @@ def test_json_config_store_uses_defaults_for_invalid_external_values(tmp_path: P
 def test_app_config_accepts_the_supported_low_opacity_boundary() -> None:
     assert AppConfig.from_mapping({"window_opacity": 20}).window_opacity == 20
     assert AppConfig.from_mapping({"window_opacity": 19}).window_opacity == 80
+
+
+def test_app_config_persists_optional_gift_effects_and_mirror_position() -> None:
+    config = AppConfig.from_mapping(
+        {
+            "mirror_gift_effects_enabled": True,
+            "overlay_gift_effects_enabled": True,
+            "hud_font_family": "Noto Sans CJK SC",
+            "mirror_danmaku_x": 22,
+            "mirror_danmaku_y": 76,
+        }
+    )
+
+    assert config.mirror_gift_effects_enabled is True
+    assert config.overlay_gift_effects_enabled is True
+    assert config.hud_font_family == "Noto Sans CJK SC"
+    assert config.mirror_danmaku_x == 22
+    assert config.mirror_danmaku_y == 76
+    assert AppConfig.from_mapping(config.to_mapping()) == config
+
+
+def test_app_config_rejects_font_values_that_could_escape_css() -> None:
+    config = AppConfig.from_mapping(
+        {
+            "hud_font_family": "'bad-font'; color: red",
+        }
+    )
+
+    assert config.hud_font_family == ""

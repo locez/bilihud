@@ -8,6 +8,7 @@ from bilihud.danmaku import client as danmaku_client
 from bilihud.danmaku.client import DanmakuClient, DanmakuHandler, DanmakuShutdownError
 from bilihud.danmaku.messages import DanmakuMessage, GiftMessage, InteractMessage
 from bilihud.live.emoticons import LiveEmoticon
+from bilihud.live.gift_effects import FULL_SCREEN_EFFECT_CONFIG_URL, GiftEffectCatalog
 
 
 def test_start_starts_blivedm_client_and_reports_missing_login(monkeypatch):
@@ -71,6 +72,188 @@ def test_handler_emits_normalized_domain_messages():
     assert isinstance(received[1], GiftMessage)
     assert isinstance(received[2], InteractMessage)
     assert [message.author.name for message in received] == ["弹幕用户", "礼物用户", "互动用户"]
+
+
+def test_handler_resolves_official_gift_resources_before_delivery():
+    async def run_test():
+        raw_gift = {
+            "giftName": "浪漫城堡",
+            "num": 1,
+            "uname": "礼物用户",
+            "face": "",
+            "guard_level": 0,
+            "uid": 3,
+            "timestamp": 1,
+            "giftId": 32132,
+            "giftType": 0,
+            "gift_info": {
+                "img_basic": "https://i0.hdslb.com/bfs/live/castle.png",
+                "gif": "https://i0.hdslb.com/bfs/live/castle.gif",
+            },
+            "action": "赠送",
+            "price": 2233000,
+            "rnd": "gift-rnd",
+            "coin_type": "gold",
+            "total_coin": 2233000,
+            "tid": "gift-tid",
+        }
+
+        class GiftSession(FakeHttpSession):
+            def __init__(self):
+                super().__init__(
+                    get_payloads=[
+                        {
+                            "code": 0,
+                            "data": {
+                                "list": [
+                                    {
+                                        "config": {
+                                            "gif": "https://i0.hdslb.com/bfs/live/castle.gif",
+                                        },
+                                        "full_sc_effect": [
+                                            {
+                                                "web_mp4": "https://i0.hdslb.com/bfs/live/castle.mp4",
+                                                "web_mp4_json": "https://i0.hdslb.com/bfs/live/castle.json",
+                                            }
+                                        ],
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "info": {
+                                "rgbFrame": [0, 0, 720, 1280],
+                                "aFrame": [724, 0, 360, 640],
+                            }
+                        },
+                    ]
+                )
+
+        client = DanmakuClient(7450109)
+        client._gift_effect_catalog = GiftEffectCatalog(GiftSession(), client.room_id)
+        received = []
+        delivered = asyncio.Event()
+
+        def on_message(message):
+            received.append(message)
+            delivered.set()
+
+        client.set_message_callback(on_message)
+        handler = DanmakuHandler()
+        handler.set_danmaku_client(client)
+        handler.handle(None, {"cmd": "SEND_GIFT", "data": raw_gift})
+
+        await asyncio.wait_for(delivered.wait(), timeout=1)
+        assert len(received) == 1
+        assert isinstance(received[0], GiftMessage)
+        assert received[0].gift_effect_url.endswith("castle.mp4")
+        assert received[0].gift_animation_url.endswith("castle.gif")
+        await client._cancel_gift_effect_tasks()
+
+    asyncio.run(run_test())
+
+
+def test_handler_resolves_guard_purchase_effect_and_deduplicates_toast_event():
+    async def run_test():
+        raw_guard = {
+            "uid": 99,
+            "username": "舰长用户",
+            "guard_level": 3,
+            "num": 1,
+            "price": 198000,
+            "gift_id": 10003,
+            "gift_name": "舰长",
+            "start_time": 123456,
+        }
+        duplicate_toast = {
+            "sender_uinfo": {"uid": 99, "base": {"name": "舰长用户"}},
+            "guard_info": {"guard_level": 3, "start_time": 123456},
+            "pay_info": {"num": 1, "price": 198000},
+            "gift_info": {"gift_id": 10003, "gift_name": "舰长"},
+            "option": {"source": 0, "is_group": False},
+            "effect_info": {"room_effect_id": 590},
+        }
+
+        class GuardEffectSession(FakeHttpSession):
+            def __init__(self):
+                super().__init__(
+                    get_payloads=[
+                        {
+                            "code": 0,
+                            "data": {
+                                "conf_list": [
+                                    {
+                                        "id": 590,
+                                        "type": 3,
+                                        "web_mp4": "https://i0.hdslb.com/bfs/live/captain.mp4",
+                                        "web_mp4_json": "https://i0.hdslb.com/bfs/live/captain.json",
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "info": {
+                                "rgbFrame": [0, 0, 720, 1280],
+                                "aFrame": [724, 0, 360, 640],
+                            }
+                        },
+                    ]
+                )
+
+        client = DanmakuClient(7450109)
+        session = GuardEffectSession()
+        client._gift_effect_catalog = GiftEffectCatalog(session, client.room_id)
+        received = []
+        delivered = asyncio.Event()
+
+        def on_message(message):
+            received.append(message)
+            delivered.set()
+
+        client.set_message_callback(on_message)
+        handler = DanmakuHandler()
+        handler.set_danmaku_client(client)
+
+        assert handler.handle(None, {"cmd": "GUARD_BUY", "data": raw_guard}) is None
+        assert handler.handle(None, {"cmd": "USER_TOAST_MSG_V2", "data": duplicate_toast}) is None
+
+        await asyncio.wait_for(delivered.wait(), timeout=1)
+        assert len(received) == 1
+        assert isinstance(received[0], GiftMessage)
+        assert received[0].gift_name == "舰长"
+        assert received[0].gift_effect_url.endswith("captain.mp4")
+        assert received[0].gift_effect_layout is not None
+        assert session.get_calls[0][0] == FULL_SCREEN_EFFECT_CONFIG_URL
+        await client._cancel_gift_effect_tasks()
+
+    asyncio.run(run_test())
+
+
+def test_handler_emits_open_platform_guard_without_the_optional_catalog():
+    client = DanmakuClient(7450109)
+    received = []
+    client.set_message_callback(received.append)
+    handler = DanmakuHandler()
+    handler.set_danmaku_client(client)
+
+    handler.handle(
+        None,
+        {
+            "cmd": "LIVE_OPEN_PLATFORM_GUARD",
+            "data": {
+                "user_info": {"uname": "提督用户"},
+                "guard_level": 2,
+                "guard_num": 1,
+                "price": 1998000,
+                "msg_id": "open-guard-1",
+            },
+        },
+    )
+
+    assert len(received) == 1
+    assert isinstance(received[0], GiftMessage)
+    assert received[0].gift_name == "提督"
+    assert received[0].gift_id == 10002
 
 
 def test_start_reports_expired_keyring_login(monkeypatch):

@@ -12,9 +12,10 @@ from bilihud.platform.overlay_contracts import WindowHost, WindowPoint, WindowPo
 class QtWindowHost(WindowHost):
     """Translate abstract window operations to one top-level Qt widget."""
 
-    def __init__(self, widget: QWidget) -> None:
-        """Bind the host to an existing widget without creating native resources."""
+    def __init__(self, widget: QWidget, *, full_screen_overlay: bool = False) -> None:
+        """Bind one widget and describe whether Layer Shell should fill its output."""
         self._widget = widget
+        self._full_screen_overlay: bool = full_screen_overlay
         self._known_position: WindowPoint | None = None
 
     def apply_window_policy(self, policy: WindowPolicy) -> None:
@@ -86,6 +87,10 @@ class QtWindowHost(WindowHost):
         if screen is None:
             return None
         return self._rectangle(screen.geometry())
+
+    def full_screen_overlay(self) -> bool:
+        """Return the explicit Layer Shell anchoring mode for this widget."""
+        return self._full_screen_overlay
 
     def set_geometry(self, geometry: WindowRectangle) -> None:
         """Restore a geometry after Qt recreates a native surface."""

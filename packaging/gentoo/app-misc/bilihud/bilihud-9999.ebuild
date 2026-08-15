@@ -30,7 +30,7 @@ RDEPEND="
 	dev-qt/qtbase:6[gui,wayland]
 	dev-qt/qtwayland:6
 	kde-plasma/layer-shell-qt
-	dev-python/pyqt6[${PYTHON_USEDEP}]
+	dev-python/pyqt6[gui,multimedia,network,widgets,${PYTHON_USEDEP}]
 	dev-python/aiohttp[${PYTHON_USEDEP}]
 	dev-python/qasync[${PYTHON_USEDEP}]
 	app-arch/brotli[python,${PYTHON_USEDEP}]
@@ -51,6 +51,7 @@ BDEPEND="
 	dev-build/ninja
 	dev-python/scikit-build-core[${PYTHON_USEDEP}]
 	virtual/pkgconfig
+	test? ( dev-python/pyqt6[testlib,${PYTHON_USEDEP}] )
 "
 
 python_configure_all() {

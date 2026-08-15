@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from ..auth.service import AuthenticationService
 from ..config.store import AppConfig
+from ..mirror.state import MirrorDisplaySettings
 from .account_controller import AccountLogoutResult, AccountSessionController
 from .hud_controller import HudController
 from .lifecycle import TaskScope
@@ -80,6 +81,14 @@ class ApplicationController:
             return ApplicationConfigSaveResult(False, self.config)
         if succeeded:
             self.config = config
+            self.mirror_coordinator.apply_display_settings(
+                MirrorDisplaySettings(
+                    gift_effects_enabled=config.mirror_gift_effects_enabled,
+                    font_family=config.hud_font_family,
+                    danmaku_x=config.mirror_danmaku_x,
+                    danmaku_y=config.mirror_danmaku_y,
+                )
+            )
         return ApplicationConfigSaveResult(succeeded, self.config)
 
     async def logout(self) -> AccountLogoutResult:

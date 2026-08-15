@@ -7,7 +7,13 @@ from dataclasses import dataclass, replace
 
 from ..config.store import AppConfig, ConfigStore
 from ..danmaku.messages import HudMessage, SystemMessageLevel
-from ..mirror.state import MIRROR_DEFAULT_PORT, MIRROR_ROUTE, MirrorEntry, MirrorState
+from ..mirror.state import (
+    MIRROR_DEFAULT_PORT,
+    MIRROR_ROUTE,
+    MirrorDisplaySettings,
+    MirrorEntry,
+    MirrorState,
+)
 from .mirror_server import MirrorServer, MirrorServerFactory
 
 
@@ -63,6 +69,7 @@ class MirrorCoordinator:
         self._server_factory: MirrorServerFactory = server_factory
         self._message_state: MirrorState = MirrorState()
         self._state: MirrorCoordinatorState = self._make_state(enabled=False, port=MIRROR_DEFAULT_PORT)
+        self._display_settings: MirrorDisplaySettings = MirrorDisplaySettings()
         self._server: MirrorServer | None = None
         self._operation_lock: asyncio.Lock = asyncio.Lock()
         self._shutting_down: bool = False
@@ -89,7 +96,20 @@ class MirrorCoordinator:
             raise RuntimeError("Mirror 已启动，不能重新加载设置")
         if self._shutting_down or self._shutdown_complete:
             raise RuntimeError("Mirror 协调器已关闭")
+        self._display_settings = MirrorDisplaySettings(
+            gift_effects_enabled=config.mirror_gift_effects_enabled,
+            font_family=config.hud_font_family,
+            danmaku_x=config.mirror_danmaku_x,
+            danmaku_y=config.mirror_danmaku_y,
+        )
         self._state = self._make_state(enabled=config.mirror_enabled, port=config.mirror_port)
+
+    def apply_display_settings(self, settings: MirrorDisplaySettings) -> None:
+        """Apply persisted browser display settings without restarting Mirror."""
+        self._display_settings = settings
+        server = self._server
+        if server is not None:
+            server.set_display_settings(settings)
 
     async def start(self) -> MirrorOperationResult:
         """Start the configured Mirror server and report bind failures as state."""
@@ -144,7 +164,11 @@ class MirrorCoordinator:
             return self._result()
 
         try:
-            server = self._server_factory(self._message_state, port=self._state.port)
+            server = self._server_factory(
+                self._message_state,
+                port=self._state.port,
+                display_settings=self._display_settings,
+            )
             await server.start()
         except OSError as exc:
             self._state = replace(self._state, running=False, error=str(exc))

@@ -30,11 +30,12 @@ from bilihud.app.mirror_coordinator import MirrorCoordinator, MirrorOperationRes
 from bilihud.app.services import AppServices
 from bilihud.auth.service import AccountProfile
 from bilihud.danmaku.messages import (
+    GiftMessage,
     HudMessage,
     SystemMessageLevel,
     make_system_message,
 )
-from bilihud.danmaku.mock import mock_message_batch
+from bilihud.danmaku.mock import mock_gift_effect_message, mock_message_batch
 from bilihud.live.emoticons import LiveEmoticon
 from bilihud.platform.overlay_contracts import (
     OverlayOperationResult,
@@ -42,6 +43,7 @@ from bilihud.platform.overlay_contracts import (
     WindowPoint,
 )
 from bilihud.ui.hud.account_controller import AccountSurfaceController
+from bilihud.ui.hud.gift_effect import GiftEffectWindow
 from bilihud.ui.hud.input import ModernInputWidget
 from bilihud.ui.hud.layout import build_hud_widgets
 from bilihud.ui.hud.mirror_controller import MirrorController
@@ -114,9 +116,10 @@ class DanmakuWidget(QWidget):
         self._window_host: QtWindowHost = QtWindowHost(self)
         self.popup_parent: QWidget = self
         self.overlay_platform: OverlayPlatform = self.services.overlay_platform_factory(self._window_host)
-        prepare_result = self.overlay_platform.prepare()
-        if not prepare_result.succeeded:
-            logger.warning("Platform window preparation failed: %s", prepare_result.reason)
+        self.gift_effect_window = GiftEffectWindow(
+            self,
+            platform_factory=self.services.overlay_platform_factory,
+        )
         config = self.application.config
         self._hud_background_alpha = _opacity_to_alpha(config.window_opacity)
         self.settings_controller = SettingsController(
@@ -129,7 +132,9 @@ class DanmakuWidget(QWidget):
             on_login=self.open_qr_login,
             on_logout=self.logout_account,
             on_simulation=self.trigger_danmaku_simulation,
+            on_gift_effect_simulation=self.trigger_gift_effect_simulation,
             on_opacity_changed=self._apply_hud_opacity,
+            on_hud_font_changed=self._apply_hud_font,
         )
         self.mirror_controller = MirrorController(
             self,
@@ -147,7 +152,11 @@ class DanmakuWidget(QWidget):
         self._resize_timer.timeout.connect(self._delayed_adjust_height)
 
         self.setup_window_properties()
+        prepare_result = self.overlay_platform.prepare()
+        if not prepare_result.succeeded:
+            logger.warning("Platform window preparation failed: %s", prepare_result.reason)
         self.init_ui()
+        self._apply_hud_font(config.hud_font_family)
         self.setup_tray_icon()
         self.window_mode_controller = WindowModeController(self, self.overlay_platform)
         self.update_gaming_mode_availability()
@@ -252,6 +261,11 @@ class DanmakuWidget(QWidget):
         """Apply the configured opacity to the HUD background layer."""
         self._hud_background_alpha = _opacity_to_alpha(opacity)
         self.update()
+
+    def _apply_hud_font(self, font_family: str) -> None:
+        """Apply the configured font to desktop HUD text and fallback effects."""
+        self._danmaku_delegate.set_font_family(font_family)
+        self.gift_effect_window.set_font_family(font_family)
 
     def paintEvent(self, a0: QPaintEvent | None) -> None:
         """自定义绘制背景，实现轻微的渐变面板效果 (非穿透模式下)"""
@@ -421,11 +435,21 @@ class DanmakuWidget(QWidget):
         self.input_dialog.activateWindow()
 
     def trigger_danmaku_simulation(self) -> None:
-        """Inject the complete fixed message batch into the normal HUD path."""
+        """Inject the standard fixed message batch into the normal HUD path."""
         if self._shutting_down:
             return
         for message in mock_message_batch():
             self.add_message(message)
+
+    def trigger_gift_effect_simulation(self, effect_id: str) -> None:
+        """Inject one selected advanced gift-effect fixture into the HUD path."""
+        if self._shutting_down:
+            return
+        message = mock_gift_effect_message(effect_id)
+        if message is None:
+            logger.warning("Unknown developer gift effect fixture: %s", effect_id)
+            return
+        self.add_message(message)
 
     def on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -463,6 +487,7 @@ class DanmakuWidget(QWidget):
                 logger.exception("Failed to close QR login dialog")
                 shutdown_errors.append(exc)
 
+            self.gift_effect_window.close()
             self.tray_controller.close()
 
             try:
@@ -629,6 +654,8 @@ class DanmakuWidget(QWidget):
         self.danmaku_list.scrollToBottom()
 
         self.mirror_coordinator.publish_message(message)
+        if isinstance(message, GiftMessage) and self.application.config.overlay_gift_effects_enabled:
+            self.gift_effect_window.show_gift(message)
 
     def open_settings(self, page: SettingsPage = SettingsPage.GENERAL) -> None:
         """Open the unified settings window on the requested detail page."""

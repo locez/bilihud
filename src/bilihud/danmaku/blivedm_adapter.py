@@ -5,13 +5,17 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
+import blivedm.models.open_live as open_models
 import blivedm.models.web as web_models
 
 from .messages import (
     DanmakuMessage,
     GiftCurrency,
+    GiftEffectLayout,
     GiftMessage,
     HudMessage,
     ImageSegment,
@@ -36,10 +40,30 @@ VIP_COLOR = "#FF69B4"
 ADMIN_COLOR = "#FF4500"
 MEDAL_BADGE_COLOR = "#FF79C6"
 WEALTH_BADGE_COLOR = "#C9B6FF"
+GUARD_NAMES = {1: "总督", 2: "提督", 3: "舰长"}
+GUARD_GIFT_IDS = {1: 10001, 2: 10002, 3: 10003}
+# ``effect_id`` is the buyer-side animation; these are the room-side fallbacks
+# used by the anchor's live-room view when ``room_effect_id`` is absent.
+GUARD_DEFAULT_EFFECT_IDS = {1: 592, 2: 591, 3: 590}
 
 
 class MessageConversionError(ValueError):
     """Indicate that a third-party message cannot satisfy the message contract."""
+
+
+@dataclass(frozen=True, slots=True)
+class GuardPurchase:
+    """Normalized Bilibili guard purchase data and its optional effect id."""
+
+    uid: int
+    username: str
+    guard_level: int
+    quantity: int
+    unit_price: int
+    gift_id: int
+    gift_name: str
+    effect_id: int
+    event_id: str = ""
 
 
 def to_hud_message(message: object) -> HudMessage:
@@ -49,6 +73,13 @@ def to_hud_message(message: object) -> HudMessage:
             return _danmaku_message(message)
         if isinstance(message, web_models.GiftMessage):
             return _gift_message(message)
+        if isinstance(message, web_models.GuardBuyMessage):
+            return to_hud_guard_message(guard_purchase_from_guard_buy(message))
+        if isinstance(message, web_models.UserToastV2Message):
+            purchase = guard_purchase_from_user_toast(message)
+            if purchase is None:
+                raise MessageConversionError("gifted guard toast is not a display event")
+            return to_hud_guard_message(purchase)
         if isinstance(message, web_models.InteractWordV2Message):
             return _interact_message(message)
     except (AttributeError, KeyError, TypeError, ValueError) as error:
@@ -76,10 +107,23 @@ def _danmaku_message(message: web_models.DanmakuMessage) -> DanmakuMessage:
 
 def _gift_message(message: web_models.GiftMessage) -> GiftMessage:
     """Normalize the fields needed to render a gift event."""
+    return to_hud_gift_message(message)
+
+
+def to_hud_gift_message(
+    message: web_models.GiftMessage,
+    *,
+    gift_effect_url: str = "",
+    gift_animation_url: str = "",
+    gift_effect_layout: GiftEffectLayout | None = None,
+) -> GiftMessage:
+    """Normalize a gift and attach validated official effect resource URLs."""
     action = _string(message.action)
     gift_name = _string(message.gift_name)
     quantity = max(0, _integer(message.num))
     unit_price = max(0, _integer(message.price))
+    gift_id = max(0, _integer(message.gift_id))
+    gift_image_url = _http_url(message.gift_img_basic)
     author = MessageAuthor(uid=max(0, _integer(message.uid)), name=_string(message.uname), color=GIFT_COLOR)
     return GiftMessage(
         author=author,
@@ -89,6 +133,199 @@ def _gift_message(message: web_models.GiftMessage) -> GiftMessage:
         quantity=quantity,
         unit_price=unit_price,
         currency=_gift_currency(message.coin_type),
+        gift_id=gift_id,
+        gift_image_url=gift_image_url,
+        gift_effect_url=_http_url(gift_effect_url),
+        gift_animation_url=_http_url(gift_animation_url),
+        gift_effect_layout=gift_effect_layout,
+    )
+
+
+def to_hud_guard_message(
+    purchase: GuardPurchase,
+    *,
+    gift_effect_url: str = "",
+    gift_animation_url: str = "",
+    gift_effect_layout: GiftEffectLayout | None = None,
+) -> GiftMessage:
+    """Convert one normalized guard purchase into the shared gift contract."""
+    gift_name = purchase.gift_name
+    if not gift_name:
+        gift_name = GUARD_NAMES.get(purchase.guard_level, "大航海")
+    quantity = max(0, purchase.quantity)
+    unit_price = max(0, purchase.unit_price)
+    gift_id = max(0, purchase.gift_id)
+    author = MessageAuthor(
+        uid=max(0, purchase.uid),
+        name=purchase.username,
+        color=GIFT_COLOR,
+        badges=_guard_badges(purchase.guard_level),
+    )
+    return GiftMessage(
+        author=author,
+        segments=(TextSegment(f"开通 {gift_name} x{quantity}"),),
+        action="开通",
+        gift_name=gift_name,
+        quantity=quantity,
+        unit_price=unit_price,
+        currency=GiftCurrency.GOLD,
+        gift_id=gift_id,
+        gift_effect_url=_http_url(gift_effect_url),
+        gift_animation_url=_http_url(gift_animation_url),
+        gift_effect_layout=gift_effect_layout,
+    )
+
+
+def parse_guard_purchase(data: Mapping[str, object]) -> GuardPurchase | None:
+    """Parse a web guard command and reject malformed or gifted duplicate events."""
+    guard_info = _mapping(data.get("guard_info"))
+    pay_info = _mapping(data.get("pay_info"))
+    gift_info = _mapping(data.get("gift_info"))
+    option = _mapping(data.get("option"))
+    sender_info = _mapping(data.get("sender_uinfo"))
+    sender_base = _mapping(sender_info.get("base"))
+    effect_info = _mapping(data.get("effect_info"))
+
+    uid = _integer(_preferred(sender_info.get("uid"), data.get("uid")))
+    username = _string(
+        _preferred(
+            sender_base.get("name"),
+            _preferred(sender_info.get("username"), data.get("username")),
+        )
+    )
+    guard_level = _integer(_preferred(guard_info.get("guard_level"), data.get("guard_level")))
+    if guard_level not in GUARD_NAMES:
+        return None
+
+    source = _integer(_preferred(option.get("source"), data.get("source")))
+    if source == 2:
+        return None
+
+    quantity = _integer(_preferred(pay_info.get("num"), _preferred(data.get("num"), data.get("guard_num"))))
+    unit_price = _integer(_preferred(pay_info.get("price"), data.get("price")))
+    gift_id = _integer(_preferred(gift_info.get("gift_id"), data.get("gift_id")))
+    if gift_id <= 0:
+        gift_id = GUARD_GIFT_IDS[guard_level]
+    gift_name = _string(
+        _preferred(
+            gift_info.get("gift_name"),
+            _preferred(data.get("gift_name"), data.get("role_name")),
+        )
+    )
+    start_time = _integer(_preferred(guard_info.get("start_time"), data.get("start_time")))
+    event_id = _string(data.get("payflow_id"))
+    if not event_id:
+        event_id = _string(data.get("tid"))
+    if not event_id and start_time > 0:
+        event_id = str(start_time)
+
+    is_group = _boolean(_preferred(option.get("is_group"), data.get("is_group")))
+    if is_group:
+        effect_id = _integer(
+            _preferred(effect_info.get("room_group_effect_id"), data.get("room_group_effect_id"))
+        )
+    else:
+        effect_id = _integer(_preferred(effect_info.get("room_effect_id"), data.get("room_effect_id")))
+    if effect_id <= 0:
+        effect_id = GUARD_DEFAULT_EFFECT_IDS[guard_level]
+
+    return GuardPurchase(
+        uid=max(0, uid),
+        username=username,
+        guard_level=guard_level,
+        quantity=max(0, quantity),
+        unit_price=max(0, unit_price),
+        gift_id=max(0, gift_id),
+        gift_name=gift_name,
+        effect_id=max(0, effect_id),
+        event_id=event_id,
+    )
+
+
+def guard_purchase_from_guard_buy(
+    message: web_models.GuardBuyMessage,
+    *,
+    effect_id: int = 0,
+) -> GuardPurchase:
+    """Normalize the legacy typed GUARD_BUY model for direct handler callbacks."""
+    resolved_effect_id = effect_id
+    if resolved_effect_id <= 0:
+        resolved_effect_id = GUARD_DEFAULT_EFFECT_IDS.get(message.guard_level, 0)
+    gift_id = message.gift_id
+    if gift_id <= 0:
+        gift_id = GUARD_GIFT_IDS.get(message.guard_level, 0)
+    return GuardPurchase(
+        uid=max(0, message.uid),
+        username=_string(message.username),
+        guard_level=message.guard_level,
+        quantity=max(0, message.num),
+        unit_price=max(0, message.price),
+        gift_id=max(0, gift_id),
+        gift_name=_string(message.gift_name),
+        effect_id=max(0, resolved_effect_id),
+        event_id=str(message.start_time) if message.start_time > 0 else "",
+    )
+
+
+def guard_purchase_from_user_toast(
+    message: web_models.UserToastV2Message,
+    *,
+    effect_id: int = 0,
+) -> GuardPurchase | None:
+    """Normalize a typed V2 toast while suppressing Bilibili's gifted duplicate."""
+    if message.source == 2:
+        return None
+    resolved_effect_id = effect_id
+    if resolved_effect_id <= 0:
+        resolved_effect_id = GUARD_DEFAULT_EFFECT_IDS.get(message.guard_level, 0)
+    gift_id = message.gift_id
+    if gift_id <= 0:
+        gift_id = GUARD_GIFT_IDS.get(message.guard_level, 0)
+    return GuardPurchase(
+        uid=max(0, message.uid),
+        username=_string(message.username),
+        guard_level=message.guard_level,
+        quantity=max(0, message.num),
+        unit_price=max(0, message.price),
+        gift_id=max(0, gift_id),
+        gift_name=GUARD_NAMES.get(message.guard_level, "大航海"),
+        effect_id=max(0, resolved_effect_id),
+        event_id=str(message.start_time) if message.start_time > 0 else "",
+    )
+
+
+def parse_open_guard_purchase(data: Mapping[str, object]) -> GuardPurchase | None:
+    """Parse the open-platform guard payload into the same stable purchase contract."""
+    user_info = _mapping(data.get("user_info"))
+    guard_level = _integer(data.get("guard_level"))
+    if guard_level not in GUARD_NAMES:
+        return None
+    gift_id = GUARD_GIFT_IDS[guard_level]
+    return GuardPurchase(
+        uid=0,
+        username=_string(user_info.get("uname")),
+        guard_level=guard_level,
+        quantity=max(0, _integer(data.get("guard_num"))),
+        unit_price=max(0, _integer(data.get("price"))),
+        gift_id=gift_id,
+        gift_name=GUARD_NAMES[guard_level],
+        effect_id=GUARD_DEFAULT_EFFECT_IDS[guard_level],
+        event_id=_string(data.get("msg_id")),
+    )
+
+
+def guard_purchase_from_open_guard(message: open_models.GuardBuyMessage) -> GuardPurchase:
+    """Normalize a typed open-platform guard event for direct handler callbacks."""
+    return GuardPurchase(
+        uid=0,
+        username=_string(message.user_info.uname),
+        guard_level=message.guard_level,
+        quantity=max(0, message.guard_num),
+        unit_price=max(0, message.price),
+        gift_id=GUARD_GIFT_IDS.get(message.guard_level, 0),
+        gift_name=GUARD_NAMES.get(message.guard_level, "大航海"),
+        effect_id=GUARD_DEFAULT_EFFECT_IDS.get(message.guard_level, 0),
+        event_id=_string(message.msg_id),
     )
 
 
@@ -185,6 +422,14 @@ def _privilege_badge(privilege_type: int) -> MessageBadge | None:
     )
 
 
+def _guard_badges(guard_level: int) -> tuple[MessageBadge, ...]:
+    """Attach the same compact guard badge to a normalized guard purchase."""
+    badge = _privilege_badge(guard_level)
+    if badge is None:
+        return ()
+    return (badge,)
+
+
 def _danmaku_segments(message: web_models.DanmakuMessage) -> tuple[MessageSegment, ...]:
     """Parse reply and emoticon metadata into typed fragments with safe fallbacks."""
     segments: list[MessageSegment] = []
@@ -275,6 +520,18 @@ def _mapping_value(value: object, key: str) -> object:
     if isinstance(value, dict):
         return value.get(key)
     return None
+
+
+def _mapping(value: object) -> dict[str, object]:
+    """Narrow a raw nested object to a string-key mapping at the protocol boundary."""
+    if not isinstance(value, Mapping):
+        return {}
+    return {key: item for key, item in value.items() if isinstance(key, str)}
+
+
+def _preferred(primary: object, fallback: object) -> object:
+    """Prefer a present nested field while preserving valid falsey values."""
+    return fallback if primary is None else primary
 
 
 def _optional_mapping(value: object) -> dict[str, object]:

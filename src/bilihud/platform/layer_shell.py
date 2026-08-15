@@ -32,6 +32,7 @@ class _LayerShellBindings:
     """Typed wrapper around the compiled Layer Shell bridge symbols."""
 
     make_overlay: NativeFunction
+    make_fullscreen_overlay: NativeFunction
     set_passthrough: NativeFunction
     set_anchor_position: NativeFunction
     set_keyboard_interactivity: NativeFunction | None
@@ -51,6 +52,13 @@ class _LayerShellBindings:
                 library,
                 "make_overlay",
                 [ctypes.c_void_p],
+                ctypes.c_bool,
+            )
+            make_fullscreen_overlay = load_native_function(
+                library,
+                "make_fullscreen_overlay",
+                [ctypes.c_void_p],
+                ctypes.c_bool,
             )
             set_passthrough = load_native_function(
                 library,
@@ -74,6 +82,9 @@ class _LayerShellBindings:
         if make_overlay is None:
             logger.info("Layer Shell bridge missing required symbol: make_overlay")
             return None, "Layer Shell bridge is missing symbol: make_overlay"
+        if make_fullscreen_overlay is None:
+            logger.info("Layer Shell bridge missing required symbol: make_fullscreen_overlay")
+            return None, "Layer Shell bridge is missing symbol: make_fullscreen_overlay"
         if set_passthrough is None:
             logger.info("Layer Shell bridge missing required symbol: set_passthrough")
             return None, "Layer Shell bridge is missing symbol: set_passthrough"
@@ -87,6 +98,7 @@ class _LayerShellBindings:
         )
         return cls(
             make_overlay=make_overlay,
+            make_fullscreen_overlay=make_fullscreen_overlay,
             set_passthrough=set_passthrough,
             set_anchor_position=set_anchor_position,
             set_keyboard_interactivity=set_keyboard_interactivity,
@@ -96,8 +108,8 @@ class _LayerShellBindings:
 class LayerShellBridge(Protocol):
     """Native Layer Shell operations expressed without ctypes or Qt types."""
 
-    def make_overlay(self, window_pointer: int) -> None:
-        """Promote a mapped Qt window to the compositor overlay layer."""
+    def make_overlay(self, window_pointer: int, *, full_screen: bool = False) -> bool:
+        """Configure a Qt window for the compositor overlay before it is mapped."""
 
     def set_passthrough(self, window_pointer: int, enabled: bool) -> None:
         """Set the native input region to empty or default."""
@@ -115,9 +127,12 @@ class _CtypesLayerShellBridge:
     def __init__(self, bindings: _LayerShellBindings) -> None:
         self._bindings = bindings
 
-    def make_overlay(self, window_pointer: int) -> None:
-        """Invoke the native overlay promotion function."""
-        self._bindings.make_overlay(ctypes.c_void_p(window_pointer))
+    def make_overlay(self, window_pointer: int, *, full_screen: bool = False) -> bool:
+        """Invoke the native overlay configuration function before mapping."""
+        pointer = ctypes.c_void_p(window_pointer)
+        if full_screen:
+            return bool(self._bindings.make_fullscreen_overlay(pointer))
+        return bool(self._bindings.make_overlay(pointer))
 
     def set_passthrough(self, window_pointer: int, enabled: bool) -> None:
         """Invoke the native input-region function."""
@@ -326,6 +341,7 @@ class LayerShellWindowPlatform(OverlayPlatform):
         self._fallback_reason: str | None = None
         self._activation_logged = False
         self._gaming_mode = False
+        self._native_configured = False
         self._capabilities = OverlayCapabilities(
             layer_shell=True,
             gaming_mode=True,
@@ -339,17 +355,30 @@ class LayerShellWindowPlatform(OverlayPlatform):
         return self._capabilities
 
     def prepare(self) -> OverlayOperationResult:
-        """Apply the base flags before Layer Shell takes ownership of the surface."""
+        """Apply flags and configure the Layer Shell role before the surface is mapped."""
         try:
             self._host.apply_window_policy(WindowPolicy(recreate_surface=True))
         except RuntimeError as exc:
             reason = f"Layer Shell 窗口初始化失败: {exc}"
             self._mark_layer_shell_unavailable(reason)
             return OverlayOperationResult.failure(reason)
+
+        pointer = self._host.native_window_pointer()
+        if pointer is not None:
+            try:
+                self._native_configured = self._bridge.make_overlay(
+                    pointer,
+                    full_screen=self._host.full_screen_overlay(),
+                )
+            except (OSError, RuntimeError, ctypes.ArgumentError) as exc:
+                self._fallback_reason = f"Layer Shell 预配置失败: {exc}"
+            else:
+                if not self._native_configured:
+                    self._fallback_reason = "Layer Shell 窗口未能创建 layer surface"
         return OverlayOperationResult.success()
 
     def activate(self) -> OverlayOperationResult:
-        """Promote the mapped Qt window and synchronize its initial anchor position."""
+        """Finish activation after mapping and synchronize movable surfaces."""
         if self._fallback_platform is not None:
             return OverlayOperationResult.success()
         if self._fallback_reason is not None:
@@ -359,14 +388,21 @@ class LayerShellWindowPlatform(OverlayPlatform):
         if pointer is None:
             return self._activate_fallback("Layer Shell 窗口句柄不可用")
         try:
-            self._bridge.make_overlay(pointer)
+            if not self._native_configured:
+                self._native_configured = self._bridge.make_overlay(
+                    pointer,
+                    full_screen=self._host.full_screen_overlay(),
+                )
+            if not self._native_configured:
+                return self._activate_fallback("Layer Shell 窗口未能创建 layer surface")
             self._bridge.set_keyboard_interactivity(pointer, True)
         except (OSError, RuntimeError, ctypes.ArgumentError) as exc:
             return self._activate_fallback(f"Layer Shell 激活失败: {exc}")
 
-        result = self._drag_strategy.synchronize_position()
-        if not result.succeeded:
-            return self._activate_fallback(result.reason or "Layer Shell 初始位置同步失败")
+        if not self._host.full_screen_overlay():
+            result = self._drag_strategy.synchronize_position()
+            if not result.succeeded:
+                return self._activate_fallback(result.reason or "Layer Shell 初始位置同步失败")
         if not self._activation_logged:
             logger.info(
                 "Layer Shell overlay activated: drag_strategy=%s",

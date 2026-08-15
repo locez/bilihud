@@ -2,6 +2,8 @@ import pytest
 
 from bilihud.danmaku.messages import (
     DanmakuMessage,
+    GiftEffectFrame,
+    GiftEffectLayout,
     GiftMessage,
     ImageSegment,
     InteractionKind,
@@ -14,11 +16,27 @@ from bilihud.danmaku.messages import (
     TextSegment,
     make_system_message,
 )
-from bilihud.mirror.state import MirrorState, message_to_mirror_entry
+from bilihud.mirror.state import MirrorDisplaySettings, MirrorState, message_to_mirror_entry, mirror_settings_payload
 
 
 def _author(name="Locez", color="#66CCFF", badges=()):
     return MessageAuthor(uid=1, name=name, color=color, badges=badges)
+
+
+def test_mirror_settings_payload_includes_the_shared_hud_font() -> None:
+    assert mirror_settings_payload(
+        MirrorDisplaySettings(
+            gift_effects_enabled=True,
+            font_family="Noto Sans CJK SC",
+            danmaku_x=12,
+            danmaku_y=34,
+        )
+    ) == {
+        "giftEffects": True,
+        "fontFamily": "Noto Sans CJK SC",
+        "danmakuX": 12,
+        "danmakuY": 34,
+    }
 
 
 def test_message_to_mirror_entry_converts_text_danmaku():
@@ -176,6 +194,34 @@ def test_message_to_mirror_entry_converts_gift_message():
         "user": "Locez",
         "userColor": "#FFD700",
         "segments": [{"type": "text", "text": "赠送 辣条 x3"}],
+        "giftId": 0,
+        "giftName": "辣条",
+        "giftQuantity": 3,
+        "giftImageUrl": "",
+        "giftEffectUrl": "",
+        "giftAnimationUrl": "",
+    }
+
+
+def test_message_to_mirror_entry_preserves_packed_gift_effect_layout():
+    message = GiftMessage(
+        author=_author(color="#FFD700"),
+        segments=(TextSegment("送出 浪漫城堡 x1"),),
+        action="送出",
+        gift_name="浪漫城堡",
+        quantity=1,
+        gift_effect_url="https://i0.hdslb.com/bfs/live/castle.mp4",
+        gift_effect_layout=GiftEffectLayout(
+            rgb_frame=GiftEffectFrame(0, 0, 720, 1280),
+            alpha_frame=GiftEffectFrame(724, 0, 360, 640),
+        ),
+    )
+
+    entry = message_to_mirror_entry(5, message)
+
+    assert entry["giftEffectLayout"] == {
+        "rgbFrame": {"x": 0, "y": 0, "width": 720, "height": 1280},
+        "alphaFrame": {"x": 724, "y": 0, "width": 360, "height": 640},
     }
 
 

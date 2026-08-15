@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal, NotRequired, TypedDict
 
 from ..danmaku.format import danmaku_emoticon_scaled_size
 from ..danmaku.messages import (
     DanmakuMessage,
+    GiftEffectFrame,
+    GiftEffectLayout,
     GiftMessage,
     HudMessage,
     ImageSegment,
@@ -21,7 +24,24 @@ MIRROR_DEFAULT_PORT = 2233
 MIRROR_ROUTE = "/bilihud-mirror"
 MIRROR_EVENTS_ROUTE = "/bilihud-mirror/events"
 MIRROR_IMAGE_ROUTE = "/bilihud-mirror/image"
+MIRROR_MEDIA_ROUTE = "/bilihud-mirror/media"
+MIRROR_ICON_ROUTE = "/bilihud-mirror/icon.png"
 MIRROR_MAX_MESSAGES = 200
+
+
+@dataclass(frozen=True, slots=True)
+class MirrorDisplaySettings:
+    """Describe the live browser presentation settings shared with Mirror clients."""
+
+    gift_effects_enabled: bool = False
+    danmaku_x: int = 4
+    danmaku_y: int = 4
+    font_family: str = ""
+
+    def __post_init__(self) -> None:
+        """Reject positions outside the viewport percentage range."""
+        if not 0 <= self.danmaku_x <= 100 or not 0 <= self.danmaku_y <= 100:
+            raise ValueError("Mirror danmaku position must be between 0 and 100")
 
 
 class MirrorTextSegment(TypedDict):
@@ -60,6 +80,22 @@ class MirrorBadge(TypedDict):
     color: str
 
 
+class MirrorGiftEffectFrame(TypedDict):
+    """Serialized packed-video rectangle used by the Mirror compositor."""
+
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+class MirrorGiftEffectLayout(TypedDict):
+    """Serialized color and alpha rectangles for one packed gift video."""
+
+    rgbFrame: MirrorGiftEffectFrame
+    alphaFrame: MirrorGiftEffectFrame
+
+
 class MirrorEntry(TypedDict):
     """Stable JSON-compatible representation of one HUD message."""
 
@@ -69,6 +105,32 @@ class MirrorEntry(TypedDict):
     userColor: str
     segments: list[MirrorSegment]
     badges: NotRequired[list[MirrorBadge]]
+    giftId: NotRequired[int]
+    giftName: NotRequired[str]
+    giftQuantity: NotRequired[int]
+    giftImageUrl: NotRequired[str]
+    giftEffectUrl: NotRequired[str]
+    giftAnimationUrl: NotRequired[str]
+    giftEffectLayout: NotRequired[MirrorGiftEffectLayout]
+
+
+class MirrorSettingsPayload(TypedDict):
+    """Serialized display settings sent to already-connected Mirror clients."""
+
+    giftEffects: bool
+    fontFamily: str
+    danmakuX: int
+    danmakuY: int
+
+
+def mirror_settings_payload(settings: MirrorDisplaySettings) -> MirrorSettingsPayload:
+    """Serialize validated display settings for the browser event protocol."""
+    return {
+        "giftEffects": settings.gift_effects_enabled,
+        "fontFamily": settings.font_family,
+        "danmakuX": settings.danmaku_x,
+        "danmakuY": settings.danmaku_y,
+    }
 
 
 def user_color_for_message(message: HudMessage) -> str:
@@ -102,6 +164,24 @@ def _segment_to_mirror(segment: MessageSegment) -> MirrorSegment:
     return {"type": "text", "text": segment.text}
 
 
+def _gift_effect_frame_to_mirror(frame: GiftEffectFrame) -> MirrorGiftEffectFrame:
+    """Serialize one validated packed-video rectangle for browser code."""
+    return {
+        "x": frame.x,
+        "y": frame.y,
+        "width": frame.width,
+        "height": frame.height,
+    }
+
+
+def _gift_effect_layout_to_mirror(layout: GiftEffectLayout) -> MirrorGiftEffectLayout:
+    """Serialize the color/mask layout without exposing the domain dataclass."""
+    return {
+        "rgbFrame": _gift_effect_frame_to_mirror(layout.rgb_frame),
+        "alphaFrame": _gift_effect_frame_to_mirror(layout.alpha_frame),
+    }
+
+
 def danmaku_segments(message: DanmakuMessage) -> list[MirrorSegment]:
     """Serialize normalized danmaku fragments using the Mirror wire contract."""
     return [_segment_to_mirror(segment) for segment in message.segments]
@@ -129,13 +209,22 @@ def message_to_mirror_entry(seq: int, message: HudMessage) -> MirrorEntry:
         return entry
 
     if isinstance(message, GiftMessage):
-        return {
+        entry: MirrorEntry = {
             "seq": seq,
             "kind": "gift",
             "user": message.author.name,
             "userColor": user_color_for_message(message),
             "segments": _segments_for(message),
+            "giftId": message.gift_id,
+            "giftName": message.gift_name,
+            "giftQuantity": message.quantity,
+            "giftImageUrl": message.gift_image_url,
+            "giftEffectUrl": message.gift_effect_url,
+            "giftAnimationUrl": message.gift_animation_url,
         }
+        if message.gift_effect_layout is not None:
+            entry["giftEffectLayout"] = _gift_effect_layout_to_mirror(message.gift_effect_layout)
+        return entry
 
     if isinstance(message, InteractMessage):
         return {

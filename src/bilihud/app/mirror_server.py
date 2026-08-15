@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from ..mirror.state import MirrorEntry, MirrorState
+from ..mirror.state import MirrorDisplaySettings, MirrorEntry, MirrorState
 
 
 class MirrorServer(Protocol):
@@ -27,11 +27,21 @@ class MirrorServer(Protocol):
         """Publish one coordinator-serialized message to connected clients."""
         ...
 
+    def set_display_settings(self, settings: MirrorDisplaySettings) -> None:
+        """Update browser layout and effect settings for connected clients."""
+        ...
+
 
 class MirrorServerFactory(Protocol):
     """Build one server around coordinator-owned state."""
 
-    def __call__(self, state: MirrorState, *, port: int) -> MirrorServer:
+    def __call__(
+        self,
+        state: MirrorState,
+        *,
+        port: int,
+        display_settings: MirrorDisplaySettings,
+    ) -> MirrorServer:
         """Create a stopped server without performing network I/O."""
         ...
 

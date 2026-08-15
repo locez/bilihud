@@ -30,9 +30,31 @@ class DanmakuDelegate(QStyledItemDelegate):
         """Create an item delegate with an owned image request manager."""
         super().__init__(parent)
         self._cache: dict[int, tuple[HudMessage, QTextDocument]] = {}
+        self._font_family: str = ""
         self._emoticon_cache: dict[str, QImage | None] = {}
         self._emoticon_docs: dict[str, list[QTextDocument]] = {}
         self._network_manager = QNetworkAccessManager(self)
+
+    def set_font_family(self, font_family: str) -> None:
+        """Apply one shared HUD font and invalidate documents using the old family."""
+        normalized = font_family.strip()
+        if normalized == self._font_family:
+            return
+        self._font_family = normalized
+        self._cache.clear()
+        parent = self.parent()
+        if isinstance(parent, QAbstractItemView):
+            parent.updateGeometry()
+            viewport = parent.viewport()
+            if viewport is not None:
+                viewport.update()
+
+    def _font_family_css(self) -> str:
+        """Return the configured family as a safe CSS font-family value."""
+        if not self._font_family:
+            return "'Segoe UI', 'Microsoft YaHei', sans-serif"
+        escaped = self._font_family.replace("\\", "\\\\").replace("'", "\\'")
+        return f"'{escaped}'"
 
     def _get_document(self, message: HudMessage, width: int, font: QFont) -> QTextDocument:
         """Retrieve or create the cached document for one message."""
@@ -138,6 +160,7 @@ class DanmakuDelegate(QStyledItemDelegate):
 
     def get_html_for_message(self, message: HudMessage) -> str:
         """Construct the HTML representation for one normalized message."""
+        font_family = self._font_family_css()
         if isinstance(message, DanmakuMessage):
             user_color = self.get_user_color(message)
             badges_html = danmaku_author_badges_html(message)
@@ -146,21 +169,21 @@ class DanmakuDelegate(QStyledItemDelegate):
             content_span = f'<span class="content">{content_html}</span>'
             user_style = (
                 f".user {{ color: {user_color}; "
-                "font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; "
+                f"font-weight: bold; font-family: {font_family}; "
                 "font-size: 12px; }"
             )
             colon_style = (
                 ".colon { color: white; "
-                "font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }"
+                f"font-family: {font_family}; font-size: 12px; }}"
             )
             content_style = (
                 ".content { color: white; "
-                "font-family: 'Segoe UI', 'Microsoft YaHei'; "
+                f"font-family: {font_family}; "
                 "font-size: 13px; font-weight: 500; }"
             )
             reply_style = (
                 ".reply { color: #FF79C6; "
-                "font-family: 'Segoe UI', 'Microsoft YaHei'; "
+                f"font-family: {font_family}; "
                 "font-size: 13px; font-weight: 700; }"
             )
             return f"""
@@ -168,7 +191,7 @@ class DanmakuDelegate(QStyledItemDelegate):
                 .meta-badge {{
                     display: inline-block;
                     padding: 0 4px;
-                    font-family: 'Segoe UI', 'Microsoft YaHei';
+                    font-family: {font_family};
                     font-size: 10px;
                     line-height: 13px;
                     font-weight: 700;
@@ -198,9 +221,9 @@ class DanmakuDelegate(QStyledItemDelegate):
         if isinstance(message, GiftMessage):
             return f"""
             <style>
-                .user {{ color: #FFD700; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 12px; }}
-                .action {{ color: #FF66CC; font-family: 'Microsoft YaHei'; font-size: 12px; }}
-                .gift {{ color: #FF66CC; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 12px; }}
+                .user {{ color: #FFD700; font-weight: bold; font-family: {font_family}; font-size: 12px; }}
+                .action {{ color: #FF66CC; font-family: {font_family}; font-size: 12px; }}
+                .gift {{ color: #FF66CC; font-weight: bold; font-family: {font_family}; font-size: 12px; }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }}
             </style>
             <p><span class="user">{html.escape(message.author.name, quote=True)}</span>
@@ -210,8 +233,8 @@ class DanmakuDelegate(QStyledItemDelegate):
         if isinstance(message, InteractMessage):
             return f"""
             <style>
-                .user {{ color: #AAAAAA; font-weight: bold; font-family: 'Microsoft YaHei'; font-size: 11px; }}
-                .info {{ color: #AAAAAA; font-family: 'Microsoft YaHei'; font-size: 11px; }}
+                .user {{ color: #AAAAAA; font-weight: bold; font-family: {font_family}; font-size: 11px; }}
+                .info {{ color: #AAAAAA; font-family: {font_family}; font-size: 11px; }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }}
             </style>
             <p><span class="user">{html.escape(message.author.name, quote=True)}</span>
@@ -222,18 +245,18 @@ class DanmakuDelegate(QStyledItemDelegate):
             content_html = html.escape(message.text, quote=True)
             user_style = (
                 f".user {{ color: {message.author.color}; "
-                "font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; "
+                f"font-weight: bold; font-family: {font_family}; "
                 "font-size: 12px; }"
             )
             content_style = (
                 ".content { color: white; "
-                "font-family: 'Segoe UI', 'Microsoft YaHei'; "
+                f"font-family: {font_family}; "
                 "font-size: 13px; font-weight: 500; }"
             )
             return f"""
             <style>
                 {user_style}
-                .colon {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
+                .colon {{ color: white; font-family: {font_family}; font-size: 12px; }}
                 {content_style}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }}
             </style>

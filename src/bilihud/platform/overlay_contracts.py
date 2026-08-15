@@ -123,6 +123,9 @@ class WindowHost(Protocol):
     def screen_geometry(self) -> WindowRectangle | None:
         """Return the geometry of the window's current screen, if known."""
 
+    def full_screen_overlay(self) -> bool:
+        """Return whether the surface must be anchored to all four output edges."""
+
     def set_geometry(self, geometry: WindowRectangle) -> None:
         """Restore a window geometry after a toolkit surface recreation."""
 

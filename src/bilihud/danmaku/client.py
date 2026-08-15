@@ -2,12 +2,13 @@ import asyncio
 import hashlib
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from urllib.parse import urlencode, urlparse
 
 import aiohttp
 import blivedm
 import blivedm.clients.ws_base as ws_base
+import blivedm.models.open_live as open_models
 import blivedm.models.web as web_models
 
 from ..app.lifecycle import run_owned_blocking
@@ -19,8 +20,23 @@ from ..live.emoticons import (
     build_live_emoticon_payload,
     parse_live_emoticon_packages,
 )
-from .blivedm_adapter import to_hud_message_or_system
-from .messages import HudMessage
+from ..live.gift_effects import (
+    GiftEffectCatalog,
+    GiftEffectLookupError,
+    normalize_official_resource_url,
+)
+from .blivedm_adapter import (
+    GuardPurchase,
+    guard_purchase_from_guard_buy,
+    guard_purchase_from_open_guard,
+    guard_purchase_from_user_toast,
+    parse_guard_purchase,
+    parse_open_guard_purchase,
+    to_hud_gift_message,
+    to_hud_guard_message,
+    to_hud_message_or_system,
+)
+from .messages import GiftEffectLayout, HudMessage
 
 WBI_NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
 LIVE_MSG_SEND_URL = "https://api.live.bilibili.com/msg/send"
@@ -30,6 +46,7 @@ LIVE_AUDIENCE_RANK_URL = (
 )
 LIVE_WEB_LOCATION = "444.8"
 LIVE_EMOTICON_CACHE_TTL_SECONDS = 60.0
+GUARD_EVENT_DEDUP_TTL_SECONDS = 5.0
 WBI_MIXIN_KEY_ENC_TAB = (
     46, 47, 18, 2, 53, 8, 23, 32,
     15, 50, 10, 31, 58, 3, 45, 35,
@@ -70,6 +87,9 @@ class DanmakuClient:
         self._wbi_mixin_key: str | None = None  # Cached signing key for authenticated sends.
         self._live_emoticon_cache: list[LiveEmoticonPackage] | None = None  # Short-lived room cache.
         self._live_emoticon_cache_at = 0.0  # Monotonic timestamp for the emoticon cache.
+        self._gift_effect_catalog: GiftEffectCatalog | None = None  # Room-scoped official asset cache.
+        self._gift_effect_tasks: set[asyncio.Task[None]] = set()  # Tasks owned and cancelled by stop().
+        self._recent_guard_events: dict[tuple[int, int, int, int, int, str], float] = {}
 
     @property
     def is_running(self) -> bool:
@@ -115,6 +135,7 @@ class DanmakuClient:
             self.on_login_failed(login_failure_message)
 
         self.session = auth_manager.create_session_from_cookies(loaded_cookies)
+        self._gift_effect_catalog = GiftEffectCatalog(self.session, self.room_id)
 
         # 创建客户端和处理器
         self.client = blivedm.BLiveClient(self.room_id, session=self.session)
@@ -303,12 +324,170 @@ class DanmakuClient:
         self._wbi_mixin_key = mixin_key
         return mixin_key
 
+    def schedule_gift_message(self, data: Mapping[str, object]) -> None:
+        """Resolve an optional official effect before delivering one raw gift event."""
+        catalog = self._gift_effect_catalog
+        if catalog is None:
+            self._emit_raw_gift(data)
+            return
+        task = asyncio.create_task(
+            self._resolve_and_emit_gift(data, catalog),
+            name=f"bilihud-gift-effect-{self.room_id}",
+        )
+        self._gift_effect_tasks.add(task)
+        task.add_done_callback(self._gift_effect_task_done)
+
+    def schedule_guard_purchase(self, purchase: GuardPurchase) -> None:
+        """Resolve and publish one guard purchase while suppressing duplicate wire events."""
+        if not self._claim_guard_event(purchase):
+            return
+        catalog = self._gift_effect_catalog
+        if catalog is None:
+            self._deliver_message(to_hud_guard_message(purchase))
+            return
+        task = asyncio.create_task(
+            self._resolve_and_emit_guard(purchase, catalog),
+            name=f"bilihud-guard-effect-{self.room_id}",
+        )
+        self._gift_effect_tasks.add(task)
+        task.add_done_callback(self._gift_effect_task_done)
+
+    async def _resolve_and_emit_gift(
+        self,
+        data: Mapping[str, object],
+        catalog: GiftEffectCatalog,
+    ) -> None:
+        """Fetch a gift asset without blocking the WebSocket callback thread."""
+        try:
+            raw_message = web_models.GiftMessage.from_command(dict(data))
+        except (KeyError, TypeError, ValueError) as error:
+            logger.warning("Failed to parse raw gift message: %s", error)
+            self._deliver_message(to_hud_message_or_system(dict(data)))
+            return
+
+        effect_asset = None
+        try:
+            effect_asset = await catalog.resolve(raw_message.gift_id)
+        except GiftEffectLookupError as error:
+            logger.info("Official gift effect unavailable for gift_id=%s: %s", raw_message.gift_id, error)
+
+        self._deliver_gift(
+            raw_message,
+            gift_effect_url="" if effect_asset is None else effect_asset.full_screen_url,
+            gift_animation_url=(
+                _raw_gift_animation_url(data)
+                if effect_asset is None or not effect_asset.animation_url
+                else effect_asset.animation_url
+            ),
+            gift_effect_layout=None if effect_asset is None else effect_asset.layout,
+        )
+
+    async def _resolve_and_emit_guard(
+        self,
+        purchase: GuardPurchase,
+        catalog: GiftEffectCatalog,
+    ) -> None:
+        """Fetch the Bilibili full-screen guard effect before publishing the purchase."""
+        effect_asset = None
+        try:
+            effect_asset = await catalog.resolve_special_effect(purchase.effect_id)
+        except GiftEffectLookupError as error:
+            logger.info(
+                "Official guard effect unavailable for effect_id=%s: %s",
+                purchase.effect_id,
+                error,
+            )
+        self._deliver_message(
+            to_hud_guard_message(
+                purchase,
+                gift_effect_url="" if effect_asset is None else effect_asset.full_screen_url,
+                gift_effect_layout=None if effect_asset is None else effect_asset.layout,
+            )
+        )
+
+    def _emit_raw_gift(self, data: Mapping[str, object]) -> None:
+        """Deliver a gift immediately when the optional catalog is not running."""
+        try:
+            raw_message = web_models.GiftMessage.from_command(dict(data))
+        except (KeyError, TypeError, ValueError) as error:
+            logger.warning("Failed to parse raw gift message: %s", error)
+            self._deliver_message(to_hud_message_or_system(dict(data)))
+            return
+        self._deliver_gift(raw_message, gift_animation_url=_raw_gift_animation_url(data))
+
+    def _deliver_gift(
+        self,
+        raw_message: web_models.GiftMessage,
+        *,
+        gift_effect_url: str = "",
+        gift_animation_url: str = "",
+        gift_effect_layout: GiftEffectLayout | None = None,
+    ) -> None:
+        """Convert and publish one gift with its optional normalized resources."""
+        self._deliver_message(
+            to_hud_gift_message(
+                raw_message,
+                gift_effect_url=gift_effect_url,
+                gift_animation_url=gift_animation_url,
+                gift_effect_layout=gift_effect_layout,
+            )
+        )
+
+    def _claim_guard_event(self, purchase: GuardPurchase) -> bool:
+        """Accept one purchase key for a short window shared by GUARD_BUY and toast events."""
+        now = time.monotonic()
+        expired = tuple(
+            key
+            for key, timestamp in self._recent_guard_events.items()
+            if now - timestamp >= GUARD_EVENT_DEDUP_TTL_SECONDS
+        )
+        for key in expired:
+            del self._recent_guard_events[key]
+        event_key = (
+            purchase.uid,
+            purchase.guard_level,
+            purchase.gift_id,
+            purchase.quantity,
+            purchase.unit_price,
+            purchase.event_id if purchase.uid <= 0 else "",
+        )
+        if event_key in self._recent_guard_events:
+            return False
+        self._recent_guard_events[event_key] = now
+        return True
+
+    def _deliver_message(self, message: HudMessage) -> None:
+        """Invoke the application callback when one is registered."""
+        callback = self.on_message_received
+        if callback is not None:
+            callback(message)
+
+    def _gift_effect_task_done(self, task: asyncio.Task[None]) -> None:
+        """Remove a completed lookup task and surface unexpected task failures."""
+        self._gift_effect_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error("Gift effect task failed", exc_info=(type(error), error, error.__traceback__))
+
+    async def _cancel_gift_effect_tasks(self) -> None:
+        """Cancel and await all gift lookup tasks before closing their HTTP session."""
+        tasks = tuple(self._gift_effect_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._gift_effect_tasks.clear()
+
     async def stop(self, normal_timeout: float = 3.0, forced_timeout: float = 3.0) -> None:
         """Stop the underlying client and close all network resources it owns."""
         client = self.client
         session = self.session
         join_task: asyncio.Task | None = None
         stop_error: BaseException | None = None
+
+        await self._cancel_gift_effect_tasks()
 
         if client:
             try:
@@ -344,6 +523,8 @@ class DanmakuClient:
             self.client = None
             self.session = None
             self.handler = None
+            self._gift_effect_catalog = None
+            self._recent_guard_events.clear()
 
         if stop_error is not None:
             raise stop_error
@@ -406,6 +587,35 @@ class DanmakuHandler(blivedm.BaseHandler):
     def set_danmaku_client(self, client: DanmakuClient) -> None:
         self.danmaku_client = client
 
+    def handle(self, client: ws_base.WebSocketClientBase, command: dict[str, object]) -> object:
+        """Intercept gifts and guard events so official resources resolve asynchronously."""
+        command_name = command.get("cmd", "")
+        if isinstance(command_name, str):
+            command_name = command_name.split(":", 1)[0]
+        if command_name == "SEND_GIFT":
+            raw_data = command.get("data")
+            danmaku_client = self.danmaku_client
+            if danmaku_client is not None and isinstance(raw_data, Mapping):
+                danmaku_client.schedule_gift_message(_string_mapping(raw_data))
+                return None
+        if command_name in {"GUARD_BUY", "USER_TOAST_MSG", "USER_TOAST_MSG_V2"}:
+            raw_data = command.get("data")
+            danmaku_client = self.danmaku_client
+            if danmaku_client is not None and isinstance(raw_data, Mapping):
+                purchase = parse_guard_purchase(_string_mapping(raw_data))
+                if purchase is not None:
+                    danmaku_client.schedule_guard_purchase(purchase)
+                return None
+        if command_name == "LIVE_OPEN_PLATFORM_GUARD":
+            raw_data = command.get("data")
+            danmaku_client = self.danmaku_client
+            if danmaku_client is not None and isinstance(raw_data, Mapping):
+                purchase = parse_open_guard_purchase(_string_mapping(raw_data))
+                if purchase is not None:
+                    danmaku_client.schedule_guard_purchase(purchase)
+                return None
+        return super().handle(client, command)
+
     def _emit_message(self, message: object) -> None:
         """Convert a raw callback payload before handing it to application consumers."""
         danmaku_client = self.danmaku_client
@@ -423,6 +633,37 @@ class DanmakuHandler(blivedm.BaseHandler):
         """处理礼物消息"""
         self._emit_message(message)
 
+    def _on_buy_guard(
+        self,
+        client: ws_base.WebSocketClientBase,
+        message: web_models.GuardBuyMessage,
+    ) -> None:
+        """处理旧版上舰消息并复用官方全屏特效链路。"""
+        danmaku_client = self.danmaku_client
+        if danmaku_client is not None:
+            danmaku_client.schedule_guard_purchase(guard_purchase_from_guard_buy(message))
+
+    def _on_user_toast_v2(
+        self,
+        client: ws_base.WebSocketClientBase,
+        message: web_models.UserToastV2Message,
+    ) -> None:
+        """处理新版上舰庆祝消息，过滤 B 站发送的赠送副本。"""
+        purchase = guard_purchase_from_user_toast(message)
+        danmaku_client = self.danmaku_client
+        if purchase is not None and danmaku_client is not None:
+            danmaku_client.schedule_guard_purchase(purchase)
+
+    def _on_open_live_buy_guard(
+        self,
+        client: ws_base.WebSocketClientBase,
+        message: open_models.GuardBuyMessage,
+    ) -> None:
+        """处理开放平台上舰消息并使用默认官方等级特效。"""
+        danmaku_client = self.danmaku_client
+        if danmaku_client is not None:
+            danmaku_client.schedule_guard_purchase(guard_purchase_from_open_guard(message))
+
     def _on_interact_word_v2(
         self,
         client: ws_base.WebSocketClientBase,
@@ -435,3 +676,21 @@ class DanmakuHandler(blivedm.BaseHandler):
         """处理醒目留言"""
         # 可以在这里处理醒目留言
         pass
+
+
+def _raw_gift_animation_url(data: Mapping[str, object]) -> str:
+    """Extract the legacy official GIF as a fast fallback while detail loads."""
+    gift_info = data.get("gift_info")
+    if not isinstance(gift_info, Mapping):
+        return ""
+    value = gift_info.get("gif")
+    if not isinstance(value, str):
+        return ""
+    return normalize_official_resource_url(value)
+
+
+def _string_mapping(value: object) -> dict[str, object]:
+    """Normalize an incoming command payload before passing it to a typed parser."""
+    if not isinstance(value, Mapping):
+        return {}
+    return {key: item for key, item in value.items() if isinstance(key, str)}

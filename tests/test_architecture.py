@@ -21,6 +21,9 @@ PURE_MODULE_PATHS: Final[tuple[str, ...]] = (
     "live/emoticons.py",
     "live/models.py",
     "live/validation.py",
+    "mirror/page.py",
+    "mirror/page_script.py",
+    "mirror/page_shell.py",
 )
 PRESENTATION_MODULE_PATHS: Final[tuple[str, ...]] = (
     "ui/appearance.py",

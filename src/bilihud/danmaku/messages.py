@@ -105,6 +105,31 @@ type MessageSegment = TextSegment | ReplySegment | ImageSegment
 
 
 @dataclass(frozen=True, slots=True)
+class GiftEffectFrame:
+    """Describe one rectangular frame inside a packed gift-effect video."""
+
+    x: int
+    y: int
+    width: int
+    height: int
+
+    def __post_init__(self) -> None:
+        """Reject negative origins and empty packed-video regions."""
+        if self.x < 0 or self.y < 0:
+            raise ValueError("gift effect frame origin must not be negative")
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("gift effect frame dimensions must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class GiftEffectLayout:
+    """Carry the color and grayscale-mask regions of one packed gift video."""
+
+    rgb_frame: GiftEffectFrame
+    alpha_frame: GiftEffectFrame
+
+
+@dataclass(frozen=True, slots=True)
 class HudMessage:
     """Base contract for every message consumed by presentation code."""
 
@@ -126,6 +151,11 @@ class GiftMessage(HudMessage):
     quantity: int
     unit_price: int = 0
     currency: GiftCurrency = GiftCurrency.UNKNOWN
+    gift_id: int = 0
+    gift_image_url: str = ""
+    gift_effect_url: str = ""
+    gift_animation_url: str = ""
+    gift_effect_layout: GiftEffectLayout | None = None
 
     def __post_init__(self) -> None:
         """Reject negative quantities or prices that cannot represent an event."""
@@ -133,6 +163,8 @@ class GiftMessage(HudMessage):
             raise ValueError("gift quantity must not be negative")
         if self.unit_price < 0:
             raise ValueError("gift unit price must not be negative")
+        if self.gift_id < 0:
+            raise ValueError("gift id must not be negative")
 
     @property
     def total_price(self) -> int:

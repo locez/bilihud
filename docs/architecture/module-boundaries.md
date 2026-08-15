@@ -17,7 +17,7 @@ bilihud/
   config/          typed settings, persistence, and legacy migration
   danmaku/         message contracts, formatting, blivedm adapter, client
   live/            live-room models, parsing, Bilibili/OBS adapters, validation
-  mirror/          mirror state, serialization, and HTTP server
+  mirror/          mirror state, browser page, resource proxy, and HTTP server
   platform/        overlay contracts, desktop/native adapters, and OS capabilities
   ui/              Qt presentation grouped by HUD, settings, auth, tray, and window hosting
   main.py          process entry point and Qt application composition
@@ -94,8 +94,11 @@ ordinary Wayland adapter without changing the UI contract.
   `live.adapters` connects the API and OBS contracts to external services.
 - `app.mirror_coordinator` owns Mirror configuration, history, server lifecycle,
   and typed operation results. `app.mirror_server` injects the HTTP capability;
-  `mirror.server` only serves coordinator-owned state and applies the image
-  proxy allowlist, DNS address checks, redirect policy, and response limits.
+  `mirror.state` owns the browser-facing state and payload contracts,
+  `mirror.page` renders the standalone browser page, `mirror.proxy` owns the
+  image/media allowlist, DNS address checks, redirect policy, and response
+  limits, and `mirror.server` owns only HTTP routes, SSE clients, and response
+  mapping.
 - `platform.overlay_contracts` owns toolkit-neutral window geometry, capability,
   result, and drag-strategy contracts. `platform.window_platform`,
   `platform.qt_window_platform`, `platform.layer_shell`, `platform.x11`, and

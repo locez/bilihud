@@ -10,23 +10,38 @@
 
 
 extern "C" {
-    void make_overlay(void* window_ptr) {
-        if (!window_ptr) return;
+    static LayerShellQt::Window* configure_overlay(QWindow* window, bool full_screen) {
+        if (!window) return nullptr;
 
-        QWindow* window = static_cast<QWindow*>(window_ptr);
         LayerShellQt::Window* ls_window = LayerShellQt::Window::get(window);
+        if (!ls_window) return nullptr;
 
-        if (ls_window) {
-            ls_window->setLayer(LayerShellQt::Window::LayerOverlay);
-            // Use -1 for no exclusive zone (fully ignored by tiling layout)
-            ls_window->setExclusiveZone(-1);
-            ls_window->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityOnDemand);
-            
-            // Anchors are required for proper positioning dynamics in some compositors
-            ls_window->setAnchors(LayerShellQt::Window::Anchors(LayerShellQt::Window::AnchorTop | LayerShellQt::Window::AnchorLeft));
-            
-            ls_window->setScope("bilihud");
+        ls_window->setLayer(LayerShellQt::Window::LayerOverlay);
+        // Use -1 for no exclusive zone (fully ignored by tiling layout).
+        ls_window->setExclusiveZone(-1);
+        ls_window->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityOnDemand);
+        const auto anchors = full_screen
+            ? LayerShellQt::Window::Anchors(
+                LayerShellQt::Window::AnchorTop
+                | LayerShellQt::Window::AnchorBottom
+                | LayerShellQt::Window::AnchorLeft
+                | LayerShellQt::Window::AnchorRight)
+            : LayerShellQt::Window::Anchors(
+                LayerShellQt::Window::AnchorTop | LayerShellQt::Window::AnchorLeft);
+        ls_window->setAnchors(anchors);
+        if (full_screen) {
+            ls_window->setMargins(QMargins());
         }
+        ls_window->setScope("bilihud");
+        return ls_window;
+    }
+
+    bool make_overlay(void* window_ptr) {
+        return configure_overlay(static_cast<QWindow*>(window_ptr), false) != nullptr;
+    }
+
+    bool make_fullscreen_overlay(void* window_ptr) {
+        return configure_overlay(static_cast<QWindow*>(window_ptr), true) != nullptr;
     }
 
 
