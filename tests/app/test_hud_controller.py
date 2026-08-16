@@ -1,4 +1,7 @@
 import asyncio
+from collections.abc import Mapping
+
+import aiohttp
 
 from bilihud.app.hud import (
     HudConnectionStatus,
@@ -92,6 +95,21 @@ class FakeClient:
             self.login_failed_callback(message)
 
 
+class FakeAuthenticationService:
+    """Typed authentication boundary for HUD tests that never open a session."""
+
+    def load_auth_cookies(self) -> tuple[dict[str, str], bool]:
+        return {}, False
+
+    async def validate_session(self, cookies: Mapping[str, str]) -> bool:
+        del cookies
+        return False
+
+    def create_session_from_cookies(self, cookies: Mapping[str, str]) -> aiohttp.ClientSession:
+        del cookies
+        raise AssertionError("the fake HUD client does not create a network session")
+
+
 def _message(text):
     return DanmakuMessage(
         author=MessageAuthor(uid=1, name="user", color="#fff"),
@@ -103,7 +121,7 @@ def _controller(factory, config_store=None):
     return HudController(
         initial_room_id=0,
         sessdata="",
-        auth_service=object(),
+        auth_service=FakeAuthenticationService(),
         client_factory=factory,
         config_store=config_store,
     )

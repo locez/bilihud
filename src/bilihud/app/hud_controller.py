@@ -6,7 +6,7 @@ import asyncio
 import logging
 from dataclasses import replace
 
-from ..auth.service import AuthenticationService
+from ..auth.service import DanmakuAuthenticationService
 from ..config.store import ConfigStore
 from ..danmaku.messages import HudMessage
 from ..live.audience import AudienceSnapshot
@@ -38,7 +38,7 @@ class HudController:
         *,
         initial_room_id: int,
         sessdata: str,
-        auth_service: AuthenticationService,
+        auth_service: DanmakuAuthenticationService,
         client_factory: HudClientFactory,
         config_store: ConfigStore | None = None,
         task_scope: TaskScope | None = None,

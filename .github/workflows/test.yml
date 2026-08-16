@@ -74,6 +74,11 @@ jobs:
         # exit-zero treats all errors as warnings
         ruff check --exit-zero --statistics src/
 
+    - name: Check types
+      env:
+        PYTHONPATH: vendor/blivedm
+      run: ty check src tests
+
     - name: Check architecture boundaries
       run: pytest tests/test_architecture.py
 

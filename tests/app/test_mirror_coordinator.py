@@ -57,7 +57,8 @@ def test_mirror_coordinator_owns_start_stop_and_message_publication():
     )
     server = FakeServer(9876)
 
-    def factory(_state: MirrorState, *, port: int, display_settings: MirrorDisplaySettings) -> FakeServer:
+    def factory(state: MirrorState, *, port: int, display_settings: MirrorDisplaySettings) -> FakeServer:
+        del state
         assert port == 9876
         server.display_settings = display_settings
         return server
@@ -113,7 +114,8 @@ def test_mirror_coordinator_persists_enabled_preference_without_dropping_other_c
     )
     server = FakeServer(9877)
 
-    def factory(_state: MirrorState, *, port: int, display_settings: MirrorDisplaySettings) -> FakeServer:
+    def factory(state: MirrorState, *, port: int, display_settings: MirrorDisplaySettings) -> FakeServer:
+        del state
         assert port == 9877
         server.display_settings = display_settings
         return server
@@ -140,7 +142,8 @@ def test_mirror_coordinator_keeps_failed_server_for_retry_during_shutdown():
     config_store = FakeConfigStore(AppConfig(mirror_enabled=True))
     server = FakeServer(2233, stop_failures=1)
 
-    def factory(_state: MirrorState, *, port: int, display_settings: MirrorDisplaySettings) -> FakeServer:
+    def factory(state: MirrorState, *, port: int, display_settings: MirrorDisplaySettings) -> FakeServer:
+        del state
         assert port == 2233
         server.display_settings = display_settings
         return server
@@ -165,7 +168,8 @@ def test_mirror_coordinator_reports_bind_failure_without_claiming_server_ownersh
     config_store = FakeConfigStore(AppConfig(mirror_enabled=True, mirror_port=9988))
     server = FakeServer(9988, start_failure=True)
 
-    def factory(_state: MirrorState, *, port: int, display_settings: MirrorDisplaySettings) -> FakeServer:
+    def factory(state: MirrorState, *, port: int, display_settings: MirrorDisplaySettings) -> FakeServer:
+        del state
         server.display_settings = display_settings
         return server
 

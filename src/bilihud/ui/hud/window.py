@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections.abc import Coroutine
-from typing import Any
+from typing import Any, Protocol
 
 from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
@@ -14,20 +14,15 @@ from PyQt6.QtGui import (
     QResizeEvent,
     QShowEvent,
 )
-from PyQt6.QtWidgets import (
-    QApplication,
-    QListWidgetItem,
-    QSystemTrayIcon,
-    QWidget,
-)
+from PyQt6.QtWidgets import QApplication, QListWidget, QListWidgetItem, QSystemTrayIcon, QWidget
 
 from bilihud.app.account_controller import AccountState
 from bilihud.app.application_controller import ApplicationController
 from bilihud.app.hud import HudEvent, HudState
 from bilihud.app.lifecycle import TaskScope, TaskSupervisor
 from bilihud.app.menu import AccountStatus, MenuCommand, TrayMenuState
-from bilihud.app.mirror_coordinator import MirrorCoordinator, MirrorOperationResult
-from bilihud.app.services import AppServices
+from bilihud.app.mirror_coordinator import MirrorCoordinatorPort, MirrorOperationResult
+from bilihud.app.services import ApplicationServices
 from bilihud.auth.service import AccountProfile
 from bilihud.danmaku.messages import (
     GiftMessage,
@@ -37,6 +32,7 @@ from bilihud.danmaku.messages import (
 )
 from bilihud.danmaku.mock import mock_gift_effect_message, mock_message_batch
 from bilihud.live.emoticons import LiveEmoticon
+from bilihud.mirror.state import MirrorEntry
 from bilihud.platform.overlay_contracts import (
     OverlayOperationResult,
     OverlayPlatform,
@@ -57,6 +53,87 @@ from bilihud.ui.window_host import QtWindowHost
 logger = logging.getLogger(__name__)
 
 
+class DanmakuListPort(Protocol):
+    """List operations needed by the message history update."""
+
+    def addItem(self, item: QListWidgetItem | None) -> None:
+        """Append one prepared Qt list item."""
+        ...
+
+    def count(self) -> int:
+        """Return the current history size."""
+        ...
+
+    def takeItem(self, row: int) -> QListWidgetItem | None:
+        """Remove and return one history item."""
+        ...
+
+    def scrollToBottom(self) -> None:
+        """Scroll the visible history to its newest item."""
+        ...
+
+    def scheduleDelayedItemsLayout(self) -> None:
+        """Schedule one layout pass after history changes."""
+        ...
+
+
+class DanmakuDelegatePort(Protocol):
+    """Delegate operation needed when an old history item is removed."""
+
+    def set_font_family(self, font_family: str) -> None:
+        """Apply the selected HUD font to rendered documents."""
+        ...
+
+    def forget_message(self, message: HudMessage) -> None:
+        """Forget cached rendering data for one removed message."""
+        ...
+
+
+class DanmakuMessagePublisher(Protocol):
+    """Mirror capability needed by the message history update."""
+
+    def publish_message(self, message: HudMessage) -> MirrorEntry:
+        """Publish one normalized message."""
+        ...
+
+
+class DanmakuMessageTarget(Protocol):
+    """Minimal state needed to append one normalized message to the HUD."""
+
+    @property
+    def danmaku_list(self) -> DanmakuListPort:
+        """Return the message list surface."""
+        ...
+
+    @property
+    def _danmaku_delegate(self) -> DanmakuDelegatePort:
+        """Return the delegate cache owner."""
+        ...
+
+    @property
+    def mirror_coordinator(self) -> DanmakuMessagePublisher:
+        """Return the Mirror message publisher."""
+        ...
+
+
+def append_hud_message(target: DanmakuMessageTarget, message: HudMessage) -> None:
+    """Append a message to history, trim old entries, and publish it to Mirror."""
+    item = QListWidgetItem()
+    item.setData(Qt.ItemDataRole.UserRole, message)
+
+    target.danmaku_list.addItem(item)
+
+    if target.danmaku_list.count() > 200:
+        removed_item = target.danmaku_list.takeItem(0)
+        if removed_item is not None:
+            removed_message = removed_item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(removed_message, HudMessage):
+                target._danmaku_delegate.forget_message(removed_message)
+
+    target.danmaku_list.scrollToBottom()
+    target.mirror_coordinator.publish_message(message)
+
+
 def _opacity_to_alpha(opacity: int) -> int:
     """Convert a validated percentage into the HUD background alpha channel."""
     return max(0, min(255, round(255 * opacity / 100)))
@@ -66,6 +143,10 @@ class DanmakuWidget(QWidget):
     """Compose the HUD presentation and bind it to application-owned state."""
 
     message_received = pyqtSignal(object)
+    settings_controller: SettingsController
+    _danmaku_delegate: DanmakuDelegatePort
+    danmaku_list: QListWidget
+    mirror_coordinator: MirrorCoordinatorPort
 
     def __init__(
         self,
@@ -73,7 +154,7 @@ class DanmakuWidget(QWidget):
         sessdata: str = "",
         *,
         application: ApplicationController | None = None,
-        services: AppServices | None = None,
+        services: ApplicationServices | None = None,
         task_supervisor: TaskSupervisor | None = None,
     ) -> None:
         """Create the widget from an application controller and saved configuration.
@@ -108,7 +189,7 @@ class DanmakuWidget(QWidget):
 
         self.application = application
         self.services = application.services
-        self.mirror_coordinator: MirrorCoordinator = application.mirror_coordinator
+        self.mirror_coordinator: MirrorCoordinatorPort = application.mirror_coordinator
         self.is_gaming_mode: bool = False
         account_state = self.application.account_controller.state
         self._account_status: AccountStatus = account_state.status
@@ -636,24 +717,7 @@ class DanmakuWidget(QWidget):
 
     def add_message(self, message: HudMessage) -> None:
         """Add one normalized message to Qt history and the optional Mirror stream."""
-        # [Delegate Architecture]
-        # Just create an item and set data. Paint/Layout is handled by DanmakuDelegate.
-        item = QListWidgetItem()
-        item.setData(Qt.ItemDataRole.UserRole, message)
-
-        self.danmaku_list.addItem(item)
-
-        # [Optimization] Reduce max history to 200 to prevent render lag
-        if self.danmaku_list.count() > 200:
-            removed_item = self.danmaku_list.takeItem(0)
-            if removed_item is not None:
-                self._danmaku_delegate.forget_message(
-                    removed_item.data(Qt.ItemDataRole.UserRole)
-                )
-
-        self.danmaku_list.scrollToBottom()
-
-        self.mirror_coordinator.publish_message(message)
+        append_hud_message(self, message)
         if isinstance(message, GiftMessage) and self.application.config.overlay_gift_effects_enabled:
             self.gift_effect_window.show_gift(message)
 

@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import keyring
@@ -19,30 +20,39 @@ class FakeSessionCookie:
 
 
 class FakeResponse:
-    def __init__(self, payload: dict[str, object]):
+    def __init__(self, payload: Mapping[str, object]):
         self.payload = payload
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "FakeResponse":
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
         return False
 
-    async def json(self):
+    async def json(self) -> Mapping[str, object]:
         return self.payload
 
 
 class FakeSession:
-    def __init__(self, payload: dict[str, object], responses: dict[str, dict[str, object]] | None = None):
+    def __init__(
+        self,
+        payload: Mapping[str, object],
+        responses: Mapping[str, Mapping[str, object]] | None = None,
+    ) -> None:
         self.cookie_jar = [
             FakeSessionCookie("SESSDATA", "qr-sess"),
             FakeSessionCookie("bili_jct", "qr-csrf"),
             FakeSessionCookie("unrelated", "ignored"),
         ]
         self.payload = payload
-        self.responses = responses or {}
+        self.responses: Mapping[str, Mapping[str, object]] = responses if responses is not None else {}
 
-    def get(self, _url, *, params=None):
+    def get(
+        self,
+        _url: str,
+        *,
+        params: Mapping[str, str] | None = None,
+    ) -> FakeResponse:
         if params == {"qrcode_key": "qr-key"}:
             assert params == {"qrcode_key": "qr-key"}
         if _url in self.responses:
@@ -53,10 +63,10 @@ class FakeSession:
             assert params == {"qrcode_key": "qr-key"}
         return FakeResponse(self.payload)
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "FakeSession":
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
         return False
 
 
@@ -143,7 +153,7 @@ def test_account_lookup_returns_normalized_identity(monkeypatch):
         lambda **_kwargs: FakeSession(payload),
     )
     manager = AuthManager()
-    manager.load_auth_cookies = lambda: ({"SESSDATA": "session"}, True)
+    monkeypatch.setattr(manager, "load_auth_cookies", lambda: ({"SESSDATA": "session"}, True))
 
     result = asyncio.run(manager.lookup_account())
 
@@ -179,7 +189,7 @@ def test_account_lookup_includes_relations_and_live_room(monkeypatch):
     )
     monkeypatch.setattr("bilihud.auth.service.aiohttp.ClientSession", lambda **_kwargs: session)
     manager = AuthManager()
-    manager.load_auth_cookies = lambda: ({"SESSDATA": "session"}, True)
+    monkeypatch.setattr(manager, "load_auth_cookies", lambda: ({"SESSDATA": "session"}, True))
 
     result = asyncio.run(manager.lookup_account())
 

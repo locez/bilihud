@@ -1,5 +1,9 @@
 import asyncio
+from collections.abc import Mapping
+from contextlib import AbstractAsyncContextManager
+from types import TracebackType
 
+from bilihud.http_contracts import HttpCookie, HttpResponse, QueryParams, QueryValue
 from bilihud.live.gift_effects import (
     FULL_SCREEN_EFFECT_CONFIG_URL,
     GIFT_DETAIL_URL,
@@ -7,7 +11,7 @@ from bilihud.live.gift_effects import (
 )
 
 
-class FakeResponse:
+class FakeResponse(HttpResponse, AbstractAsyncContextManager[HttpResponse]):
     def __init__(self, payload: object, status: int = 200) -> None:
         self.payload = payload
         self.status = status
@@ -15,7 +19,12 @@ class FakeResponse:
     async def __aenter__(self) -> "FakeResponse":
         return self
 
-    async def __aexit__(self, exc_type, exc, traceback) -> bool:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
         return False
 
     async def json(self, content_type=None) -> object:
@@ -32,20 +41,30 @@ class FakeSession:
         self.payload = payload
         self.metadata_payload = metadata_payload
         self.special_payload = special_payload
-        self.calls: list[tuple[str, dict[str, object], dict[str, str]]] = []
+        self.calls: list[tuple[str, dict[str, QueryValue] | None, dict[str, str] | None]] = []
+        self.cookie_jar: list[HttpCookie] = []
+        self.closed = False
 
     def get(
         self,
         url: str,
-        params: dict[str, object] | None = None,
-        headers: dict[str, str] | None = None,
+        params: QueryParams | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> FakeResponse:
-        self.calls.append((url, params, headers))
+        normalized_params = dict(params) if params is not None else None
+        normalized_headers = dict(headers) if headers is not None else None
+        self.calls.append((url, normalized_params, normalized_headers))
         if url == FULL_SCREEN_EFFECT_CONFIG_URL and self.special_payload is not None:
             payload = self.special_payload
         else:
             payload = self.metadata_payload if url.endswith(".json") else self.payload
         return FakeResponse(self.payload if payload is None else payload)
+
+    async def close(self) -> None:
+        self.closed = True
+
+    def post(self, url: str, *, data: object | None = None) -> FakeResponse:
+        raise AssertionError(f"unexpected POST request: {url}, {data}")
 
 
 def test_gift_effect_catalog_resolves_and_caches_official_resources() -> None:
@@ -92,6 +111,7 @@ def test_gift_effect_catalog_resolves_and_caches_official_resources() -> None:
         assert second is first
         assert len(session.calls) == 2
         assert session.calls[0][0] == GIFT_DETAIL_URL
+        assert session.calls[0][1] is not None
         assert session.calls[0][1]["gift_ids"] == "32132"
         assert session.calls[0][2] == {"Referer": "https://live.bilibili.com/7450109"}
         assert session.calls[1][0].endswith("castle.json")

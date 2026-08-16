@@ -1,8 +1,8 @@
 import os
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from bilihud.live.audience import AudienceSnapshot, AudienceUser
 from bilihud.ui.hud.audience import AudiencePopup, AudienceStatusWidget
@@ -65,10 +65,14 @@ def test_popup_maps_each_username_to_its_contribution():
 
     assert popup.summary_label.text() == "可见 2 / 共 3"
     assert popup.tree.topLevelItemCount() == 2
-    assert popup.tree.topLevelItem(0).text(0) == "用户A"
-    assert popup.tree.topLevelItem(0).text(1) == "1"
-    assert popup.tree.topLevelItem(1).text(0) == "用户B"
-    assert popup.tree.topLevelItem(1).text(1) == "4"
+    first_item = popup.tree.topLevelItem(0)
+    second_item = popup.tree.topLevelItem(1)
+    assert first_item is not None
+    assert second_item is not None
+    assert first_item.text(0) == "用户A"
+    assert first_item.text(1) == "1"
+    assert second_item.text(0) == "用户B"
+    assert second_item.text(1) == "4"
     assert popup.footer_label.text() == "还有 1 位用户未公开"
     assert popup.footer_label.isHidden() is False
 
@@ -91,7 +95,14 @@ def test_popup_escape_closes_popup():
     popup.show()
     qt_app.processEvents()
 
-    QTest.keyClick(popup, Qt.Key.Key_Escape)
+    popup_widget: QWidget = popup
+    popup_widget.keyPressEvent(
+        QKeyEvent(
+            QEvent.Type.KeyPress,
+            Qt.Key.Key_Escape,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    )
     qt_app.processEvents()
 
     assert popup.isHidden()
@@ -110,7 +121,9 @@ def test_popup_constrains_long_list_to_internal_scroll_area():
 
     assert popup.tree.topLevelItemCount() == 120
     assert popup.height() <= 260
-    assert popup.tree.verticalScrollBar().maximum() > 0
+    scrollbar = popup.tree.verticalScrollBar()
+    assert scrollbar is not None
+    assert scrollbar.maximum() > 0
 
 
 def test_popup_keeps_compact_width_for_long_usernames():
@@ -124,4 +137,6 @@ def test_popup_keeps_compact_width_for_long_usernames():
     qt_app.processEvents()
 
     assert popup.width() == 240
-    assert popup.tree.topLevelItem(0).toolTip(0) == long_name
+    item = popup.tree.topLevelItem(0)
+    assert item is not None
+    assert item.toolTip(0) == long_name

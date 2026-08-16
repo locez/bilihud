@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
-from ..auth.service import AuthenticationService
+from ..auth.service import DanmakuAuthenticationService
 from ..danmaku.messages import HudMessage
 from ..live.audience import AudienceSnapshot
 from ..live.emoticons import LiveEmoticon, LiveEmoticonPackage
@@ -61,7 +61,7 @@ class HudClientFactory(Protocol):
         self,
         room_id: int,
         sessdata: str,
-        auth_service: AuthenticationService,
+        auth_service: DanmakuAuthenticationService,
     ) -> HudClient:
         """Create a client without starting network activity."""
         ...

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from PyQt6.QtCore import QSize, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
@@ -20,6 +22,14 @@ from PyQt6.QtWidgets import (
 from bilihud.live.emoticons import LiveEmoticon, LiveEmoticonPackage
 
 
+class IconNetworkManager(Protocol):
+    """Small network capability used to fetch one emoticon image."""
+
+    def get(self, request: QNetworkRequest) -> QNetworkReply | None:
+        """Start one image request and return its reply handle."""
+        ...
+
+
 class EmoticonPickerPopup(QDialog):
     """Render available live-room emoticons and emit the selected value."""
 
@@ -31,7 +41,7 @@ class EmoticonPickerPopup(QDialog):
         self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(330, 260)
-        self._network_manager = QNetworkAccessManager(self)
+        self._network_manager: IconNetworkManager = QNetworkAccessManager(self)
         self._image_cache: dict[str, QPixmap] = {}
         self._button_by_url: dict[str, list[QToolButton]] = {}
         self._emoticon_buttons: list[QToolButton] = []

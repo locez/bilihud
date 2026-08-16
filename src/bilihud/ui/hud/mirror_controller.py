@@ -6,16 +6,30 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from typing import Any, Protocol
 
-from bilihud.app.mirror_coordinator import MirrorCoordinator, MirrorOperationResult
+from bilihud.app.mirror_coordinator import MirrorCoordinatorPort, MirrorOperationResult
 from bilihud.danmaku.messages import SystemMessageLevel
-from bilihud.ui.settings.controller import SettingsController
+
+
+class MirrorSettingsController(Protocol):
+    """Small settings capability refreshed after Mirror state transitions."""
+
+    def set_mirror_state(self) -> None:
+        """Render the latest coordinator snapshot in the settings surface."""
+        ...
 
 
 class MirrorView(Protocol):
     """Presentation callbacks needed by the Mirror command bridge."""
 
-    mirror_coordinator: MirrorCoordinator
-    settings_controller: SettingsController
+    @property
+    def mirror_coordinator(self) -> MirrorCoordinatorPort:
+        """Return the application-owned Mirror coordinator."""
+        ...
+
+    @property
+    def settings_controller(self) -> MirrorSettingsController:
+        """Return the settings surface refreshed by Mirror transitions."""
+        ...
 
     def add_system_message(self, message: str, level: SystemMessageLevel) -> None:
         """Render a coordinator notice in the HUD message stream."""
@@ -129,4 +143,8 @@ class MirrorController:
         await self.set_enabled(enabled)
 
 
-__all__ = ("MirrorController", "MirrorView")
+__all__ = (
+    "MirrorController",
+    "MirrorSettingsController",
+    "MirrorView",
+)

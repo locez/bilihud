@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Protocol
 
 import aiohttp
 from aiohttp import web
@@ -53,6 +54,14 @@ __all__ = (
 )
 
 
+class MirrorRunner(Protocol):
+    """Cleanup capability owned by the Mirror HTTP server."""
+
+    async def cleanup(self) -> None:
+        """Release the bound HTTP application resources."""
+        ...
+
+
 def mirror_event_payload(event: str, data: object) -> str:
     """Encode one named server-sent event as an SSE payload."""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
@@ -98,7 +107,7 @@ class MirrorServer:
             display_settings if display_settings is not None else MirrorDisplaySettings()
         )
         self._resource_proxy: MirrorResourceProxy = MirrorResourceProxy(IMAGE_PROXY_HEADERS)
-        self._runner: web.AppRunner | None = None
+        self._runner: MirrorRunner | None = None
         self._site: web.TCPSite | None = None
         self._clients: set[asyncio.Queue[str]] = set()
 

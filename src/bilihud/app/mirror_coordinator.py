@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
+from typing import Protocol
 
 from ..config.store import AppConfig, ConfigStore
 from ..danmaku.messages import HudMessage, SystemMessageLevel
@@ -53,6 +54,39 @@ class MirrorOperationResult:
 
     state: MirrorCoordinatorState
     notices: tuple[MirrorNotice, ...] = ()
+
+
+class MirrorCoordinatorPort(Protocol):
+    """Application capability used by controllers and presentation surfaces."""
+
+    @property
+    def state(self) -> MirrorCoordinatorState:
+        """Return the immutable Mirror workflow state."""
+        ...
+
+    def apply_config(self, config: AppConfig) -> None:
+        """Apply startup configuration before the server is started."""
+        ...
+
+    def apply_display_settings(self, settings: MirrorDisplaySettings) -> None:
+        """Apply display settings without restarting the server."""
+        ...
+
+    async def start(self) -> MirrorOperationResult:
+        """Start the configured Mirror server."""
+        ...
+
+    async def set_enabled(self, enabled: bool) -> MirrorOperationResult:
+        """Persist and apply the enabled preference."""
+        ...
+
+    async def shutdown(self) -> MirrorOperationResult:
+        """Stop the server and release coordinator resources."""
+        ...
+
+    def publish_message(self, message: HudMessage) -> MirrorEntry:
+        """Publish one normalized HUD message to Mirror."""
+        ...
 
 
 class MirrorCoordinator:
@@ -247,6 +281,7 @@ class MirrorCoordinator:
 
 __all__ = (
     "MirrorCoordinator",
+    "MirrorCoordinatorPort",
     "MirrorCoordinatorState",
     "MirrorNotice",
     "MirrorOperationResult",

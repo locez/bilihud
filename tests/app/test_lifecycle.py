@@ -1,11 +1,13 @@
 import asyncio
 import logging
+from dataclasses import replace
 
 import pytest
 from PyQt6.QtWidgets import QApplication
 
 from bilihud import main as main_module
 from bilihud.app.lifecycle import TaskSupervisor
+from bilihud.app.services import create_default_services
 from bilihud.main import ApplicationRuntime
 from bilihud.ui.auth.qr_login import QRLoginDialog
 
@@ -75,6 +77,13 @@ def test_task_supervisor_rejects_new_work_after_shutdown():
     asyncio.run(run_test())
 
 
+def _app() -> QApplication:
+    instance = QApplication.instance()
+    if isinstance(instance, QApplication):
+        return instance
+    return QApplication([])
+
+
 def test_application_runtime_stops_widget_and_supervised_tasks(monkeypatch):
     events = []
     pending_task = None
@@ -83,10 +92,7 @@ def test_application_runtime_stops_widget_and_supervised_tasks(monkeypatch):
         def load(self):
             return object()
 
-    class FakeServices:
-        config_store = FakeConfigStore()
-
-    services = FakeServices()
+    services = replace(create_default_services(), config_store=FakeConfigStore())
 
     class FakeApplication:
         def __init__(self, *, services, **_kwargs):
@@ -119,7 +125,7 @@ def test_application_runtime_stops_widget_and_supervised_tasks(monkeypatch):
     monkeypatch.setattr(main_module, "ApplicationController", FakeApplication)
 
     async def run_test():
-        runtime = ApplicationRuntime(object(), 7450109, services=services)
+        runtime = ApplicationRuntime(_app(), 7450109, services=services)
         await runtime.start()
         await runtime.start()
         await runtime.stop()
@@ -143,10 +149,7 @@ def test_application_runtime_can_retry_after_widget_shutdown_failure(monkeypatch
         def load(self):
             return object()
 
-    class FakeServices:
-        config_store = FakeConfigStore()
-
-    services = FakeServices()
+    services = replace(create_default_services(), config_store=FakeConfigStore())
 
     class FakeApplication:
         def __init__(self, *, services, **_kwargs):
@@ -177,7 +180,7 @@ def test_application_runtime_can_retry_after_widget_shutdown_failure(monkeypatch
     monkeypatch.setattr(main_module, "create_default_services", lambda: services)
 
     async def run_test():
-        runtime = ApplicationRuntime(object(), 7450109)
+        runtime = ApplicationRuntime(_app(), 7450109)
         await runtime.start()
 
         with pytest.raises(RuntimeError, match="close failed"):
@@ -194,10 +197,22 @@ def test_application_runtime_can_retry_after_widget_shutdown_failure(monkeypatch
 
 def test_qr_login_dialog_shutdown_cancels_polling_work():
     class FakeAuthService:
-        pass
+        async def get_qrcode(self) -> tuple[str | None, str | None]:
+            raise AssertionError("QR login is not started in this test")
 
-    app = QApplication.instance() or QApplication([])
-    assert app is not None
+        def generate_qr_image(self, url: str):
+            del url
+            raise AssertionError("QR login is not started in this test")
+
+        async def poll_status(self, qrcode_key: str):
+            del qrcode_key
+            raise AssertionError("QR login is not started in this test")
+
+        def save_cookies(self, cookies):
+            del cookies
+            raise AssertionError("QR login is not started in this test")
+
+    app = _app()
     dialog = QRLoginDialog(auth_service=FakeAuthService())
 
     async def run_test():
@@ -218,3 +233,4 @@ def test_qr_login_dialog_shutdown_cancels_polling_work():
 
     asyncio.run(run_test())
     dialog.deleteLater()
+    app.processEvents()

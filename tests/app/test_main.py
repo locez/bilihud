@@ -18,7 +18,9 @@ def test_cancel_pending_tasks_cancels_unfinished_tasks():
         task = asyncio.create_task(pending_task())
         await asyncio.sleep(0)
 
-        await cancel_pending_tasks(asyncio.get_running_loop(), exclude={asyncio.current_task()})
+        current_task = asyncio.current_task()
+        assert current_task is not None
+        await cancel_pending_tasks(asyncio.get_running_loop(), exclude={current_task})
 
         assert task.cancelled()
         assert cleanup_seen is True

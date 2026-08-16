@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 from bilihud.app.lifecycle import TaskScope
 from bilihud.app.menu import AccountStatus
 from bilihud.app.mirror_coordinator import MirrorCoordinatorState
-from bilihud.app.services import AppServices
+from bilihud.app.services import ApplicationServices
 from bilihud.auth.service import AccountProfile
 from bilihud.config.store import (
     DEFAULT_WINDOW_OPACITY,
@@ -69,7 +69,7 @@ class SettingsDialog(QDialog):
         parent: QWidget | None,
         config: AppConfig,
         *,
-        services: AppServices | None = None,
+        services: ApplicationServices | None = None,
         task_scope: TaskScope | None = None,
         on_live_started: LiveStartedHandler | None = None,
     ) -> None:

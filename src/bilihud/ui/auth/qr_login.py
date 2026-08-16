@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from bilihud.app.lifecycle import TaskScope, TaskSupervisor, cancel_task, run_owned_blocking
-from bilihud.auth.service import QR_LOGIN_STATUS_NAMES, AuthenticationService
+from bilihud.auth.service import QR_LOGIN_STATUS_NAMES, QRLoginService
 from bilihud.config.store import ThemeMode
 from bilihud.ui.appearance import Appearance, resolve_appearance
 from bilihud.ui.settings.style import settings_stylesheet
@@ -44,7 +44,7 @@ class QRLoginDialog(QDialog):
         self,
         parent: QWidget | None = None,
         *,
-        auth_service: AuthenticationService,
+        auth_service: QRLoginService,
         task_scope: TaskScope | None = None,
         appearance: Appearance | None = None,
     ) -> None:

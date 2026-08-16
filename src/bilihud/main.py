@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import QApplication
 
 from .app.application_controller import ApplicationController
 from .app.lifecycle import TaskSupervisor
-from .app.services import AppServices, create_default_services
+from .app.services import ApplicationServices, create_default_services
 from .ui.hud.window import DanmakuWidget
 
 
@@ -47,7 +47,7 @@ class ApplicationRuntime:
         self,
         app: QApplication,
         room_id: int,
-        services: AppServices | None = None,
+        services: ApplicationServices | None = None,
         task_supervisor: TaskSupervisor | None = None,
     ) -> None:
         """Create a runtime that will assemble and own one application window."""
@@ -115,7 +115,7 @@ class ApplicationRuntime:
 async def main(
     app: QApplication,
     room_id: int,
-    services: AppServices | None = None,
+    services: ApplicationServices | None = None,
 ) -> None:
     """Run the top-level widget until Qt requests application shutdown."""
     app_close_event = asyncio.Event()

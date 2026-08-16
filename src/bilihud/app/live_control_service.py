@@ -6,6 +6,7 @@ import asyncio
 import logging
 from dataclasses import replace
 from io import BytesIO
+from typing import Protocol
 
 from ..config.store import ConfigStore
 from ..live.models import (
@@ -39,6 +40,75 @@ from .obs_control import ObsAdapter, ObsAdapterError
 from .verification import QrImageGenerator
 
 logger = logging.getLogger(__name__)
+
+
+class LiveControlServicePort(Protocol):
+    """Application capability used by account and live-settings workflows."""
+
+    @property
+    def state(self) -> LiveControlState:
+        """Return the latest immutable live-control snapshot."""
+        ...
+
+    def load_settings(self) -> LiveControlSettings:
+        """Load persisted live-control form values."""
+        ...
+
+    def save_settings(self, settings: LiveControlSettings) -> SettingsSaveOutcome:
+        """Persist live-control form values."""
+        ...
+
+    def generate_qr_image(self, url: str) -> BytesIO | None:
+        """Generate a verification QR image."""
+        ...
+
+    async def initialize(self, room_id: int | None) -> LiveControlOperationResult:
+        """Initialize the authenticated live session."""
+        ...
+
+    async def load_room_info(self, room_id: int | None) -> LiveControlOperationResult:
+        """Load room metadata."""
+        ...
+
+    async def update_title(self, room_id: int | None, title: str) -> LiveControlOperationResult:
+        """Update the room title."""
+        ...
+
+    async def update_area(self, room_id: int | None, area_id: str) -> LiveControlOperationResult:
+        """Update the room area."""
+        ...
+
+    async def start_live(
+        self,
+        room_id: int | None,
+        title: str,
+        area_id: str,
+        obs_settings: ObsSettings | None,
+        *,
+        allow_obs_switch: bool = False,
+    ) -> StartLiveOutcome:
+        """Start the live room and optionally switch the OBS stream."""
+        ...
+
+    async def stop_live(self, room_id: int | None, obs_settings: ObsSettings | None) -> StopLiveOutcome:
+        """Stop the live room and clean up OBS when possible."""
+        ...
+
+    async def check_obs(self, settings: ObsSettings | None) -> ObsCheckOutcome:
+        """Check the configured OBS endpoint."""
+        ...
+
+    async def stop_obs_stream(self, settings: ObsSettings | None) -> ObsStreamOutcome:
+        """Stop the active OBS stream."""
+        ...
+
+    async def close(self) -> None:
+        """Close the current authenticated live session."""
+        ...
+
+    async def shutdown(self) -> None:
+        """Release all service-owned resources."""
+        ...
 
 
 class LiveControlService:

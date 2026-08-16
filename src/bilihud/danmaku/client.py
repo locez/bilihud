@@ -2,7 +2,8 @@ import asyncio
 import hashlib
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from typing import Protocol
 from urllib.parse import urlencode, urlparse
 
 import aiohttp
@@ -12,7 +13,8 @@ import blivedm.models.open_live as open_models
 import blivedm.models.web as web_models
 
 from ..app.lifecycle import run_owned_blocking
-from ..auth.service import AuthenticationService, AuthManager
+from ..auth.service import AuthManager, DanmakuAuthenticationService
+from ..http_contracts import HttpCookie, HttpSession
 from ..live.audience import AudienceSnapshot, parse_anchor_uid, parse_audience_snapshot
 from ..live.emoticons import (
     LiveEmoticon,
@@ -38,6 +40,8 @@ from .blivedm_adapter import (
 )
 from .messages import GiftEffectLayout, HudMessage
 
+NetworkSession = aiohttp.ClientSession | HttpSession
+
 WBI_NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
 LIVE_MSG_SEND_URL = "https://api.live.bilibili.com/msg/send"
 LIVE_ROOM_INFO_URL = "https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom"
@@ -61,6 +65,35 @@ WBI_MIXIN_KEY_ENC_TAB = (
 logger = logging.getLogger(__name__)
 
 
+class DanmakuLiveClient(Protocol):
+    """Lifecycle capability consumed from the vendored blivedm client."""
+
+    @property
+    def is_running(self) -> bool:
+        """Return whether the underlying websocket task is active."""
+        ...
+
+    def set_handler(self, handler: "DanmakuHandler") -> None:
+        """Attach the normalized message handler."""
+        ...
+
+    def start(self) -> None:
+        """Start receiving messages."""
+        ...
+
+    def stop(self) -> None:
+        """Request websocket shutdown."""
+        ...
+
+    async def join(self) -> None:
+        """Wait for the websocket task to finish."""
+        ...
+
+    async def close(self) -> None:
+        """Release websocket-owned resources."""
+        ...
+
+
 class DanmakuClient:
     """Receive and send live-room messages through one owned network session.
 
@@ -73,14 +106,14 @@ class DanmakuClient:
         self,
         room_id: int,
         sessdata: str = "",
-        auth_service: AuthenticationService | None = None,
+        auth_service: DanmakuAuthenticationService | None = None,
     ) -> None:
         """Create a client for one room with an optional injected auth service."""
         self.room_id = room_id
         self.sessdata = sessdata  # Optional one-off SESSDATA override for this connection.
         self.auth_service = auth_service  # Shared authentication boundary from the app.
-        self.session: aiohttp.ClientSession | None = None  # Owned and closed by this client.
-        self.client: blivedm.BLiveClient | None = None  # Underlying blivedm lifecycle handle.
+        self.session: NetworkSession | None = None  # Owned and closed by this client.
+        self.client: DanmakuLiveClient | None = None  # Underlying blivedm lifecycle handle.
         self.handler: DanmakuHandler | None = None  # Callback bridge owned by the client.
         self.on_message_received: Callable[[HudMessage], None] | None = None
         self.on_login_failed: Callable[[str], None] | None = None # callback(message)
@@ -134,11 +167,12 @@ class DanmakuClient:
         if login_failure_message and self.on_login_failed:
             self.on_login_failed(login_failure_message)
 
-        self.session = auth_manager.create_session_from_cookies(loaded_cookies)
+        session = auth_manager.create_session_from_cookies(loaded_cookies)
+        self.session = session
         self._gift_effect_catalog = GiftEffectCatalog(self.session, self.room_id)
 
         # 创建客户端和处理器
-        self.client = blivedm.BLiveClient(self.room_id, session=self.session)
+        self.client = blivedm.BLiveClient(self.room_id, session=session)
         self.handler = DanmakuHandler()
         self.handler.set_danmaku_client(self)
         self.client.set_handler(self.handler)
@@ -154,10 +188,7 @@ class DanmakuClient:
 
         # 从cookie中获取csrf token (bili_jct)
         csrf_token = ''
-        for cookie in self.session.cookie_jar:
-            if cookie.key == 'bili_jct':
-                csrf_token = cookie.value
-                break
+        csrf_token = _csrf_token(self.session)
 
         if not csrf_token:
             # print("Error: No csrf_token found in cookies")
@@ -180,12 +211,17 @@ class DanmakuClient:
                 if res.status != 200:
                     print(f"Send danmaku HTTP error: {res.status}")
                     return False, f"HTTP错误: {res.status}"
-                json_data = await res.json()
-                if json_data['code'] == 0:
+                json_data = _json_mapping(await res.json())
+                if json_data.get("code") == 0:
                     return True, "发送成功"
                 else:
-                    print(f"Send danmaku failed: {json_data['message']}")
-                    return False, f"发送失败: {json_data['message']}"
+                    message = _json_string(json_data.get("message"))
+                    if not message:
+                        message = _json_string(json_data.get("msg"))
+                    if not message:
+                        message = "未知错误"
+                    print(f"Send danmaku failed: {message}")
+                    return False, f"发送失败: {message}"
         except Exception as e:
             print(f"Send danmaku exception: {e}")
             return False, f"发送异常: {str(e)}"
@@ -203,7 +239,7 @@ class DanmakuClient:
         ) as response:
             if response.status != 200:
                 raise RuntimeError(f"直播间信息 HTTP错误: {response.status}")
-            room_payload = await response.json(content_type=None)
+            room_payload = _json_mapping(await response.json(content_type=None))
 
         anchor_uid = parse_anchor_uid(room_payload)
         rank_params = {
@@ -222,7 +258,7 @@ class DanmakuClient:
         ) as response:
             if response.status != 200:
                 raise RuntimeError(f"在线榜 HTTP错误: {response.status}")
-            rank_payload = await response.json(content_type=None)
+            rank_payload = _json_mapping(await response.json(content_type=None))
 
         return parse_audience_snapshot(self.room_id, room_payload, rank_payload)
 
@@ -243,7 +279,7 @@ class DanmakuClient:
         async with self.session.get(url, params=params, headers=headers) as res:
             if res.status != 200:
                 raise RuntimeError(f"HTTP错误: {res.status}")
-            payload = await res.json(content_type=None)
+            payload = _json_mapping(await res.json(content_type=None))
         packages = parse_live_emoticon_packages(payload)
         self._live_emoticon_cache = packages
         self._live_emoticon_cache_at = now
@@ -258,10 +294,7 @@ class DanmakuClient:
             return False, f"表情未解锁: {label}"
 
         csrf_token = ""
-        for cookie in self.session.cookie_jar:
-            if cookie.key == "bili_jct":
-                csrf_token = cookie.value
-                break
+        csrf_token = _csrf_token(self.session)
         if not csrf_token:
             return False, "未找到CSRF Token，请重新连接或检查Cookie"
 
@@ -280,8 +313,8 @@ class DanmakuClient:
             async with self.session.post(send_url, data=_multipart_form_data(data)) as res:
                 if res.status != 200:
                     return False, f"HTTP错误: {res.status}"
-                json_data = await res.json()
-                if json_data["code"] == 0:
+                json_data = _json_mapping(await res.json())
+                if json_data.get("code") == 0:
                     return True, "发送成功"
                 code = json_data.get("code")
                 message = json_data.get("message") or json_data.get("msg") or "未知错误"
@@ -311,13 +344,16 @@ class DanmakuClient:
         async with self.session.get(WBI_NAV_URL) as res:
             if res.status != 200:
                 raise RuntimeError(f"WBI key HTTP错误: {res.status}")
-            payload = await res.json(content_type=None)
+            payload = _json_mapping(await res.json(content_type=None))
 
         if payload.get("code") != 0:
             message = payload.get("message") or payload.get("msg") or "获取WBI key失败"
             raise RuntimeError(str(message))
 
-        wbi_img = (payload.get("data") or {}).get("wbi_img") or {}
+        raw_data = payload.get("data")
+        data = _json_mapping(raw_data) if isinstance(raw_data, dict) else {}
+        raw_wbi_img = data.get("wbi_img")
+        wbi_img = _json_mapping(raw_wbi_img) if isinstance(raw_wbi_img, dict) else {}
         mixin_key = _build_wbi_mixin_key(str(wbi_img.get("img_url") or ""), str(wbi_img.get("sub_url") or ""))
         if not mixin_key:
             raise RuntimeError("获取WBI key失败")
@@ -557,6 +593,34 @@ def _sign_wbi_params(params: dict[str, str], mixin_key: str, wts: str) -> dict[s
     query = urlencode(sorted(safe_params.items()))
     signed_params["w_rid"] = hashlib.md5(f"{query}{mixin_key}".encode()).hexdigest()
     return signed_params
+
+
+def _csrf_token(session: NetworkSession) -> str:
+    """Read the CSRF cookie through the small third-party session boundary."""
+    cookie_jar = session.cookie_jar
+    if not isinstance(cookie_jar, Iterable):
+        return ""
+    for cookie in cookie_jar:
+        if isinstance(cookie, HttpCookie) and cookie.key == "bili_jct":
+            return cookie.value
+    return ""
+
+
+def _json_mapping(payload: object) -> dict[str, object]:
+    """Validate one JSON object before code reads its protocol fields."""
+    if not isinstance(payload, dict):
+        raise ValueError("B站接口返回的数据格式无效")
+    normalized: dict[str, object] = {}
+    for key, value in payload.items():
+        if not isinstance(key, str):
+            raise ValueError("B站接口返回的数据格式无效")
+        normalized[key] = value
+    return normalized
+
+
+def _json_string(value: object) -> str:
+    """Normalize one optional API message field to a displayable string."""
+    return value if isinstance(value, str) else ""
 
 
 def _multipart_form_data(data: dict[str, str | int]) -> aiohttp.FormData:

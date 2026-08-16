@@ -7,14 +7,14 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from ..auth.service import AuthenticationService
+from ..auth.service import ApplicationAuthenticationService
 from ..config.store import AppConfig
 from ..mirror.state import MirrorDisplaySettings
 from .account_controller import AccountLogoutResult, AccountSessionController
 from .hud_controller import HudController
 from .lifecycle import TaskScope
-from .mirror_coordinator import MirrorCoordinator, MirrorOperationResult
-from .services import AppServices
+from .mirror_coordinator import MirrorCoordinatorPort, MirrorOperationResult
+from .services import ApplicationServices
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +35,15 @@ class ApplicationController:
         *,
         room_id: int,
         sessdata: str,
-        services: AppServices,
+        services: ApplicationServices,
         config: AppConfig,
         task_scope: TaskScope,
     ) -> None:
         """Assemble application services with a scope owned by the runtime."""
         self.services = services
         self.config = config
-        self.auth_service: AuthenticationService = services.auth_service
-        self.mirror_coordinator: MirrorCoordinator = services.mirror_coordinator
+        self.auth_service: ApplicationAuthenticationService = services.auth_service
+        self.mirror_coordinator: MirrorCoordinatorPort = services.mirror_coordinator
         self._task_scope = task_scope
         self._shutting_down = False
         self._shutdown_complete = False

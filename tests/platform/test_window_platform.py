@@ -19,9 +19,9 @@ from bilihud.platform.overlay_contracts import (
 
 def _app() -> QApplication:
     app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
+    if isinstance(app, QApplication):
+        return app
+    return QApplication([])
 
 
 class FakeWindowHost:
@@ -163,7 +163,8 @@ def test_layer_shell_activation_falls_back_to_an_ordinary_window(monkeypatch) ->
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
 
     class FailingLayerShellBridge(FakeLayerShellBridge):
-        def make_overlay(self, _window_pointer: int, *, full_screen: bool = False) -> bool:
+        def make_overlay(self, window_pointer: int, *, full_screen: bool = False) -> bool:
+            del window_pointer
             del full_screen
             raise RuntimeError("test activation failure")
 

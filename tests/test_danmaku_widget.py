@@ -2,15 +2,17 @@ import asyncio
 import os
 from dataclasses import replace
 
-from PyQt6.QtCore import QEvent
+from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtNetwork import QNetworkReply
+from PyQt6.QtWidgets import QApplication, QLabel, QListWidgetItem, QToolButton
 
 from bilihud.app.menu import MenuCommand, TrayMenuState
 from bilihud.app.services import create_default_services
 from bilihud.danmaku.messages import (
     DanmakuMessage,
     GiftMessage,
+    HudMessage,
     InteractionKind,
     InteractMessage,
     MessageAuthor,
@@ -22,6 +24,7 @@ from bilihud.danmaku.messages import (
 )
 from bilihud.danmaku.mock import MOCK_CASTLE_GIFT_ID, MockGiftEffectId
 from bilihud.live.emoticons import LiveEmoticon, LiveEmoticonPackage
+from bilihud.mirror.state import MirrorEntry
 from bilihud.platform.layer_shell import LayerShellAnchorDragStrategy
 from bilihud.platform.overlay_contracts import (
     DragMode,
@@ -49,8 +52,14 @@ def _app():
 
 def test_layer_shell_drag_updates_anchor_position():
     class FakeHost:
+        def apply_window_policy(self, policy) -> None:
+            del policy
+
         def native_window_pointer(self) -> int:
             return 123
+
+        def native_window_id(self) -> int | None:
+            return None
 
         def window_position(self) -> WindowPoint:
             return WindowPoint(100, 100)
@@ -61,12 +70,49 @@ def test_layer_shell_drag_updates_anchor_position():
         def screen_geometry(self) -> WindowRectangle:
             return WindowRectangle(x=0, y=0, width=1920, height=1080)
 
+        def full_screen_overlay(self) -> bool:
+            return False
+
+        def set_geometry(self, geometry: WindowRectangle) -> None:
+            del geometry
+
+        def move_window(self, position: WindowPoint) -> None:
+            del position
+
+        def show_window(self) -> None:
+            pass
+
+        def hide_window(self) -> None:
+            pass
+
+        def raise_window(self) -> None:
+            pass
+
+        def activate_window(self) -> None:
+            pass
+
+        def start_system_move(self) -> bool:
+            return False
+
+        def refresh(self) -> None:
+            pass
+
     class FakeLayerShell:
         def __init__(self) -> None:
             self.calls: list[tuple[int, int, int]] = []
 
-        def set_anchor_position(self, pointer: int, x: int, y: int) -> None:
-            self.calls.append((pointer, x, y))
+        def set_anchor_position(self, window_pointer: int, x: int, y: int) -> None:
+            self.calls.append((window_pointer, x, y))
+
+        def make_overlay(self, window_pointer: int, *, full_screen: bool = False) -> bool:
+            del window_pointer, full_screen
+            return True
+
+        def set_passthrough(self, window_pointer: int, enabled: bool) -> None:
+            del window_pointer, enabled
+
+        def set_keyboard_interactivity(self, window_pointer: int, enabled: bool) -> None:
+            del window_pointer, enabled
 
     layer_shell = FakeLayerShell()
     strategy = LayerShellAnchorDragStrategy(FakeHost(), layer_shell)
@@ -244,23 +290,19 @@ def test_emoticon_picker_requests_bilibili_headers(monkeypatch):
         def setHeader(self, name, value):
             self.headers[name] = value
 
-    class Signal:
-        def connect(self, _callback):
-            pass
-
-    class Reply:
-        finished = Signal()
+    class Reply(QNetworkReply):
+        def __init__(self, parent: QObject | None = None) -> None:
+            super().__init__(parent)
 
     class NetworkManager:
-        def __init__(self):
-            self.requests = []
+        def __init__(self) -> None:
+            self.requests: list[FakeRequest] = []
 
-        def get(self, request):
+        def get(self, request: object) -> QNetworkReply:
+            if not isinstance(request, FakeRequest):
+                raise AssertionError("the test request adapter was not installed")
             self.requests.append(request)
             return Reply()
-
-    class Button:
-        pass
 
     _app()
     picker = emoticon_picker.EmoticonPickerPopup()
@@ -268,7 +310,7 @@ def test_emoticon_picker_requests_bilibili_headers(monkeypatch):
     picker._network_manager = manager
     monkeypatch.setattr(emoticon_picker, "QNetworkRequest", FakeRequest)
 
-    picker._load_icon(Button(), "https://i0.hdslb.com/bfs/live/emote.png")
+    picker._load_icon(QToolButton(), "https://i0.hdslb.com/bfs/live/emote.png")
 
     request = manager.requests[0]
     assert request.raw_headers == {b"Referer": b"https://live.bilibili.com/"}
@@ -383,55 +425,75 @@ def test_danmaku_delegate_does_not_reuse_document_for_reused_message_id(monkeypa
 
 
 def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
-    class RemovedItem:
-        def data(self, _role):
-            return DanmakuMessage(
-                author=MessageAuthor(uid=1, name="Locez", color="#66CCFF"),
-                segments=(TextSegment("旧弹幕"),),
-            )
-
     class FakeDelegate:
-        def forget_message(self, _message):
+        def set_font_family(self, font_family: str) -> None:
+            del font_family
+
+        def forget_message(self, message: HudMessage) -> None:
+            del message
             calls.append("forget")
 
     class FakeList:
         def __init__(self):
             self._count = 200
 
-        def addItem(self, _item):
+        def addItem(self, item: QListWidgetItem | None) -> None:
+            del item
             calls.append("add")
             self._count += 1
 
         def count(self):
             return self._count
 
-        def takeItem(self, _row):
+        def takeItem(self, row) -> QListWidgetItem | None:
+            del row
             calls.append("take")
             self._count -= 1
-            return RemovedItem()
+            item = QListWidgetItem()
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                DanmakuMessage(
+                    author=MessageAuthor(uid=1, name="Locez", color="#66CCFF"),
+                    segments=(TextSegment("旧弹幕"),),
+                ),
+            )
+            return item
 
         def scrollToBottom(self):
             calls.append("scroll")
 
+        def scheduleDelayedItemsLayout(self) -> None:
+            pass
+
     class MirrorCoordinator:
-        def publish_message(self, message):
+        def publish_message(self, message: HudMessage) -> MirrorEntry:
             calls.append(("mirror-add", message))
-            return {"seq": 1}
+            return {
+                "seq": 1,
+                "kind": "danmaku",
+                "user": "",
+                "userColor": "",
+                "segments": [],
+            }
 
     calls = []
     class Widget:
-        pass
+        danmaku_list: danmaku_widget.DanmakuListPort
+        _danmaku_delegate: danmaku_widget.DanmakuDelegatePort
+        mirror_coordinator: danmaku_widget.DanmakuMessagePublisher
+
+        def __init__(self) -> None:
+            self.danmaku_list = FakeList()
+            self._danmaku_delegate = FakeDelegate()
+            self.mirror_coordinator = MirrorCoordinator()
 
     widget = Widget()
-    widget.danmaku_list = FakeList()
-    widget._danmaku_delegate = FakeDelegate()
-    widget.mirror_coordinator = MirrorCoordinator()
     message = DanmakuMessage(
         author=MessageAuthor(uid=1, name="Locez", color="#66CCFF"),
         segments=(TextSegment("新弹幕"),),
     )
 
-    danmaku_widget.DanmakuWidget.add_message(widget, message)
+    danmaku_widget.append_hud_message(widget, message)
 
     assert calls.index("take") < calls.index("scroll")
     assert calls.index("scroll") < calls.index(("mirror-add", message))

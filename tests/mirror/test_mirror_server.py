@@ -19,14 +19,22 @@ from bilihud.mirror.state import (
     MIRROR_MEDIA_ROUTE,
     MIRROR_ROUTE,
     MirrorDisplaySettings,
+    MirrorEntry,
     MirrorState,
 )
 
 
 def _site_port(site: web.TCPSite) -> int:
-    sockets = site._server.sockets
-    assert sockets is not None
-    return sockets[0].getsockname()[1]
+    port = site.port
+    assert port > 0
+    return port
+
+
+def _started_site(server: MirrorServer) -> web.TCPSite:
+    """Narrow the private site after the public start contract completes."""
+    site = server._site
+    assert site is not None
+    return site
 
 
 def test_mirror_routes_are_bilihud_named():
@@ -153,7 +161,7 @@ def test_mirror_server_streams_snapshot_before_later_messages():
         await mirror_server.start()
 
         try:
-            events_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_EVENTS_ROUTE}"
+            events_url = f"http://127.0.0.1:{_site_port(_started_site(mirror_server))}{MIRROR_EVENTS_ROUTE}"
             async with ClientSession() as session:
                 async with session.get(events_url) as response:
                     assert response.status == 200
@@ -163,7 +171,13 @@ def test_mirror_server_streams_snapshot_before_later_messages():
                     assert event_name == "snapshot"
                     assert snapshot == state.snapshot()
 
-                    next_entry = {"seq": 2, "user": "新用户", "segments": []}
+                    next_entry: MirrorEntry = {
+                        "seq": 2,
+                        "kind": "danmaku",
+                        "user": "新用户",
+                        "userColor": "#66CCFF",
+                        "segments": [],
+                    }
                     mirror_server.publish_append(next_entry)
                     event_name, entry = await _read_sse_event(response)
 
@@ -181,7 +195,7 @@ def test_mirror_server_registers_image_proxy_route():
         await mirror_server.start()
 
         try:
-            image_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_IMAGE_ROUTE}"
+            image_url = f"http://127.0.0.1:{_site_port(_started_site(mirror_server))}{MIRROR_IMAGE_ROUTE}"
             async with ClientSession() as session:
                 async with session.get(image_url, params={"url": "file:///tmp/emote.png"}) as response:
                     assert response.status == 400
@@ -198,7 +212,7 @@ def test_mirror_server_serves_bilihud_icon():
         await mirror_server.start()
 
         try:
-            icon_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_ICON_ROUTE}"
+            icon_url = f"http://127.0.0.1:{_site_port(_started_site(mirror_server))}{MIRROR_ICON_ROUTE}"
             async with ClientSession() as session:
                 async with session.get(icon_url) as response:
                     assert response.status == 200
@@ -217,7 +231,7 @@ def test_mirror_server_registers_media_proxy_route():
         await mirror_server.start()
 
         try:
-            media_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_MEDIA_ROUTE}"
+            media_url = f"http://127.0.0.1:{_site_port(_started_site(mirror_server))}{MIRROR_MEDIA_ROUTE}"
             async with ClientSession() as session:
                 async with session.get(media_url, params={"url": "file:///tmp/gift.mp4"}) as response:
                     assert response.status == 400
@@ -234,7 +248,7 @@ def test_mirror_image_proxy_rejects_local_and_unallowlisted_hosts():
         await mirror_server.start()
 
         try:
-            image_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_IMAGE_ROUTE}"
+            image_url = f"http://127.0.0.1:{_site_port(_started_site(mirror_server))}{MIRROR_IMAGE_ROUTE}"
             async with ClientSession() as session:
                 async with session.get(image_url, params={"url": "http://127.0.0.1:8080/emote.png"}) as response:
                     assert response.status == 400
@@ -267,7 +281,7 @@ def test_mirror_server_keeps_runner_when_cleanup_fails():
         def __init__(self):
             self.cleanup_calls = 0
 
-        async def cleanup(self):
+        async def cleanup(self) -> None:
             self.cleanup_calls += 1
             if self.cleanup_calls == 1:
                 raise RuntimeError("runner cleanup failed")
@@ -276,17 +290,22 @@ def test_mirror_server_keeps_runner_when_cleanup_fails():
         mirror_server = MirrorServer(MirrorState())
         runner = FakeRunner()
         mirror_server._runner = runner
-        mirror_server._site = object()
+        site_runner = web.AppRunner(web.Application())
+        await site_runner.setup()
+        mirror_server._site = web.TCPSite(site_runner, "127.0.0.1", 0)
 
-        with pytest.raises(RuntimeError, match="runner cleanup failed"):
+        try:
+            with pytest.raises(RuntimeError, match="runner cleanup failed"):
+                await mirror_server.stop()
+            assert mirror_server._runner is runner
+            assert mirror_server._site is not None
+
             await mirror_server.stop()
-        assert mirror_server._runner is runner
-        assert mirror_server._site is not None
-
-        await mirror_server.stop()
-        assert mirror_server._runner is None
-        assert mirror_server._site is None
-        assert runner.cleanup_calls == 2
+            assert mirror_server._runner is None
+            assert mirror_server._site is None
+            assert runner.cleanup_calls == 2
+        finally:
+            await site_runner.cleanup()
 
     asyncio.run(run_test())
 
@@ -320,7 +339,7 @@ def test_mirror_image_proxy_fetches_image_with_bilibili_headers():
 
         try:
             source_url = f"http://127.0.0.1:{_site_port(source_site)}/emote.png"
-            mirror_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_IMAGE_ROUTE}"
+            mirror_url = f"http://127.0.0.1:{_site_port(_started_site(mirror_server))}{MIRROR_IMAGE_ROUTE}"
 
             async with ClientSession() as session:
                 async with session.get(mirror_url, params={"url": source_url}) as response:
@@ -366,7 +385,7 @@ def test_mirror_media_proxy_fetches_video_with_bilibili_headers():
 
         try:
             source_url = f"http://127.0.0.1:{_site_port(source_site)}/gift.mp4"
-            mirror_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_MEDIA_ROUTE}"
+            mirror_url = f"http://127.0.0.1:{_site_port(_started_site(mirror_server))}{MIRROR_MEDIA_ROUTE}"
 
             async with ClientSession() as session:
                 async with session.get(mirror_url, params={"url": source_url}) as response:
@@ -412,7 +431,7 @@ def test_mirror_image_proxy_rejects_redirects_to_untrusted_hosts_and_non_images(
 
         try:
             source_base_url = f"http://127.0.0.1:{_site_port(source_site)}"
-            mirror_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_IMAGE_ROUTE}"
+            mirror_url = f"http://127.0.0.1:{_site_port(_started_site(mirror_server))}{MIRROR_IMAGE_ROUTE}"
             async with ClientSession() as session:
                 async with session.get(mirror_url, params={"url": f"{source_base_url}/redirect"}) as response:
                     assert response.status == 400
@@ -463,7 +482,7 @@ def test_mirror_image_proxy_enforces_response_size_and_timeout_limits():
 
         try:
             source_base_url = f"http://127.0.0.1:{_site_port(source_site)}"
-            mirror_url = f"http://127.0.0.1:{_site_port(mirror_server._site)}{MIRROR_IMAGE_ROUTE}"
+            mirror_url = f"http://127.0.0.1:{_site_port(_started_site(mirror_server))}{MIRROR_IMAGE_ROUTE}"
             async with ClientSession() as session:
                 async with session.get(mirror_url, params={"url": f"{source_base_url}/large"}) as response:
                     assert response.status == 413

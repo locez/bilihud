@@ -72,8 +72,65 @@ class SessionStore(Protocol):
         ...
 
 
-class AuthenticationService(Protocol):
-    """Authentication use cases exposed to application and presentation code."""
+class QRLoginService(Protocol):
+    """Authentication capability required by the QR-login presentation."""
+
+    async def get_qrcode(self) -> tuple[str | None, str | None]:
+        """Request a Bilibili QR-login URL and its polling key."""
+        ...
+
+    def generate_qr_image(self, url: str) -> BytesIO | None:
+        """Render a QR-login URL into PNG bytes for the presentation layer."""
+        ...
+
+    async def poll_status(self, qrcode_key: str) -> tuple[int, str, AuthCookies | None]:
+        """Poll QR-login state and return an authenticated cookie set on success."""
+        ...
+
+    def save_cookies(self, cookies: Mapping[str, str]) -> bool:
+        """Store cookies obtained from a successful login."""
+        ...
+
+
+class AccountAuthenticationService(Protocol):
+    """Authentication capability required by account state and logout workflows."""
+
+    async def lookup_account(self) -> AccountLookupResult:
+        """Resolve the saved session into a normalized account identity."""
+        ...
+
+    def logout(self) -> bool:
+        """Remove the saved Bilibili session and report whether it was cleared."""
+        ...
+
+
+class DanmakuAuthenticationService(Protocol):
+    """Authentication capability required to create an owned danmaku session."""
+
+    def load_auth_cookies(self) -> tuple[AuthCookies, bool]:
+        """Load cookies and indicate whether they came from secure storage."""
+        ...
+
+    async def validate_session(self, cookies: Mapping[str, str]) -> bool:
+        """Check whether a cookie set still represents a logged-in user."""
+        ...
+
+    def create_session_from_cookies(self, cookies: Mapping[str, str]) -> aiohttp.ClientSession:
+        """Create an aiohttp session whose caller owns and closes the resource."""
+        ...
+
+
+class ApplicationAuthenticationService(
+    QRLoginService,
+    AccountAuthenticationService,
+    DanmakuAuthenticationService,
+    Protocol,
+):
+    """Combined authentication capability shared by application workflows."""
+
+
+class AuthenticationService(ApplicationAuthenticationService, Protocol):
+    """Full authentication service exposed by the composition root."""
 
     async def get_qrcode(self) -> tuple[str | None, str | None]:
         """Request a Bilibili QR-login URL and its polling key."""

@@ -11,6 +11,8 @@ from bilihud.platform.overlay_contracts import (
     DragStartResult,
     OverlayCapabilities,
     OverlayOperationResult,
+    OverlayPlatform,
+    WindowHost,
     WindowPoint,
 )
 from bilihud.ui.hud.gift_effect import GiftEffectWindow, compose_gift_video_frame
@@ -18,9 +20,9 @@ from bilihud.ui.hud.gift_effect import GiftEffectWindow, compose_gift_video_fram
 
 def _app() -> QApplication:
     app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
+    if isinstance(app, QApplication):
+        return app
+    return QApplication([])
 
 
 def test_compose_gift_video_frame_uses_the_packed_alpha_region() -> None:
@@ -73,14 +75,16 @@ class FakePlatform:
         self.mode_calls.append(enabled)
         return OverlayOperationResult.success()
 
-    def begin_drag(self, _local_position: WindowPoint, _global_position: WindowPoint) -> DragStartResult:
+    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+        del local_position, global_position
         return DragStartResult(DragMode.UNAVAILABLE, "effect surface is click-through")
 
     def update_drag(
         self,
-        _local_position: WindowPoint,
-        _global_position: WindowPoint,
+        local_position: WindowPoint,
+        global_position: WindowPoint,
     ) -> OverlayOperationResult:
+        del local_position, global_position
         return OverlayOperationResult.failure("effect surface is click-through")
 
     def end_drag(self) -> None:
@@ -91,7 +95,11 @@ def test_gift_effect_window_uses_a_full_screen_click_through_surface() -> None:
     app = _app()
     parent = QWidget()
     platform = FakePlatform()
-    window = GiftEffectWindow(parent, platform_factory=lambda _host: platform)
+    def platform_factory(host: WindowHost) -> OverlayPlatform:
+        del host
+        return platform
+
+    window = GiftEffectWindow(parent, platform_factory=platform_factory)
     message = GiftMessage(
         author=MessageAuthor(uid=1, name="送礼用户", color="#FFD700"),
         segments=(TextSegment("赠送 辣条 x2"),),

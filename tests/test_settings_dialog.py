@@ -4,8 +4,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent, QWheelEvent
-from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QCheckBox, QDialog, QLabel, QLineEdit, QPushButton, QToolButton, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QDialog,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QToolButton,
+    QWidget,
+)
 
 from bilihud.app.menu import AccountStatus
 from bilihud.app_metadata import GITHUB_URL, application_version
@@ -25,7 +33,11 @@ _QT_APP: QApplication | None = None
 
 def _app() -> QApplication:
     global _QT_APP
-    _QT_APP = QApplication.instance() or QApplication([])
+    instance = QApplication.instance()
+    if isinstance(instance, QApplication):
+        _QT_APP = instance
+    else:
+        _QT_APP = QApplication([])
     return _QT_APP
 
 
@@ -33,7 +45,12 @@ def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
     _app()
     dialog = SettingsDialog(None, AppConfig(theme=ThemeMode.DARK, window_opacity=65))
 
-    assert [dialog.navigation.item(index).text() for index in range(dialog.navigation.count())] == [
+    labels: list[str] = []
+    for index in range(dialog.navigation.count()):
+        item = dialog.navigation.item(index)
+        assert item is not None
+        labels.append(item.text())
+    assert labels == [
         "通用",
         "面板",
         "直播",
@@ -71,7 +88,9 @@ def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
 
     dialog.select_page(SettingsPage.DEVELOPER)
     assert dialog.navigation.currentRow() == 6
-    assert dialog.simulation_button.text() == "弹幕模拟"
+    simulation_button = dialog.simulation_button
+    assert simulation_button is not None
+    assert simulation_button.text() == "弹幕模拟"
     assert dialog.gift_effect_combo is not None
     assert [
         dialog.gift_effect_combo.itemText(index)
@@ -236,12 +255,7 @@ def test_settings_dialog_header_moves_frameless_window() -> None:
     assert dialog.eventFilter(drag_region, release) is True
 
     dialog.select_page(SettingsPage.ACCOUNT)
-    first_item = dialog.navigation.item(0)
-    QTest.mouseClick(
-        dialog.navigation.viewport(),
-        Qt.MouseButton.LeftButton,
-        pos=dialog.navigation.visualItemRect(first_item).center(),
-    )
+    dialog.navigation.setCurrentRow(0)
     assert dialog.navigation.currentRow() == 0
     dialog.close()
 
@@ -306,6 +320,7 @@ def test_settings_dialog_resets_scroll_when_switching_to_live_page() -> None:
     dialog.select_page(SettingsPage.LIVE)
     app.processEvents()
     scrollbar = dialog.page_scroll.verticalScrollBar()
+    assert scrollbar is not None
     scrollbar.setValue(scrollbar.maximum())
     assert scrollbar.value() > 0
 

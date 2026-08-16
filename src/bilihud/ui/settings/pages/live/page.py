@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from bilihud.app.lifecycle import TaskScope
-from bilihud.app.live_control_service import LiveControlService
+from bilihud.app.live_control_service import LiveControlServicePort
 from bilihud.config.store import DEFAULT_OBS_HOST, DEFAULT_OBS_PORT
 from bilihud.live.models import (
     LiveAreaGroup,
@@ -54,7 +54,7 @@ class LiveSettingsPage(QWidget):
     def __init__(
         self,
         parent: QWidget | None = None,
-        service: LiveControlService | None = None,
+        service: LiveControlServicePort | None = None,
         task_scope: TaskScope | None = None,
         on_live_started: LiveStartedHandler | None = None,
     ) -> None:

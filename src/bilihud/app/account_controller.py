@@ -10,10 +10,10 @@ from enum import StrEnum
 from typing import Protocol
 
 from ..auth.service import (
+    AccountAuthenticationService,
     AccountLookupResult,
     AccountLookupStatus,
     AccountProfile,
-    AuthenticationService,
 )
 from .lifecycle import TaskScope, cancel_task
 from .menu import AccountStatus
@@ -75,7 +75,7 @@ class AccountSessionController:
     def __init__(
         self,
         *,
-        auth_service: AuthenticationService,
+        auth_service: AccountAuthenticationService,
         hud_controller: HudDisconnecter,
         live_control_service: LiveSessionCloser,
         task_scope: TaskScope,

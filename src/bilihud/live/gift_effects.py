@@ -10,6 +10,9 @@ from urllib.parse import urlsplit
 import aiohttp
 
 from ..danmaku.messages import GiftEffectFrame, GiftEffectLayout
+from ..http_contracts import HttpSession
+
+NetworkSession = aiohttp.ClientSession | HttpSession
 
 GIFT_DETAIL_URL = "https://api.live.bilibili.com/xlive/web-room/v1/giftPanel/getGiftDetail"
 FULL_SCREEN_EFFECT_CONFIG_URL = (
@@ -45,7 +48,7 @@ class GiftEffectCatalog:
 
     def __init__(
         self,
-        session: aiohttp.ClientSession,
+        session: NetworkSession,
         room_id: int,
         *,
         timeout_seconds: float = GIFT_DETAIL_TIMEOUT_SECONDS,
@@ -55,7 +58,7 @@ class GiftEffectCatalog:
             raise ValueError("room_id must not be negative")
         if timeout_seconds <= 0:
             raise ValueError("gift effect timeout must be positive")
-        self._session: aiohttp.ClientSession = session
+        self._session: NetworkSession = session
         self._room_id: int = room_id
         self._timeout_seconds: float = timeout_seconds
         self._cache: dict[int, GiftEffectAsset | None] = {}
