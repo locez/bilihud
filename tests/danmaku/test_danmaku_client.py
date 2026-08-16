@@ -10,7 +10,7 @@ import pytest
 from bilihud.danmaku import client as danmaku_client
 from bilihud.danmaku.client import DanmakuClient, DanmakuHandler, DanmakuShutdownError
 from bilihud.danmaku.messages import DanmakuMessage, GiftMessage, InteractMessage
-from bilihud.http_contracts import HttpResponse, QueryParams, QueryValue
+from bilihud.http_contracts import HttpResponse, QueryParams
 from bilihud.live.emoticons import LiveEmoticon
 from bilihud.live.gift_effects import FULL_SCREEN_EFFECT_CONFIG_URL, GiftEffectCatalog
 
@@ -391,9 +391,9 @@ class FakeHttpSession:
         self.posted_data: object | None = None
         self.get_url: str = ""
         self.post_url: str = ""
-        self.get_params: dict[str, QueryValue] | None = None
+        self.get_params: QueryParams | None = None
         self.get_headers: dict[str, str] | None = None
-        self.get_calls: list[tuple[str, dict[str, QueryValue] | None, dict[str, str] | None]] = []
+        self.get_calls: list[tuple[str, QueryParams | None, dict[str, str] | None]] = []
         self.cookie_jar: list[FakeCookie] = [FakeCookie("bili_jct", "csrf-token")]
         self.closed: bool = False
 
@@ -405,7 +405,7 @@ class FakeHttpSession:
         headers: Mapping[str, str] | None = None,
     ) -> FakeResponse:
         self.get_url = url
-        self.get_params = dict(params) if isinstance(params, Mapping) else None
+        self.get_params = params
         self.get_headers = dict(headers) if headers is not None else None
         self.get_calls.append((url, self.get_params, self.get_headers))
         payload = self.get_payloads.pop(0) if self.get_payloads else self.get_payload

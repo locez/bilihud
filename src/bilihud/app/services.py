@@ -29,12 +29,35 @@ from .mirror_coordinator import MirrorCoordinator, MirrorCoordinatorPort
 class ApplicationServices(Protocol):
     """Capabilities wired into the application composition root."""
 
-    config_store: ConfigStore
-    auth_service: ApplicationAuthenticationService
-    hud_client_factory: HudClientFactory
-    live_control_service: LiveControlServicePort
-    mirror_coordinator: MirrorCoordinatorPort
-    overlay_platform_factory: OverlayPlatformFactory
+    @property
+    def config_store(self) -> ConfigStore:
+        """Return the application configuration boundary."""
+        ...
+
+    @property
+    def auth_service(self) -> ApplicationAuthenticationService:
+        """Return the shared authentication capability."""
+        ...
+
+    @property
+    def hud_client_factory(self) -> HudClientFactory:
+        """Return the HUD client factory."""
+        ...
+
+    @property
+    def live_control_service(self) -> LiveControlServicePort:
+        """Return the live-control workflow capability."""
+        ...
+
+    @property
+    def mirror_coordinator(self) -> MirrorCoordinatorPort:
+        """Return the Mirror workflow capability."""
+        ...
+
+    @property
+    def overlay_platform_factory(self) -> OverlayPlatformFactory:
+        """Return the platform overlay factory."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)

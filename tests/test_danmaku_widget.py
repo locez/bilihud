@@ -217,8 +217,12 @@ def test_danmaku_widget_injects_fixed_mock_messages_into_hud(monkeypatch):
     _app()
     widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
     widget._shutting_down = False
-    received = []
-    widget.add_message = received.append
+    received: list[HudMessage] = []
+
+    def receive_message(_widget: danmaku_widget.DanmakuWidget, message: HudMessage) -> None:
+        received.append(message)
+
+    monkeypatch.setattr(danmaku_widget.DanmakuWidget, "add_message", receive_message)
 
     danmaku_widget.DanmakuWidget.trigger_danmaku_simulation(widget)
 
@@ -229,12 +233,16 @@ def test_danmaku_widget_injects_fixed_mock_messages_into_hud(monkeypatch):
     )
 
 
-def test_danmaku_widget_injects_one_selected_gift_effect_fixture():
+def test_danmaku_widget_injects_one_selected_gift_effect_fixture(monkeypatch):
     _app()
     widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
     widget._shutting_down = False
-    received = []
-    widget.add_message = received.append
+    received: list[HudMessage] = []
+
+    def receive_message(_widget: danmaku_widget.DanmakuWidget, message: HudMessage) -> None:
+        received.append(message)
+
+    monkeypatch.setattr(danmaku_widget.DanmakuWidget, "add_message", receive_message)
 
     danmaku_widget.DanmakuWidget.trigger_gift_effect_simulation(
         widget,
@@ -250,21 +258,29 @@ def test_danmaku_widget_injects_one_selected_gift_effect_fixture():
     assert castle.gift_effect_layout is not None
 
 
-def test_danmaku_widget_mirror_command_selects_unified_settings_tab():
-    calls = []
+def test_danmaku_widget_mirror_command_selects_unified_settings_tab(monkeypatch):
+    calls: list[SettingsPage] = []
     widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
     widget._shutting_down = False
-    widget.open_settings = calls.append
+
+    def open_settings(_widget: danmaku_widget.DanmakuWidget, page: SettingsPage = SettingsPage.GENERAL) -> None:
+        calls.append(page)
+
+    monkeypatch.setattr(danmaku_widget.DanmakuWidget, "open_settings", open_settings)
 
     danmaku_widget.DanmakuWidget.open_mirror_settings(widget)
 
     assert calls == [SettingsPage.MIRROR]
 
 
-def test_danmaku_widget_live_tray_command_selects_unified_settings_tab():
-    calls = []
+def test_danmaku_widget_live_tray_command_selects_unified_settings_tab(monkeypatch):
+    calls: list[SettingsPage] = []
     widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
-    widget.open_settings = calls.append
+
+    def open_settings(_widget: danmaku_widget.DanmakuWidget, page: SettingsPage = SettingsPage.GENERAL) -> None:
+        calls.append(page)
+
+    monkeypatch.setattr(danmaku_widget.DanmakuWidget, "open_settings", open_settings)
 
     danmaku_widget.DanmakuWidget._handle_menu_command(
         widget,
@@ -613,19 +629,18 @@ def test_emoticon_picker_keeps_one_tab_per_package():
     assert [picker.tabs.tabText(index) for index in range(picker.tabs.count())] == ["通用表情", "UP主大表情"]
 
 
-def test_danmaku_widget_sends_selected_live_emoticon():
+def test_danmaku_widget_sends_selected_live_emoticon(monkeypatch):
     class Controller:
-        def __init__(self):
-            self.sent = []
+        def __init__(self) -> None:
+            self.sent: list[LiveEmoticon] = []
 
-        async def send_live_emoticon(self, emoticon):
+        async def send_live_emoticon(self, emoticon: LiveEmoticon) -> None:
             self.sent.append(emoticon)
-            return None
 
     async def run_test():
         controller = Controller()
         widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
-        widget.hud_controller = controller
+        monkeypatch.setattr(danmaku_widget.DanmakuWidget, "hud_controller", controller, raising=False)
         emoticon = LiveEmoticon(
             emoji="啊",
             url="https://i0.hdslb.com/bfs/live/a.png",
