@@ -200,6 +200,10 @@ paru -S bilihud-git
 
 本地 ebuild 示例文件位于: `packaging/gentoo/`
 
+### Windows 和 macOS
+
+GitHub Actions 的 `Package` workflow 会在 Python 3.14 环境中，在 Windows 上生成单文件 `bilihud-<版本>-windows-<架构>.exe`，在 macOS 上生成包含应用 bundle 的 `bilihud-<版本>-macos-<架构>.dmg`。推送 `v*` 标签时，这两个文件会和 Linux 的 RPM、Deb 一起附加到 GitHub Release。
+
 ## 鸣谢
 
 * [blivedm](https://github.com/xfgryujk/blivedm) - B站直播弹幕协议库
