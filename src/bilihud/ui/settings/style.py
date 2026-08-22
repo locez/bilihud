@@ -17,6 +17,7 @@ class ModernComboBox(QComboBox):
         super().__init__(parent)
         popup_view = QListView(self)
         popup_view.setUniformItemSizes(True)
+        popup_view.setSpacing(4)
         self.setView(popup_view)
 
     def showPopup(self) -> None:
@@ -183,12 +184,13 @@ def settings_stylesheet(appearance: Appearance) -> str:
         }}
         QComboBox, QSpinBox {{
             min-height: 34px;
-            padding: 0 10px;
             color: {appearance.text};
             background: {appearance.surface_alt};
             border: 1px solid {appearance.border};
             border-radius: 6px;
         }}
+        QComboBox {{ padding: 0 10px; }}
+        QSpinBox {{ padding: 0 26px 0 10px; }}
         QComboBox:focus, QSpinBox:focus {{ border-color: {appearance.accent}; }}
         QComboBox:hover, QSpinBox:hover {{ border-color: {appearance.muted_text}; }}
         QComboBox::drop-down {{
@@ -205,6 +207,8 @@ def settings_stylesheet(appearance: Appearance) -> str:
             border: none;
             background: transparent;
         }}
+        QSpinBox::up-button {{ subcontrol-position: top right; }}
+        QSpinBox::down-button {{ subcontrol-position: bottom right; }}
         QSpinBox::up-button:hover, QSpinBox::down-button:hover {{ background: {appearance.accent_soft}; }}
         QSpinBox::up-arrow, QSpinBox::down-arrow {{ image: none; width: 0px; height: 0px; }}
         QLineEdit {{
@@ -285,6 +289,19 @@ def settings_stylesheet(appearance: Appearance) -> str:
             font-size: 22px;
         }}
         QToolButton#window_close:hover {{ color: {appearance.text}; background: {appearance.surface_alt}; }}
+        QToolButton#account_copy_live_room {{
+            min-width: 28px;
+            max-width: 28px;
+            min-height: 28px;
+            max-height: 28px;
+            padding: 0;
+            color: {appearance.muted_text};
+            background: transparent;
+            border: none;
+            border-radius: 4px;
+        }}
+        QToolButton#account_copy_live_room:hover {{ color: {appearance.accent}; background: {appearance.accent_soft}; }}
+        QToolButton#account_copy_live_room:focus {{ border: 1px solid {appearance.accent}; }}
         QFrame#credential_row {{
             background: {appearance.surface_alt};
             border: 1px solid {appearance.border};

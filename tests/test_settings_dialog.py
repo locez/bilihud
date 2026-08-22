@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QStyle,
+    QStyleOptionSpinBox,
     QToolButton,
     QWidget,
 )
@@ -125,6 +127,9 @@ def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
     assert account_page.follower_value.text() == "34"
     assert account_page.space_button.isHidden() is False
     assert account_page.live_room_button.isHidden() is False
+    assert account_page.live_room_copy_button is not None
+    assert account_page.live_room_copy_button.isHidden() is False
+    assert account_page.live_room_copy_button.toolTip() == "复制直播间地址"
     assert account_page.login_button.isHidden() is True
     assert account_page.logout_button.isHidden() is False
 
@@ -134,6 +139,37 @@ def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
     assert account_page.logout_button.isHidden() is True
 
     dialog.close()
+
+
+def test_account_page_copies_live_room_url_from_icon_button() -> None:
+    app = _app()
+    page = AccountSettingsPage()
+    page.resize(520, 360)
+    page.show()
+    page.set_account_state(
+        AccountStatus.LOGGED_IN,
+        AccountProfile("123", "测试用户", live_room_id=456),
+    )
+    app.processEvents()
+
+    copy_button = page.live_room_copy_button
+    assert copy_button is not None
+    live_room_gap = (
+        copy_button.geometry().left()
+        - page.live_room_button.geometry().right()
+        - 1
+    )
+    assert live_room_gap == 0
+    copy_button.click()
+
+    clipboard = app.clipboard()
+    assert clipboard is not None
+    assert clipboard.text() == "https://live.bilibili.com/456"
+    assert page.account_status_label.text() == "直播间地址已复制"
+
+    page.set_account_state(AccountStatus.LOGGED_OUT, None)
+    assert copy_button.isHidden() is True
+    page.close()
 
 
 def test_settings_dialog_emits_typed_apply_and_confirm_requests() -> None:
@@ -299,6 +335,86 @@ def test_modern_combo_does_not_change_from_a_closed_wheel_event() -> None:
     dialog.close()
 
 
+def test_modern_combo_popup_separates_options() -> None:
+    app = _app()
+    dialog = SettingsDialog(None, AppConfig())
+    combo = dialog.theme_combo
+    combo.show()
+    app.processEvents()
+    combo.showPopup()
+    app.processEvents()
+
+    view = combo.view()
+    assert view is not None
+    assert view.spacing() == 4
+    first_item = view.visualRect(view.model().index(0, 0))
+    second_item = view.visualRect(view.model().index(1, 0))
+    assert second_item.top() - first_item.bottom() - 1 >= view.spacing()
+
+    combo.hidePopup()
+    dialog.close()
+
+
+def test_settings_spinbox_buttons_receive_clicks_across_their_full_hit_area() -> None:
+    app = _app()
+    dialog = SettingsDialog(None, AppConfig(window_opacity=50))
+    dialog.select_page(SettingsPage.PANEL)
+    dialog.show()
+    app.processEvents()
+
+    spinbox = dialog.opacity_spinbox
+    option = QStyleOptionSpinBox()
+    option.initFrom(spinbox)
+    option.frame = spinbox.hasFrame()
+    option.buttonSymbols = spinbox.buttonSymbols()
+    option.stepEnabled = spinbox.stepEnabled()
+    style = spinbox.style()
+
+    for subcontrol, expected_value in (
+        (QStyle.SubControl.SC_SpinBoxUp, 55),
+        (QStyle.SubControl.SC_SpinBoxDown, 45),
+    ):
+        button_rect = style.subControlRect(
+            QStyle.ComplexControl.CC_SpinBox,
+            option,
+            subcontrol,
+            spinbox,
+        )
+        spinbox.setValue(50)
+        point = QPoint(button_rect.left() + 1, button_rect.center().y())
+        target = spinbox.childAt(point)
+        if target is None:
+            target = spinbox
+        target_point = target.mapFrom(spinbox, point)
+        global_point = spinbox.mapToGlobal(point)
+        press = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPointF(target_point),
+            QPointF(target_point),
+            QPointF(global_point),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        release = QMouseEvent(
+            QEvent.Type.MouseButtonRelease,
+            QPointF(target_point),
+            QPointF(target_point),
+            QPointF(global_point),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        QApplication.sendEvent(target, press)
+        QApplication.sendEvent(target, release)
+        app.processEvents()
+
+        assert target is not spinbox.lineEdit()
+        assert spinbox.value() == expected_value
+
+    dialog.close()
+
+
 def test_settings_dialog_hides_scrollbar_for_short_page() -> None:
     app = _app()
     dialog = SettingsDialog(None, AppConfig())
@@ -348,6 +464,29 @@ def test_live_action_buttons_show_owned_busy_state() -> None:
 
     assert page.start_button.text() == "开始直播"
     assert page.start_button.property("busy") is False
+
+
+def test_live_form_leaves_space_between_compound_controls() -> None:
+    app = _app()
+    dialog = SettingsDialog(None, AppConfig())
+    dialog.select_page(SettingsPage.LIVE)
+    dialog.show()
+    app.processEvents()
+
+    page = dialog.page_stack.currentWidget()
+    assert isinstance(page, LiveSettingsPage)
+
+    def horizontal_gap(left: QWidget, right: QWidget) -> int:
+        return right.geometry().left() - left.geometry().right() - 1
+
+    assert horizontal_gap(page.room_id_input, page.refresh_room_button) == 8
+    assert horizontal_gap(page.title_input, page.update_title_button) == 8
+    assert horizontal_gap(page.area_combo, page.update_area_button) == 8
+    assert horizontal_gap(page.obs_host_input, page.obs_port_input) == 8
+    assert horizontal_gap(page.obs_password_input, page.check_obs_button) == 8
+    assert horizontal_gap(page.check_obs_button, page.stop_obs_button) == 8
+
+    dialog.close()
 
 
 def test_live_face_verification_uses_face_auth_copy() -> None:

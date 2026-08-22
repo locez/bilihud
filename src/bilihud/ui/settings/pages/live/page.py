@@ -97,10 +97,11 @@ class LiveSettingsPage(QWidget):
         room_card, room_layout = self._new_card("直播间")
         room_form = QFormLayout()
         room_form.setHorizontalSpacing(18)
-        room_form.setVerticalSpacing(10)
+        room_form.setVerticalSpacing(12)
 
         room_row = QHBoxLayout()
         room_row.setContentsMargins(0, 0, 0, 0)
+        room_row.setSpacing(8)
         self.room_id_input = QLineEdit(room_card)
         self.room_id_input.setPlaceholderText("直播间 ID")
         self.room_id_input.setReadOnly(True)
@@ -114,6 +115,7 @@ class LiveSettingsPage(QWidget):
 
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(8)
         self.title_input = QLineEdit(room_card)
         self.title_input.setPlaceholderText("直播标题")
         self.title_input.textChanged.connect(self.update_action_state)
@@ -129,6 +131,7 @@ class LiveSettingsPage(QWidget):
 
         area_row = QHBoxLayout()
         area_row.setContentsMargins(0, 0, 0, 0)
+        area_row.setSpacing(8)
         self.area_combo = ModernComboBox(room_card)
         self.area_combo.currentIndexChanged.connect(self.update_action_state)
         area_row.addWidget(self.area_combo, 1)
@@ -159,9 +162,10 @@ class LiveSettingsPage(QWidget):
         obs_card, obs_layout = self._new_card("OBS 推流")
         obs_form = QFormLayout()
         obs_form.setHorizontalSpacing(18)
-        obs_form.setVerticalSpacing(10)
+        obs_form.setVerticalSpacing(12)
         endpoint_row = QHBoxLayout()
         endpoint_row.setContentsMargins(0, 0, 0, 0)
+        endpoint_row.setSpacing(8)
         self.obs_host_input = QLineEdit(obs_card)
         self.obs_host_input.setPlaceholderText(DEFAULT_OBS_HOST)
         self.obs_host_input.textChanged.connect(self._mark_obs_unchecked)
@@ -175,6 +179,7 @@ class LiveSettingsPage(QWidget):
 
         password_row = QHBoxLayout()
         password_row.setContentsMargins(0, 0, 0, 0)
+        password_row.setSpacing(8)
         self.obs_password_input = QLineEdit(obs_card)
         self.obs_password_input.setPlaceholderText("可留空")
         self.obs_password_input.setEchoMode(QLineEdit.EchoMode.Password)

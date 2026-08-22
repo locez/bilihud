@@ -2,13 +2,44 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QRectF, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QImage, QPainter, QPainterPath, QPixmap
+from PyQt6.QtCore import QRectF, QSize, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import (
+    QClipboard,
+    QDesktopServices,
+    QGuiApplication,
+    QImage,
+    QPainter,
+    QPainterPath,
+    QPaintEvent,
+    QPalette,
+    QPen,
+    QPixmap,
+)
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QToolButton, QVBoxLayout, QWidget
 
 from bilihud.app.menu import AccountStatus
 from bilihud.auth.service import AccountProfile
+
+
+class CopyToolButton(QToolButton):
+    """Render a compact theme-aware copy glyph without relying on desktop icon themes."""
+
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        """Paint the button chrome and two overlapping document outlines."""
+        super().paintEvent(a0)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        group = QPalette.ColorGroup.Active if self.isEnabled() else QPalette.ColorGroup.Disabled
+        color = self.palette().color(group, QPalette.ColorRole.ButtonText)
+        pen = QPen(color, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        icon_size = QSize(16, 16)
+        left = (self.width() - icon_size.width()) / 2
+        top = (self.height() - icon_size.height()) / 2
+        painter.drawRoundedRect(QRectF(left + 5, top + 1, 8, 10), 1.3, 1.3)
+        painter.drawRoundedRect(QRectF(left + 2, top + 4, 8, 10), 1.3, 1.3)
+        painter.end()
 
 
 class AccountSettingsPage(QWidget):
@@ -25,6 +56,7 @@ class AccountSettingsPage(QWidget):
         self._profile: AccountProfile | None = None
         self._avatar_generation = 0
         self._avatar_reply: QNetworkReply | None = None
+        self.live_room_copy_button: CopyToolButton | None = None
         self._network_manager = QNetworkAccessManager(self)
         self.setObjectName("settings_page")
         self._init_ui()
@@ -88,8 +120,20 @@ class AccountSettingsPage(QWidget):
         self.live_room_button = QPushButton("直播间", card)
         self.live_room_button.setProperty("link", True)
         self.live_room_button.clicked.connect(self._open_live_room)
+        self.live_room_copy_button = CopyToolButton(card)
+        self.live_room_copy_button.setObjectName("account_copy_live_room")
+        self.live_room_copy_button.setToolTip("复制直播间地址")
+        self.live_room_copy_button.setAccessibleName("复制直播间地址")
+        self.live_room_copy_button.setIconSize(QSize(16, 16))
+        self.live_room_copy_button.setFixedSize(28, 28)
+        self.live_room_copy_button.clicked.connect(self._copy_live_room)
+        live_room_actions = QHBoxLayout()
+        live_room_actions.setContentsMargins(0, 0, 0, 0)
+        live_room_actions.setSpacing(0)
+        live_room_actions.addWidget(self.live_room_button)
+        live_room_actions.addWidget(self.live_room_copy_button)
         self.account_links.addWidget(self.space_button)
-        self.account_links.addWidget(self.live_room_button)
+        self.account_links.addLayout(live_room_actions)
         self.account_links.addStretch(1)
         layout.addLayout(self.account_links)
 
@@ -156,6 +200,8 @@ class AccountSettingsPage(QWidget):
             self.account_stats.setVisible(False)
             self.space_button.setVisible(False)
             self.live_room_button.setVisible(False)
+            if self.live_room_copy_button is not None:
+                self.live_room_copy_button.setVisible(False)
         else:
             self.account_name_label.setText(self._profile.username)
             self.account_id_label.setText(f"UID {self._profile.user_id}")
@@ -164,8 +210,11 @@ class AccountSettingsPage(QWidget):
             self.account_stats.setVisible(True)
             self.space_button.setVisible(True)
             self.space_button.setToolTip(self._profile.space_url)
-            self.live_room_button.setVisible(self._profile.live_room_url is not None)
-            self.live_room_button.setToolTip(self._profile.live_room_url or "")
+            live_room_url = self._profile.live_room_url
+            self.live_room_button.setVisible(live_room_url is not None)
+            self.live_room_button.setToolTip(live_room_url or "")
+            if self.live_room_copy_button is not None:
+                self.live_room_copy_button.setVisible(live_room_url is not None)
             self._load_avatar(self._profile)
         self.login_button.setVisible(status is not AccountStatus.LOGGED_IN)
         self.logout_button.setVisible(status in (AccountStatus.LOGGED_IN, AccountStatus.LOGIN_EXPIRED))
@@ -258,6 +307,16 @@ class AccountSettingsPage(QWidget):
         """Open the account's public live-room page when one is available."""
         if self._profile is not None and self._profile.live_room_url is not None:
             QDesktopServices.openUrl(QUrl(self._profile.live_room_url))
+
+    def _copy_live_room(self) -> None:
+        """Copy the account's public live-room URL and show local feedback."""
+        if self._profile is None or self._profile.live_room_url is None:
+            return
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is None:
+            return
+        clipboard.setText(self._profile.live_room_url, mode=QClipboard.Mode.Clipboard)
+        self.account_status_label.setText("直播间地址已复制")
 
 
 def _count_text(value: int | None) -> str:
