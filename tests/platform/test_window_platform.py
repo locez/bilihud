@@ -5,7 +5,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from bilihud.platform import qt_window_platform, window_platform
 from bilihud.platform.overlay_contracts import (
@@ -15,6 +16,7 @@ from bilihud.platform.overlay_contracts import (
     WindowPolicy,
     WindowRectangle,
 )
+from bilihud.ui.window_host import QtWindowHost
 
 
 def _app() -> QApplication:
@@ -294,6 +296,35 @@ def test_generic_qt_platform_keeps_gaming_mode_on_non_wayland(monkeypatch, platf
         ),
         WindowPolicy(),
     ]
+
+
+def test_generic_qt_platform_restores_mouse_input_after_gaming_mode_toggle() -> None:
+    """Restoring the normal policy must remove Qt's input-transparent window flag."""
+    app = _app()
+    widget = QWidget()
+    host = QtWindowHost(widget)
+    platform = qt_window_platform.QtWindowPlatform(
+        host,
+        gaming_mode_supported=True,
+        gaming_mode_reason=None,
+        bypass_window_manager=False,
+        click_through=None,
+        click_through_supported=True,
+        prefer_system_move=False,
+    )
+
+    try:
+        assert platform.prepare() == OverlayOperationResult.success()
+        assert platform.set_gaming_mode(True) == OverlayOperationResult.success()
+        assert widget.windowFlags() & Qt.WindowType.WindowTransparentForInput
+        assert widget.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+        assert platform.set_gaming_mode(False) == OverlayOperationResult.success()
+        assert not widget.windowFlags() & Qt.WindowType.WindowTransparentForInput
+        assert not widget.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    finally:
+        widget.close()
+        del app
 
 
 def test_non_linux_qt_provider_does_not_attempt_to_load_layer_shell_bridge(monkeypatch) -> None:

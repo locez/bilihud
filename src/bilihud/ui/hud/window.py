@@ -204,7 +204,6 @@ class DanmakuWidget(QWidget):
         config = self.application.config
         self._hud_background_alpha = _opacity_to_alpha(config.window_opacity)
         self.settings_controller = SettingsController(
-            self,
             application=self.application,
             task_scope=self._task_scope.child("settings"),
             on_mirror_toggle=self._schedule_mirror_toggle,

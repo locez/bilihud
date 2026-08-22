@@ -184,6 +184,12 @@ def test_danmaku_widget_keeps_game_mode_controls_in_sync_with_fake_platform(tmp_
         assert widget.gaming_mode_btn.isChecked() is False
         assert widget.tray_gaming_action.isChecked() is False
         assert platform.mode_calls == [True, False]
+
+        widget.open_settings()
+        settings_dialog = widget.settings_controller.dialog
+        assert settings_dialog is not None
+        assert settings_dialog.parentWidget() is None
+        assert not settings_dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
     finally:
         asyncio.run(widget.shutdown())
 

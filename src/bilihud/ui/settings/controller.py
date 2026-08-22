@@ -6,8 +6,6 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import replace
 
-from PyQt6.QtWidgets import QWidget
-
 from bilihud.app.account_controller import AccountState
 from bilihud.app.application_controller import ApplicationController
 from bilihud.app.lifecycle import TaskScope
@@ -23,7 +21,6 @@ class SettingsController:
 
     def __init__(
         self,
-        parent: QWidget,
         *,
         application: ApplicationController,
         task_scope: TaskScope,
@@ -38,7 +35,6 @@ class SettingsController:
         on_live_started: LiveStartedHandler | None = None,
     ) -> None:
         """Create a lazy settings owner with explicit application and UI callbacks."""
-        self._parent = parent
         self._application = application
         self._task_scope = task_scope
         self._on_mirror_toggle = on_mirror_toggle
@@ -104,7 +100,7 @@ class SettingsController:
         if self._dialog is not None:
             return self._dialog
         dialog = SettingsDialog(
-            self._parent,
+            None,
             self._application.config,
             services=self._application.services,
             task_scope=self._task_scope,

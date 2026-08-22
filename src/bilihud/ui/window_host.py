@@ -20,13 +20,15 @@ class QtWindowHost(WindowHost):
 
     def apply_window_policy(self, policy: WindowPolicy) -> None:
         """Map platform-selected flags and attributes to Qt."""
-        if policy.recreate_surface:
-            self._widget.setWindowFlags(self._base_window_flags(policy))
-
+        # Clear Qt's input-transparent state before rebuilding normal flags. Qt
+        # otherwise keeps WindowTransparentForInput on the recreated surface.
         self._widget.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents,
             policy.mouse_events_transparent,
         )
+        if policy.recreate_surface:
+            self._widget.setWindowFlags(self._base_window_flags(policy))
+
         self._widget.setAttribute(
             Qt.WidgetAttribute.WA_ShowWithoutActivating,
             policy.show_without_activating,
