@@ -132,6 +132,8 @@ def _pyinstaller_arguments(target: _BuildTarget) -> list[str]:
     )
     for package_name in ("bilihud", "blivedm", "PyQt6", "keyring"):
         arguments.extend(("--collect-all", package_name))
+    if target.platform_name == "macos":
+        arguments.extend(("--collect-all", "certifi"))
     arguments.append(str(PYINSTALLER_ENTRY_POINT))
     return arguments
 

@@ -44,6 +44,7 @@ license = {text = "MIT"}
 dependencies = [
   "PyQt6",
   "aiohttp",
+  "certifi; sys_platform == 'darwin'",
   "qasync",
   "qrcode",
   "keyring",
