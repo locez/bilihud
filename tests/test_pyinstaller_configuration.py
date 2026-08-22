@@ -4,6 +4,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from PIL import Image
 
 PROJECT_ROOT = Path(__file__).parents[1]
 BUILD_MODULE_PATH = PROJECT_ROOT / "packaging" / "pyinstaller" / "build.py"
@@ -45,6 +46,36 @@ def test_pyinstaller_collects_certifi_only_for_macos() -> None:
         for index in range(len(macos_arguments) - 1)
     )
     assert "certifi" not in windows_arguments
+
+
+@pytest.mark.parametrize(
+    ("target", "expected_icon_name", "expected_format"),
+    [
+        ("windows", "icon.ico", "ICO"),
+        ("macos", "icon.icns", "ICNS"),
+    ],
+)
+def test_pyinstaller_uses_the_native_bilihud_icon(
+    target: str,
+    expected_icon_name: str,
+    expected_format: str,
+) -> None:
+    build_module = _load_build_module()
+    build_target = build_module._BuildTarget(
+        target,
+        "x64" if target == "windows" else "arm64",
+        target == "windows",
+        ".exe" if target == "windows" else ".dmg",
+    )
+
+    arguments = build_module._pyinstaller_arguments(build_target)
+    icon_argument_index = arguments.index("--icon")
+    icon_path = Path(arguments[icon_argument_index + 1])
+
+    assert icon_path.name == expected_icon_name
+    assert icon_path.is_file()
+    with Image.open(icon_path) as icon:
+        assert icon.format == expected_format
 
 
 def test_pyinstaller_entry_point_configures_tls_before_application_import(

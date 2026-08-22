@@ -17,6 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PYINSTALLER_ENTRY_POINT = PROJECT_ROOT / "packaging" / "pyinstaller" / "entry_point.py"
 PYINSTALLER_DIST = PROJECT_ROOT / "dist" / "pyinstaller"
 PACKAGE_DIST = PROJECT_ROOT / "dist" / "packages"
+WINDOWS_ICON = PROJECT_ROOT / "src" / "bilihud" / "assets" / "icon.ico"
+MACOS_ICON = PROJECT_ROOT / "src" / "bilihud" / "assets" / "icon.icns"
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,12 +107,23 @@ def _resolve_version() -> str:
     return _read_project_version(PROJECT_ROOT / "pyproject.toml")
 
 
+def _pyinstaller_icon_path(target: _BuildTarget) -> Path:
+    """Return the native icon format required by the target platform."""
+    if target.platform_name == "windows":
+        return WINDOWS_ICON
+    if target.platform_name == "macos":
+        return MACOS_ICON
+    raise RuntimeError(f"Unsupported PyInstaller icon target: {target.platform_name}")
+
+
 def _pyinstaller_arguments(target: _BuildTarget) -> list[str]:
     """Build the platform-independent PyInstaller analysis configuration."""
     arguments = [
         "--noconfirm",
         "--clean",
         "--windowed",
+        "--icon",
+        str(_pyinstaller_icon_path(target)),
     ]
     if target.one_file:
         arguments.append("--onefile")
