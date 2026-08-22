@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QLabel,
     QLineEdit,
+    QListView,
     QPushButton,
     QStyle,
     QStyleOptionSpinBox,
@@ -345,10 +346,13 @@ def test_modern_combo_popup_separates_options() -> None:
     app.processEvents()
 
     view = combo.view()
-    assert view is not None
+    assert isinstance(view, QListView)
     assert view.spacing() == 4
-    first_item = view.visualRect(view.model().index(0, 0))
-    second_item = view.visualRect(view.model().index(1, 0))
+    model = view.model()
+    if model is None:
+        raise AssertionError("theme combo popup has no model")
+    first_item = view.visualRect(model.index(0, 0))
+    second_item = view.visualRect(model.index(1, 0))
     assert second_item.top() - first_item.bottom() - 1 >= view.spacing()
 
     combo.hidePopup()
@@ -369,6 +373,8 @@ def test_settings_spinbox_buttons_receive_clicks_across_their_full_hit_area() ->
     option.buttonSymbols = spinbox.buttonSymbols()
     option.stepEnabled = spinbox.stepEnabled()
     style = spinbox.style()
+    if style is None:
+        raise AssertionError("opacity spinbox has no style")
 
     for subcontrol, expected_value in (
         (QStyle.SubControl.SC_SpinBoxUp, 55),
