@@ -32,6 +32,10 @@ class LiveControlApi(Protocol):
         """Close the current session and release its network resources."""
         ...
 
+    async def get_anchor_live_room_id(self) -> int:
+        """Load the live-room identifier owned by the authenticated account."""
+        ...
+
     async def load_area_groups(self) -> tuple[LiveAreaGroup, ...]:
         """Load normalized live parent areas and sub-areas."""
         ...

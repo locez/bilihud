@@ -103,6 +103,7 @@ class LiveSettingsPage(QWidget):
         room_row.setContentsMargins(0, 0, 0, 0)
         self.room_id_input = QLineEdit(room_card)
         self.room_id_input.setPlaceholderText("直播间 ID")
+        self.room_id_input.setReadOnly(True)
         self.room_id_input.textChanged.connect(self.update_action_state)
         self.room_id_input.editingFinished.connect(self.reload_room_info)
         room_row.addWidget(self.room_id_input, 1)
@@ -220,7 +221,7 @@ class LiveSettingsPage(QWidget):
             self.set_status("直播服务尚未连接。", error=True)
             return
         settings = service.load_settings()
-        self.room_id_input.setText(str(settings.room_id) if settings.room_id is not None else "")
+        self.room_id_input.clear()
         self.title_input.setText(settings.live_title)
         self.obs_host_input.setText(settings.obs_host)
         self.obs_port_input.setText(str(settings.obs_port))
@@ -260,6 +261,7 @@ class LiveSettingsPage(QWidget):
             self._select_area(state.room_info.parent_area_id, state.room_info.area_id)
         else:
             self._is_live = False
+            self.room_id_input.clear()
         if previous_live != self._is_live:
             self.live_status_changed.emit(self._is_live)
         self.credentials_panel.set_credentials(state.credentials)

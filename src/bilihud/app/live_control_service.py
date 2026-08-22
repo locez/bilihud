@@ -62,8 +62,8 @@ class LiveControlServicePort(Protocol):
         """Generate a verification QR image."""
         ...
 
-    async def initialize(self, room_id: int | None) -> LiveControlOperationResult:
-        """Initialize the authenticated live session."""
+    async def initialize(self) -> LiveControlOperationResult:
+        """Initialize the authenticated session and load the account-owned room."""
         ...
 
     async def load_room_info(self, room_id: int | None) -> LiveControlOperationResult:
@@ -130,6 +130,7 @@ class LiveControlService:
         self._obs_password_store: ObsPasswordStore = obs_password_store
         self._qr_image_generator: QrImageGenerator = qr_image_generator
         self._state = LiveControlState()
+        self._anchor_room_id: int | None = None  # Authenticated account-owned room used by every live operation.
         self._generation = 0
         self._operation_gate = asyncio.Lock()
         self._active_operation: str | None = None
@@ -193,8 +194,8 @@ class LiveControlService:
         """Generate verification QR bytes through the injected image generator."""
         return self._qr_image_generator.generate_qr_image(url)
 
-    async def initialize(self, room_id: int | None) -> LiveControlOperationResult:
-        """Open the session, load areas, and optionally load the selected room."""
+    async def initialize(self) -> LiveControlOperationResult:
+        """Open the session, load areas, and resolve the authenticated account's room."""
         operation_error = await self._claim_operation("initialize")
         if operation_error is not None:
             return LiveControlOperationResult(self._state, operation_error)
@@ -204,6 +205,7 @@ class LiveControlService:
             session_info = await self._api.open_session()
             if not self._is_current(generation):
                 return LiveControlOperationResult(self._state)
+            self._anchor_room_id = None
             self._state = replace(
                 self._state,
                 session=session_info,
@@ -214,18 +216,22 @@ class LiveControlService:
                 obs_streaming=None,
             )
 
+            if session_info.status is SessionStatus.AUTHENTICATED:
+                anchor_room_id = await self._api.get_anchor_live_room_id()
+                if not validate_room_id(anchor_room_id):
+                    return LiveControlOperationResult(
+                        self._state,
+                        LiveControlError(LiveControlErrorCode.INVALID_ROOM, "未能获取当前账号的直播间。"),
+                    )
+                self._anchor_room_id = anchor_room_id
+
             areas = await self._api.load_area_groups()
             if not self._is_current(generation):
                 return LiveControlOperationResult(self._state)
             self._state = replace(self._state, areas=areas)
 
-            if room_id is not None and not validate_room_id(room_id):
-                return LiveControlOperationResult(
-                    self._state,
-                    LiveControlError(LiveControlErrorCode.INVALID_ROOM, "房间号无效。"),
-                )
-            if room_id is not None:
-                result = await self._load_room_info(generation, room_id)
+            if self._anchor_room_id is not None:
+                result = await self._load_room_info(generation, self._anchor_room_id)
                 if result.error is not None:
                     return result
             return LiveControlOperationResult(self._state)
@@ -244,8 +250,11 @@ class LiveControlService:
 
         generation = self._begin_generation()
         try:
-            if room_id is None or not validate_room_id(room_id):
+            validation_error = self._validate_authenticated_room(room_id)
+            if validation_error is not None:
                 self._state = replace(self._state, room_info=None, credentials=())
+                return LiveControlOperationResult(self._state, validation_error)
+            if room_id is None:
                 return LiveControlOperationResult(
                     self._state,
                     LiveControlError(LiveControlErrorCode.INVALID_ROOM, "房间号无效。"),
@@ -670,6 +679,7 @@ class LiveControlService:
                     obs_connected=False,
                     obs_streaming=None,
                 )
+                self._anchor_room_id = None
             finally:
                 self._closing = False
                 self._close_finished.set()
@@ -781,6 +791,10 @@ class LiveControlService:
         if area_id is not None and not area_id.strip():
             return LiveControlError(LiveControlErrorCode.INVALID_INPUT, "直播分区不能为空。")
         if self._state.session.status is SessionStatus.AUTHENTICATED:
+            if self._anchor_room_id is None:
+                return LiveControlError(LiveControlErrorCode.INVALID_ROOM, "未能获取当前账号的直播间。")
+            if room_id != self._anchor_room_id:
+                return LiveControlError(LiveControlErrorCode.INVALID_ROOM, "只能控制登录账号的直播间。")
             return None
         code = (
             LiveControlErrorCode.LOGIN_EXPIRED

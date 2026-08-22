@@ -27,6 +27,7 @@ class FakeLiveService:
         outcomes: list[StartLiveOutcome],
         *,
         stop_outcome: StopLiveOutcome | None = None,
+        check_outcome: ObsCheckOutcome | None = None,
     ) -> None:
         self.state = LiveControlState(
             session=LiveSessionInfo(status=SessionStatus.AUTHENTICATED),
@@ -36,10 +37,10 @@ class FakeLiveService:
             StopLiveStatus.STOPPED,
             self.state,
         )
+        self._check_outcome = check_outcome
         self.start_calls: list[bool] = []
 
-    async def initialize(self, room_id: int | None) -> LiveControlOperationResult:
-        del room_id
+    async def initialize(self) -> LiveControlOperationResult:
         raise AssertionError("not used in this test")
 
     async def load_room_info(self, room_id: int | None) -> LiveControlOperationResult:
@@ -73,7 +74,9 @@ class FakeLiveService:
 
     async def check_obs(self, settings: ObsSettings | None) -> ObsCheckOutcome:
         del settings
-        raise AssertionError("not used in this test")
+        if self._check_outcome is None:
+            raise AssertionError("not used in this test")
+        return self._check_outcome
 
     async def stop_obs_stream(self, settings: ObsSettings | None) -> ObsStreamOutcome:
         del settings
@@ -84,17 +87,25 @@ class FakeLiveService:
 
 
 class FakeLiveView:
-    def __init__(self, *, confirm_switch: bool = True, save_success: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        confirm_switch: bool = True,
+        save_success: bool = True,
+        obs: ObsSettings | None = None,
+    ) -> None:
         self._confirm_switch = confirm_switch
         self._save_success = save_success
+        self._obs = obs
         self.busy_actions: list[LiveAction | None] = []
         self.statuses: list[tuple[str, bool, bool]] = []
         self.warnings: list[tuple[str, str, str]] = []
         self.verifications: list[tuple[str, LiveVerificationKind]] = []
         self.confirmation_count = 0
+        self.save_calls = 0
 
     def form_values(self) -> LiveSettingsForm:
-        return LiveSettingsForm(7450109, "测试直播", "1", "371", None)
+        return LiveSettingsForm(7450109, "测试直播", "1", "371", self._obs)
 
     def apply_service_state(self, state: LiveControlState) -> None:
         del state
@@ -114,6 +125,7 @@ class FakeLiveView:
         self.statuses.append((message, error, success))
 
     def save_form_config(self) -> bool:
+        self.save_calls += 1
         return self._save_success
 
     def show_verification(self, url: str, kind: LiveVerificationKind) -> None:
@@ -181,6 +193,53 @@ def _run_stop_sync(service: FakeLiveService, view: FakeLiveView) -> None:
     asyncio.run(run())
 
 
+def _run_check_sync(service: FakeLiveService, view: FakeLiveView) -> None:
+    """Run one public OBS check workflow to completion in an isolated supervisor."""
+
+    async def run() -> None:
+        supervisor = TaskSupervisor()
+        scope = supervisor.create_scope("live-settings-test")
+        workflow = LiveSettingsWorkflow(service, scope, view)
+        task = workflow.check_obs()
+        if task is None:
+            raise AssertionError("OBS check workflow was not scheduled")
+        await task
+        await workflow.shutdown()
+        await supervisor.shutdown()
+
+    asyncio.run(run())
+
+
+def test_check_obs_saves_form_credentials_after_a_successful_connection() -> None:
+    service = FakeLiveService(
+        [],
+        check_outcome=ObsCheckOutcome(connected=True, process_running=True),
+    )
+    view = FakeLiveView(obs=ObsSettings("127.0.0.1", 4455, "secret"))
+
+    _run_check_sync(service, view)
+
+    assert view.save_calls == 1
+    assert view.statuses[-1] == ("OBS 已启动并且 WebSocket 可连接。", False, True)
+
+
+def test_check_obs_does_not_save_credentials_when_connection_is_not_confirmed() -> None:
+    service = FakeLiveService(
+        [],
+        check_outcome=ObsCheckOutcome(
+            connected=False,
+            process_running=True,
+            error=LiveControlError(LiveControlErrorCode.OBS_FAILURE, "连接失败"),
+        ),
+    )
+    view = FakeLiveView(obs=ObsSettings("127.0.0.1", 4455, "secret"))
+
+    _run_check_sync(service, view)
+
+    assert view.save_calls == 0
+    assert view.statuses[-1] == ("连接失败", True, False)
+
+
 def test_start_live_connects_hud_to_the_started_room() -> None:
     connected_rooms: list[int] = []
 
@@ -224,6 +283,7 @@ def test_start_live_does_not_report_missing_credentials_as_full_success() -> Non
     _run_start_sync(service, view)
 
     message, error, success = view.statuses[-1]
+    assert view.save_calls == 1
     assert "直播已开始" in message
     assert "设置保存失败" in message
     assert error is True

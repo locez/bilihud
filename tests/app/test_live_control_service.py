@@ -9,6 +9,7 @@ from bilihud.live.models import (
     LiveArea,
     LiveAreaGroup,
     LiveControlErrorCode,
+    LiveControlSettings,
     LiveSessionInfo,
     LiveStartResponse,
     LiveVerificationKind,
@@ -27,12 +28,16 @@ class FakeLiveApi:
         *,
         session: LiveSessionInfo | None = None,
         room_info: RoomInfo | None = None,
+        anchor_room_id: int = 7450109,
         start_response: LiveStartResponse | None = None,
     ) -> None:
         self.session = session if session is not None else LiveSessionInfo(SessionStatus.AUTHENTICATED)
-        self.room_info = room_info if room_info is not None else RoomInfo(7450109, "旧标题", "9", "371")
+        self.anchor_room_id = anchor_room_id
+        self.room_info = room_info if room_info is not None else RoomInfo(anchor_room_id, "旧标题", "9", "371")
         self.start_response = start_response if start_response is not None else LiveStartResponse(0, "ok")
         self.start_calls = 0
+        self.anchor_room_calls = 0
+        self.room_info_calls: list[int] = []
         self.updated_titles: list[str] = []
         self.updated_areas: list[str] = []
         self.version_started: asyncio.Event | None = None
@@ -45,10 +50,15 @@ class FakeLiveApi:
     async def close_session(self) -> None:
         self.closed = True
 
+    async def get_anchor_live_room_id(self) -> int:
+        self.anchor_room_calls += 1
+        return self.anchor_room_id
+
     async def load_area_groups(self) -> tuple[LiveAreaGroup, ...]:
         return (LiveAreaGroup("9", "游戏", (LiveArea("371", "主机游戏"),)),)
 
     async def get_room_info(self, room_id: int) -> RoomInfo:
+        self.room_info_calls.append(room_id)
         return self.room_info
 
     async def update_room_title(self, room_id: int, title: str) -> None:
@@ -104,8 +114,8 @@ class FakeObs:
 
 
 class FakeConfigStore:
-    def __init__(self) -> None:
-        self.config = AppConfig()
+    def __init__(self, config: AppConfig | None = None) -> None:
+        self.config = config if config is not None else AppConfig()
 
     def load(self) -> AppConfig:
         return self.config
@@ -135,11 +145,16 @@ class FakeQrImageGenerator:
         return None
 
 
-def make_service(api: FakeLiveApi, obs: FakeObs) -> LiveControlService:
+def make_service(
+    api: FakeLiveApi,
+    obs: FakeObs,
+    *,
+    config: AppConfig | None = None,
+) -> LiveControlService:
     return LiveControlService(
         api=api,
         obs=obs,
-        config_store=FakeConfigStore(),
+        config_store=FakeConfigStore(config),
         obs_password_store=FakeObsPasswordStore(),
         qr_image_generator=FakeQrImageGenerator(),
     )
@@ -149,6 +164,68 @@ def run(coroutine: Coroutine[Any, Any, object]) -> object:
     return asyncio.run(coroutine)
 
 
+def test_initialize_uses_the_authenticated_account_room_instead_of_the_configured_room() -> None:
+    api = FakeLiveApi(
+        anchor_room_id=778899,
+        room_info=RoomInfo(778899, "主播房间", "9", "371"),
+    )
+    service = make_service(api, FakeObs(), config=AppConfig(room_id=7450109))
+
+    async def scenario() -> None:
+        result = await service.initialize()
+
+        assert result.success
+        assert result.state.room_info is not None
+        assert result.state.room_info.room_id == 778899
+
+    run(scenario())
+    assert api.anchor_room_calls == 1
+    assert api.room_info_calls == [778899]
+
+
+def test_live_operations_reject_a_room_not_owned_by_the_authenticated_account() -> None:
+    api = FakeLiveApi(anchor_room_id=778899, room_info=RoomInfo(778899, "主播房间", "9", "371"))
+    service = make_service(api, FakeObs())
+
+    async def scenario() -> None:
+        await service.initialize()
+        outcome = await service.start_live(7450109, "标题", "371", None)
+
+        assert outcome.error is not None
+        assert outcome.error.code is LiveControlErrorCode.INVALID_ROOM
+        assert outcome.error.message == "只能控制登录账号的直播间。"
+
+    run(scenario())
+    assert api.start_calls == 0
+    assert api.updated_titles == []
+
+
+def test_save_settings_persists_the_obs_password_through_the_secure_store() -> None:
+    password_store = FakeObsPasswordStore()
+    service = LiveControlService(
+        api=FakeLiveApi(),
+        obs=FakeObs(),
+        config_store=FakeConfigStore(),
+        obs_password_store=password_store,
+        qr_image_generator=FakeQrImageGenerator(),
+    )
+
+    outcome = service.save_settings(
+        LiveControlSettings(
+            room_id=7450109,
+            live_title="标题",
+            live_parent_area_id="9",
+            live_area_id="371",
+            obs_host="127.0.0.1",
+            obs_port=4455,
+            obs_password="secret",
+        )
+    )
+
+    assert outcome.success
+    assert password_store.password == "secret"
+
+
 def test_start_live_syncs_room_starts_obs_and_returns_credentials_without_qt() -> None:
     credential = StreamCredential("rtmp-1", "rtmp://server", "key")
     api = FakeLiveApi(start_response=LiveStartResponse(0, "ok", (credential,)))
@@ -156,7 +233,7 @@ def test_start_live_syncs_room_starts_obs_and_returns_credentials_without_qt() -
     service = make_service(api, obs)
 
     async def scenario() -> None:
-        await service.initialize(7450109)
+        await service.initialize()
         outcome = await service.start_live(
             7450109,
             "新标题",
@@ -182,7 +259,7 @@ def test_start_live_reports_missing_credentials_after_bilibili_accepts_request()
     service = make_service(api, FakeObs())
 
     async def scenario() -> None:
-        await service.initialize(7450109)
+        await service.initialize()
         outcome = await service.start_live(7450109, "标题", "371", None)
 
         assert outcome.status is StartLiveStatus.STARTED_WITHOUT_CREDENTIALS
@@ -199,7 +276,7 @@ def test_start_live_routes_face_auth_response_to_verification_outcome() -> None:
     service = make_service(api, FakeObs())
 
     async def scenario() -> None:
-        await service.initialize(7450109)
+        await service.initialize()
         outcome = await service.start_live(7450109, "标题", "371", None)
 
         assert outcome.status is StartLiveStatus.VERIFICATION_REQUIRED
@@ -218,7 +295,7 @@ def test_expired_saved_login_blocks_start_before_api_mutation() -> None:
     service = make_service(api, FakeObs())
 
     async def scenario() -> None:
-        await service.initialize(7450109)
+        await service.initialize()
         outcome = await service.start_live(7450109, "标题", "371", None)
 
         assert outcome.error is not None
@@ -235,7 +312,7 @@ def test_duplicate_start_returns_operation_in_progress_without_second_api_call()
     service = make_service(api, FakeObs())
 
     async def scenario() -> None:
-        await service.initialize(7450109)
+        await service.initialize()
         first = asyncio.create_task(service.start_live(7450109, "标题", "371", None))
         assert api.version_started is not None
         await api.version_started.wait()

@@ -78,6 +78,7 @@ def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
         "停止直播",
         "检查 OBS",
     }
+    assert live_page.room_id_input.isReadOnly() is True
 
     dialog.select_page(SettingsPage.MIRROR)
     assert dialog.page_title.text() == "显示与特效"

@@ -48,7 +48,7 @@ class FakeLiveControlService:
     def generate_qr_image(self, _url: str) -> BytesIO | None:
         raise AssertionError("live QR is not used in this shutdown test")
 
-    async def initialize(self, _room_id: int | None) -> LiveControlOperationResult:
+    async def initialize(self) -> LiveControlOperationResult:
         raise AssertionError("live initialization is not used in this shutdown test")
 
     async def load_room_info(self, _room_id: int | None) -> LiveControlOperationResult:

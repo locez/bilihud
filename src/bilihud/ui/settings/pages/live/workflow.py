@@ -56,8 +56,8 @@ class LiveSettingsService(Protocol):
         """Return the latest immutable service snapshot."""
         ...
 
-    async def initialize(self, room_id: int | None) -> LiveControlOperationResult:
-        """Initialize the authenticated live session and load areas."""
+    async def initialize(self) -> LiveControlOperationResult:
+        """Initialize the authenticated session and load the account-owned room."""
         ...
 
     async def load_room_info(self, room_id: int | None) -> LiveControlOperationResult:
@@ -273,7 +273,7 @@ class LiveSettingsWorkflow:
             return
         self._view.set_busy(True, "正在加载登录状态和直播分区...")
         try:
-            result = await service.initialize(self._view.form_values().room_id)
+            result = await service.initialize()
             if generation != self._load_generation:
                 return
             self._view.apply_service_state(result.state)
@@ -529,7 +529,10 @@ class LiveSettingsWorkflow:
             self._view.apply_service_state(service.state)
             self._view.set_obs_status(outcome)
             if outcome.connected:
-                self._view.set_status("OBS 已启动并且 WebSocket 可连接。", success=True)
+                if self._view.save_form_config():
+                    self._view.set_status("OBS 已启动并且 WebSocket 可连接。", success=True)
+                else:
+                    self._view.set_status("OBS 已启动并且 WebSocket 可连接，但设置保存失败。", error=True)
             elif outcome.launched:
                 self._view.set_status("已启动 OBS，请等待加载完成后重新检查。", success=True)
             elif outcome.error is not None:

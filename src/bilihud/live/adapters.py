@@ -24,6 +24,7 @@ from .api import (
     update_room_area,
     update_room_title,
 )
+from .api import get_anchor_live_room_id as _get_anchor_live_room_id
 from .models import (
     LiveArea,
     LiveAreaGroup,
@@ -67,6 +68,10 @@ class BilibiliLiveControlApi:
         self._session = None
         if session is not None and not session.closed:
             await session.close()
+
+    async def get_anchor_live_room_id(self) -> int:
+        """Load the room owned by the authenticated account."""
+        return await self._request(_get_anchor_live_room_id(self._require_session()))
 
     async def load_area_groups(self) -> tuple[LiveAreaGroup, ...]:
         """Load and normalize the raw Bilibili area response at the boundary."""
