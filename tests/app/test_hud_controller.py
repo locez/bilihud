@@ -40,6 +40,7 @@ class FakeClient:
         self.start_calls = 0
         self.stop_calls = 0
         self.message_callback = None
+        self.total_likes_callback = None
         self.login_failed_callback = None
         self.audience_snapshot = AudienceSnapshot(room_id, 1, 2, 0, ())
         self.send_started = asyncio.Event()
@@ -53,6 +54,9 @@ class FakeClient:
 
     def set_message_callback(self, callback):
         self.message_callback = callback
+
+    def set_total_likes_callback(self, callback):
+        self.total_likes_callback = callback
 
     def set_login_failed_callback(self, callback):
         self.login_failed_callback = callback
@@ -89,6 +93,10 @@ class FakeClient:
     def emit_message(self, message):
         if self.message_callback is not None:
             self.message_callback(message)
+
+    def emit_total_likes(self, total_likes):
+        if self.total_likes_callback is not None:
+            self.total_likes_callback(total_likes)
 
     def emit_login_failure(self, message):
         if self.login_failed_callback is not None:
@@ -283,6 +291,38 @@ def test_controller_ignores_audience_result_from_old_room_generation():
         assert controller.state.room_id == 200
         assert controller.state.audience_snapshot is not None
         assert controller.state.audience_snapshot.room_id == 200
+        await controller.shutdown()
+
+    asyncio.run(run_test())
+
+
+def test_controller_updates_audience_total_likes_from_client_event():
+    async def run_test():
+        client = FakeClient(100)
+        controller = _controller(lambda *_args: client)
+        audience_applied = asyncio.Event()
+        likes_applied = asyncio.Event()
+
+        def on_event(event):
+            if not isinstance(event, HudStateChanged):
+                return
+            snapshot = event.state.audience_snapshot
+            if snapshot is None:
+                return
+            audience_applied.set()
+            if snapshot.total_likes == 543:
+                likes_applied.set()
+
+        controller.subscribe(on_event)
+        await controller.connect(100)
+        await asyncio.wait_for(audience_applied.wait(), timeout=1.0)
+
+        client.emit_total_likes(543)
+        await asyncio.wait_for(likes_applied.wait(), timeout=1.0)
+
+        snapshot = controller.state.audience_snapshot
+        assert snapshot is not None
+        assert snapshot.total_likes == 543
         await controller.shutdown()
 
     asyncio.run(run_test())

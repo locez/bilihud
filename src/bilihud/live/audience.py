@@ -15,11 +15,14 @@ class AudienceUser:
 
 @dataclass(frozen=True)
 class AudienceSnapshot:
+    """Current room metrics and the visible online contribution ranking."""
+
     room_id: int
     popularity: int
     watched_count: int
     online_rank_count: int
     users: tuple[AudienceUser, ...]
+    total_likes: int = 0
 
     @property
     def hidden_user_count(self) -> int:
@@ -65,6 +68,8 @@ def parse_audience_snapshot(
     popularity_info = popularity_info if isinstance(popularity_info, dict) else {}
     watched_info = room_data.get("watched_show")
     watched_info = watched_info if isinstance(watched_info, dict) else {}
+    like_info = room_data.get("like_info_v3")
+    like_info = like_info if isinstance(like_info, dict) else {}
 
     popularity_value = popularity_info.get("popularity")
     if popularity_value is None:
@@ -99,4 +104,5 @@ def parse_audience_snapshot(
         watched_count=_non_negative_int(watched_info.get("num")),
         online_rank_count=online_rank_count,
         users=tuple(users),
+        total_likes=_non_negative_int(like_info.get("total_likes")),
     )

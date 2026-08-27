@@ -25,6 +25,10 @@ class HudClient(Protocol):
         """Register the normalized message callback owned by the controller."""
         ...
 
+    def set_total_likes_callback(self, callback: Callable[[int], None]) -> None:
+        """Register the callback for room-wide like-count updates."""
+        ...
+
     def set_login_failed_callback(self, callback: Callable[[str], None]) -> None:
         """Register the login warning callback owned by the controller."""
         ...

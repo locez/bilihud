@@ -35,6 +35,8 @@ class AudienceStatusWidget(QWidget):
         self.watched_label = QLabel()
         first_separator = QLabel("·")
         second_separator = QLabel("·")
+        third_separator = QLabel("·")
+        self.total_likes_label = QLabel()
         self.online_button = QToolButton()
         self.online_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.online_button.setToolTip("查看在线榜用户")
@@ -44,8 +46,10 @@ class AudienceStatusWidget(QWidget):
         separator_style = "color: rgba(255, 255, 255, 80); font-size: 11px;"
         self.popularity_label.setStyleSheet(neutral_style)
         self.watched_label.setStyleSheet(neutral_style)
+        self.total_likes_label.setStyleSheet(neutral_style)
         first_separator.setStyleSheet(separator_style)
         second_separator.setStyleSheet(separator_style)
+        third_separator.setStyleSheet(separator_style)
         self.online_button.setStyleSheet(
             """
             QToolButton {
@@ -65,6 +69,8 @@ class AudienceStatusWidget(QWidget):
         layout.addWidget(first_separator)
         layout.addWidget(self.watched_label)
         layout.addWidget(second_separator)
+        layout.addWidget(self.total_likes_label)
+        layout.addWidget(third_separator)
         layout.addWidget(self.online_button)
         layout.addStretch()
         self.hide()
@@ -73,12 +79,14 @@ class AudienceStatusWidget(QWidget):
         self.popularity_label.setText(f"{snapshot.popularity} 人气")
         self.watched_label.setText(f"{snapshot.watched_count} 人看过")
         self.online_button.setText(f"在线榜 {snapshot.online_rank_count}")
+        self.total_likes_label.setText(f"点赞 {snapshot.total_likes}")
         self.show()
 
     def clear(self) -> None:
         self.popularity_label.clear()
         self.watched_label.clear()
         self.online_button.setText("在线榜 0")
+        self.total_likes_label.clear()
         self.hide()
 
 

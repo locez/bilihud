@@ -17,7 +17,7 @@ def app():
     return _QT_APP
 
 
-def snapshot(*, online_count=3, users=None):
+def snapshot(*, online_count=3, users=None, total_likes=543):
     return AudienceSnapshot(
         room_id=7450109,
         popularity=21,
@@ -26,6 +26,7 @@ def snapshot(*, online_count=3, users=None):
         users=users
         if users is not None
         else (AudienceUser(1001, "用户A", 1, 1, False),),
+        total_likes=total_likes,
     )
 
 
@@ -41,6 +42,7 @@ def test_status_widget_formats_metrics_and_emits_only_from_online_button():
 
     assert widget.popularity_label.text() == "21 人气"
     assert widget.watched_label.text() == "9 人看过"
+    assert widget.total_likes_label.text() == "点赞 543"
     assert widget.online_button.text() == "在线榜 3"
     assert widget.online_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
 
@@ -48,6 +50,7 @@ def test_status_widget_formats_metrics_and_emits_only_from_online_button():
     assert requested == [True]
 
     widget.clear()
+    assert widget.total_likes_label.text() == ""
     assert widget.isHidden()
 
 

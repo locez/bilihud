@@ -3,6 +3,7 @@ import hashlib
 import logging
 import time
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import replace
 from typing import Protocol
 from urllib.parse import urlencode, urlparse
 
@@ -36,7 +37,10 @@ from .blivedm_adapter import (
     parse_open_guard_purchase,
     to_hud_gift_message,
     to_hud_guard_message,
+    to_hud_like_message,
     to_hud_message_or_system,
+    to_hud_total_likes,
+    to_hud_voice_report_like_messages,
 )
 from .messages import GiftEffectLayout, HudMessage
 
@@ -117,6 +121,8 @@ class DanmakuClient:
         self.handler: DanmakuHandler | None = None  # Callback bridge owned by the client.
         self.on_message_received: Callable[[HudMessage], None] | None = None
         self.on_login_failed: Callable[[str], None] | None = None # callback(message)
+        self.on_total_likes_received: Callable[[int], None] | None = None
+        self._total_likes: int | None = None  # Latest websocket value, owned by this room client.
         self._wbi_mixin_key: str | None = None  # Cached signing key for authenticated sends.
         self._live_emoticon_cache: list[LiveEmoticonPackage] | None = None  # Short-lived room cache.
         self._live_emoticon_cache_at = 0.0  # Monotonic timestamp for the emoticon cache.
@@ -134,12 +140,27 @@ class DanmakuClient:
         """设置接收已转换为领域模型的直播消息回调。"""
         self.on_message_received = callback
 
+    def set_total_likes_callback(self, callback: Callable[[int], None]) -> None:
+        """Register the callback for room-wide like-count updates."""
+        self.on_total_likes_received = callback
+
+    def update_total_likes(self, total_likes: int) -> None:
+        """Store and publish one normalized room-wide like-count update."""
+        normalized = max(0, total_likes)
+        if self._total_likes == normalized:
+            return
+        self._total_likes = normalized
+        callback = self.on_total_likes_received
+        if callback is not None:
+            callback(normalized)
+
     def set_login_failed_callback(self, callback: Callable[[str], None]) -> None:
         """设置登录失效回调"""
         self.on_login_failed = callback
 
     async def start(self) -> None:
         """Load authentication, create owned network resources, and start receiving messages."""
+        self._total_likes = None
         auth_manager = self.auth_service if self.auth_service is not None else AuthManager()
         login_failure_message: str | None = None
 
@@ -260,7 +281,10 @@ class DanmakuClient:
                 raise RuntimeError(f"在线榜 HTTP错误: {response.status}")
             rank_payload = _json_mapping(await response.json(content_type=None))
 
-        return parse_audience_snapshot(self.room_id, room_payload, rank_payload)
+        snapshot = parse_audience_snapshot(self.room_id, room_payload, rank_payload)
+        if self._total_likes is not None:
+            return replace(snapshot, total_likes=self._total_likes)
+        return snapshot
 
     async def fetch_live_emoticons(self) -> list[LiveEmoticonPackage]:
         """Fetch room-specific live emoticon packages."""
@@ -678,16 +702,37 @@ class DanmakuHandler(blivedm.BaseHandler):
                 if purchase is not None:
                     danmaku_client.schedule_guard_purchase(purchase)
                 return None
+        if command_name == "LIKE_INFO_V3_CLICK":
+            raw_data = command.get("data")
+            if isinstance(raw_data, Mapping):
+                self._emit_normalized_message(to_hud_like_message(_string_mapping(raw_data)))
+            return None
+        if command_name == "LIKE_INFO_V3_UPDATE":
+            raw_data = command.get("data")
+            danmaku_client = self.danmaku_client
+            if danmaku_client is not None and isinstance(raw_data, Mapping):
+                danmaku_client.update_total_likes(to_hud_total_likes(_string_mapping(raw_data)))
+            return None
+        if command_name == "VOICE_REPORT_LIKE":
+            raw_data = command.get("data")
+            if isinstance(raw_data, Mapping):
+                for message in to_hud_voice_report_like_messages(_string_mapping(raw_data)):
+                    self._emit_normalized_message(message)
+            return None
         return super().handle(client, command)
 
-    def _emit_message(self, message: object) -> None:
-        """Convert a raw callback payload before handing it to application consumers."""
+    def _emit_normalized_message(self, message: HudMessage) -> None:
+        """Deliver one already-normalized message to the application callback."""
         danmaku_client = self.danmaku_client
         if danmaku_client is None:
             return
         callback = danmaku_client.on_message_received
         if callback is not None:
-            callback(to_hud_message_or_system(message))
+            callback(message)
+
+    def _emit_message(self, message: object) -> None:
+        """Convert a raw callback payload before handing it to application consumers."""
+        self._emit_normalized_message(to_hud_message_or_system(message))
 
     def _on_danmaku(self, client: ws_base.WebSocketClientBase, message: web_models.DanmakuMessage) -> None:
         """处理弹幕消息"""

@@ -232,7 +232,7 @@ def message_to_mirror_entry(seq: int, message: HudMessage) -> MirrorEntry:
             "kind": "interact",
             "user": message.author.name,
             "userColor": user_color_for_message(message),
-            "segments": _segments_for(message),
+            "segments": [{"type": "text", "text": message.text}],
         }
 
     if isinstance(message, SystemMessage):

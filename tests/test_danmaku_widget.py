@@ -371,16 +371,25 @@ def test_danmaku_delegate_renders_gift_and_interaction_variants():
         segments=(TextSegment("关注了主播"),),
         interaction=InteractionKind.FOLLOW,
     )
+    like = InteractMessage(
+        author=MessageAuthor(uid=3, name="点赞用户", color="#AAAAAA"),
+        segments=(TextSegment("为主播点赞了"),),
+        interaction=InteractionKind.LIKE,
+        count=3,
+    )
     delegate = message_list.DanmakuDelegate()
 
     gift_html = delegate.get_html_for_message(gift)
     interact_html = delegate.get_html_for_message(interact)
+    like_html = delegate.get_html_for_message(like)
 
     assert "送礼用户" in gift_html
     assert "赠送" in gift_html
     assert "辣条 x2" in gift_html
     assert "互动用户" in interact_html
     assert "关注了主播" in interact_html
+    assert "点赞用户" in like_html
+    assert "为主播点赞了 x3" in like_html
 
 
 def test_danmaku_delegate_renders_compact_author_badges():

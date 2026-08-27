@@ -8,7 +8,7 @@ from bilihud.live.audience import (
 )
 
 
-def room_payload(*, popularity=21, watched=9, uid=9001):
+def room_payload(*, popularity=21, watched=9, uid=9001, total_likes=543):
     return {
         "code": 0,
         "message": "OK",
@@ -16,6 +16,7 @@ def room_payload(*, popularity=21, watched=9, uid=9001):
             "room_info": {"uid": uid, "online": 18},
             "popularity": {"popularity": popularity},
             "watched_show": {"num": watched},
+            "like_info_v3": {"total_likes": total_likes},
         },
     }
 
@@ -62,6 +63,7 @@ def test_parse_audience_snapshot_maps_metrics_users_and_contribution():
                 is_mystery=False,
             ),
         ),
+        total_likes=543,
     )
     assert snapshot.hidden_user_count == 2
 

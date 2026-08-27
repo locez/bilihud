@@ -238,7 +238,7 @@ class DanmakuDelegate(QStyledItemDelegate):
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }}
             </style>
             <p><span class="user">{html.escape(message.author.name, quote=True)}</span>
-            <span class="info"> {html.escape(message.interaction.text, quote=True)}</span></p>
+            <span class="info"> {html.escape(message.text, quote=True)}</span></p>
             """
         if isinstance(message, SystemMessage):
             author_html = f'<span class="user">{html.escape(message.author.name, quote=True)}</span>'

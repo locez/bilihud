@@ -243,6 +243,19 @@ def test_message_to_mirror_entry_converts_interact_message():
     }
 
 
+def test_message_to_mirror_entry_includes_like_count():
+    message = InteractMessage(
+        author=_author(name="点赞用户", color="#AAAAAA"),
+        segments=(TextSegment("为主播点赞了"),),
+        interaction=InteractionKind.LIKE,
+        count=3,
+    )
+
+    entry = message_to_mirror_entry(5, message)
+
+    assert entry["segments"] == [{"type": "text", "text": "为主播点赞了 x3"}]
+
+
 def test_message_to_mirror_entry_converts_system_message():
     entry = message_to_mirror_entry(6, make_system_message("连接失败", SystemMessageLevel.ERROR))
 

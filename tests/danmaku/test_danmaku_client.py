@@ -9,7 +9,7 @@ import pytest
 
 from bilihud.danmaku import client as danmaku_client
 from bilihud.danmaku.client import DanmakuClient, DanmakuHandler, DanmakuShutdownError
-from bilihud.danmaku.messages import DanmakuMessage, GiftMessage, InteractMessage
+from bilihud.danmaku.messages import DanmakuMessage, GiftMessage, HudMessage, InteractionKind, InteractMessage
 from bilihud.http_contracts import HttpResponse, QueryParams
 from bilihud.live.emoticons import LiveEmoticon
 from bilihud.live.gift_effects import FULL_SCREEN_EFFECT_CONFIG_URL, GiftEffectCatalog
@@ -70,7 +70,7 @@ def test_start_starts_blivedm_client_and_reports_missing_login(monkeypatch):
 
 def test_handler_emits_normalized_domain_messages():
     client = DanmakuClient(7450109)
-    received = []
+    received: list[HudMessage] = []
     websocket = FakeWebSocketClient()
     client.set_message_callback(received.append)
     handler = DanmakuHandler()
@@ -87,6 +87,115 @@ def test_handler_emits_normalized_domain_messages():
     assert isinstance(received[1], GiftMessage)
     assert isinstance(received[2], InteractMessage)
     assert [message.author.name for message in received] == ["弹幕用户", "礼物用户", "互动用户"]
+
+
+def test_handler_emits_web_like_click_as_normalized_interaction():
+    client = DanmakuClient(7450109)
+    received: list[HudMessage] = []
+    websocket = FakeWebSocketClient()
+    client.set_message_callback(received.append)
+    handler = DanmakuHandler()
+    handler.set_danmaku_client(client)
+
+    handler.handle(
+        websocket,
+        {
+            "cmd": "LIKE_INFO_V3_CLICK",
+            "data": {
+                "uid": 7,
+                "uname": "点赞用户",
+                "like_text": "为主播点赞了",
+                "msg_type": 6,
+            },
+        },
+    )
+
+    assert len(received) == 1
+    message = received[0]
+    assert isinstance(message, InteractMessage)
+    assert message.author.uid == 7
+    assert message.author.name == "点赞用户"
+    assert message.interaction is InteractionKind.LIKE
+    assert message.segments[0].text == "为主播点赞了"
+
+
+def test_handler_updates_room_total_likes_without_emitting_a_message():
+    client = DanmakuClient(7450109)
+    received: list[HudMessage] = []
+    total_likes: list[int] = []
+    websocket = FakeWebSocketClient()
+    client.set_message_callback(received.append)
+    client.set_total_likes_callback(total_likes.append)
+    handler = DanmakuHandler()
+    handler.set_danmaku_client(client)
+
+    handler.handle(
+        websocket,
+        {
+            "cmd": "LIKE_INFO_V3_UPDATE",
+            "data": {"click_count": 543},
+        },
+    )
+
+    assert received == []
+    assert total_likes == [543]
+
+
+def test_handler_emits_voice_report_like_users_as_interactions():
+    client = DanmakuClient(7450109)
+    received: list[HudMessage] = []
+    websocket = FakeWebSocketClient()
+    client.set_message_callback(received.append)
+    handler = DanmakuHandler()
+    handler.set_danmaku_client(client)
+
+    handler.handle(
+        websocket,
+        {
+            "cmd": "VOICE_REPORT_LIKE",
+            "data": {
+                "anchor_id": 6003771,
+                "live_id": 723541469275729405,
+                "users": [{"uid": 319093111, "uname": "凌末淡花"}],
+                "count": 1,
+            },
+        },
+    )
+
+    assert len(received) == 1
+    message = received[0]
+    assert isinstance(message, InteractMessage)
+    assert message.author.uid == 319093111
+    assert message.author.name == "凌末淡花"
+    assert message.interaction is InteractionKind.LIKE
+    assert message.count == 1
+    assert message.text == "为主播点赞了"
+
+
+def test_handler_preserves_voice_report_like_count_for_one_user():
+    client = DanmakuClient(7450109)
+    received: list[HudMessage] = []
+    websocket = FakeWebSocketClient()
+    client.set_message_callback(received.append)
+    handler = DanmakuHandler()
+    handler.set_danmaku_client(client)
+
+    handler.handle(
+        websocket,
+        {
+            "cmd": "VOICE_REPORT_LIKE",
+            "data": {
+                "users": [{"uid": 319093111, "uname": "凌末淡花"}],
+                "count": 3,
+            },
+        },
+    )
+
+    assert len(received) == 1
+    message = received[0]
+    assert isinstance(message, InteractMessage)
+    assert message.count == 3
+    assert message.text == "为主播点赞了 x3"
 
 
 def test_handler_resolves_official_gift_resources_before_delivery():
@@ -443,6 +552,7 @@ def test_fetch_audience_snapshot_uses_current_web_api_contract():
                         "room_info": {"uid": 9001, "online": 21},
                         "popularity": {"popularity": 21},
                         "watched_show": {"num": 9},
+                        "like_info_v3": {"total_likes": 543},
                     },
                 },
                 {
@@ -464,6 +574,7 @@ def test_fetch_audience_snapshot_uses_current_web_api_contract():
             ]
         )
         client.session = session
+        client.update_total_likes(600)
 
         snapshot = await client.fetch_audience_snapshot()
 
@@ -471,6 +582,7 @@ def test_fetch_audience_snapshot_uses_current_web_api_contract():
         assert snapshot.popularity == 21
         assert snapshot.watched_count == 9
         assert snapshot.online_rank_count == 3
+        assert snapshot.total_likes == 600
         assert snapshot.users[0].name == "用户A"
         assert snapshot.users[0].contribution == 1
 

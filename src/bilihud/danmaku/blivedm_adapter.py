@@ -353,6 +353,52 @@ def _interact_message(message: web_models.InteractWordV2Message) -> InteractMess
     )
 
 
+def to_hud_like_message(
+    data: Mapping[str, object],
+    *,
+    count: int | None = None,
+) -> InteractMessage:
+    """Normalize one web ``LIKE_INFO_V3_CLICK`` payload for HUD consumers."""
+    interaction = InteractionKind.LIKE
+    like_count = max(1, _integer(data.get("count"))) if count is None else max(1, count)
+    author = MessageAuthor(
+        uid=max(0, _integer(data.get("uid"))),
+        name=_string(data.get("uname")),
+        color=INTERACT_COLOR,
+    )
+    return InteractMessage(
+        author=author,
+        segments=(TextSegment(interaction.text),),
+        interaction=interaction,
+        count=like_count,
+    )
+
+
+def to_hud_total_likes(data: Mapping[str, object]) -> int:
+    """Normalize the room total from one web ``LIKE_INFO_V3_UPDATE`` payload."""
+    return max(0, _integer(data.get("click_count")))
+
+
+def to_hud_voice_report_like_messages(
+    data: Mapping[str, object],
+) -> tuple[InteractMessage, ...]:
+    """Normalize per-user entries and preserve a single-user like count."""
+    raw_users = data.get("users")
+    if not isinstance(raw_users, list):
+        return ()
+
+    users = tuple(
+        _mapping(raw_user)
+        for raw_user in raw_users
+        if isinstance(raw_user, Mapping)
+    )
+    if len(users) != 1:
+        return tuple(to_hud_like_message(user) for user in users)
+
+    like_count = max(1, _integer(data.get("count")))
+    return (to_hud_like_message(users[0], count=like_count),)
+
+
 def _danmaku_author(message: web_models.DanmakuMessage) -> MessageAuthor:
     """Build the normalized author color and badges from raw danmaku metadata."""
     privilege_type = _integer(message.privilege_type)

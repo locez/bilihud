@@ -174,9 +174,22 @@ class GiftMessage(HudMessage):
 
 @dataclass(frozen=True, slots=True)
 class InteractMessage(HudMessage):
-    """An audience interaction such as entering, following, or sharing."""
+    """An audience interaction with an optional count for batched likes."""
 
     interaction: InteractionKind
+    count: int = 1
+
+    def __post_init__(self) -> None:
+        """Reject counts that cannot represent an interaction event."""
+        if self.count < 1:
+            raise ValueError("interaction count must be positive")
+
+    @property
+    def text(self) -> str:
+        """Return the interaction text, including a batched like count."""
+        if self.interaction is InteractionKind.LIKE and self.count > 1:
+            return f"{self.interaction.text} x{self.count}"
+        return self.interaction.text
 
 
 @dataclass(frozen=True, slots=True)

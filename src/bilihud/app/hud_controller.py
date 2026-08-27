@@ -350,6 +350,9 @@ class HudController:
         client.set_message_callback(
             lambda message: self._on_message(client, generation, message)
         )
+        client.set_total_likes_callback(
+            lambda total_likes: self._on_total_likes(client, generation, total_likes)
+        )
         client.set_login_failed_callback(
             lambda message: self._on_login_failed(client, generation, message)
         )
@@ -358,6 +361,20 @@ class HudController:
         """Forward only messages from the current room generation."""
         if self._is_current(client, generation, allow_connecting=True):
             self._emit(HudMessageReceived(message))
+
+    def _on_total_likes(self, client: HudClient, generation: int, total_likes: int) -> None:
+        """Apply a current-room like total without turning it into a message-list entry."""
+        if not self._is_current(client, generation, allow_connecting=True):
+            return
+        snapshot = self._state.audience_snapshot
+        if snapshot is None or snapshot.total_likes == total_likes:
+            return
+        self._publish_state(
+            HudConnectionStatus.CONNECTED,
+            self._state.room_id,
+            replace(snapshot, total_likes=total_likes),
+            self._state.error,
+        )
 
     def _on_login_failed(self, client: HudClient, generation: int, message: str) -> None:
         """Forward only login warnings belonging to the current room generation."""
