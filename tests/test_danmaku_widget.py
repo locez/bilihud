@@ -357,6 +357,54 @@ def test_emoticon_picker_requests_bilibili_headers(monkeypatch):
     assert request.headers == {"user-agent": "Mozilla/5.0 BiliHUD"}
 
 
+def test_emoticon_picker_requests_package_cover(monkeypatch):
+    class FakeRequest:
+        class KnownHeaders:
+            UserAgentHeader = "user-agent"
+
+        def __init__(self, url):
+            self.url = url
+
+        def setRawHeader(self, _name, _value):
+            pass
+
+        def setHeader(self, _name, _value):
+            pass
+
+    class Reply(QNetworkReply):
+        def __init__(self, parent: QObject | None = None) -> None:
+            super().__init__(parent)
+
+    class NetworkManager:
+        def __init__(self) -> None:
+            self.requests: list[FakeRequest] = []
+
+        def get(self, request: object) -> QNetworkReply:
+            if not isinstance(request, FakeRequest):
+                raise AssertionError("the test request adapter was not installed")
+            self.requests.append(request)
+            return Reply()
+
+    _app()
+    picker = emoticon_picker.EmoticonPickerPopup()
+    manager = NetworkManager()
+    picker._network_manager = manager
+    monkeypatch.setattr(emoticon_picker, "QNetworkRequest", FakeRequest)
+
+    package = LiveEmoticonPackage(
+        package_id=1,
+        name="通用表情",
+        package_type=1,
+        package_perm=1,
+        emoticons=(),
+        cover_url="https://i0.hdslb.com/bfs/live/package-cover.png",
+    )
+    picker.set_packages([package])
+
+    assert len(manager.requests) == 1
+    assert manager.requests[0].url.toString() == package.cover_url
+
+
 def test_danmaku_delegate_renders_local_system_messages():
     html = message_list.DanmakuDelegate().get_html_for_message(
         make_system_message("BiliHUD Mirror 已启动: <url>")
@@ -695,6 +743,8 @@ def test_emoticon_picker_does_not_emit_locked_emoticons():
 
     assert emitted == []
     assert "舰长" in cell.toolTip()
+    assert "color:#ffffff" in cell.toolTip()
+    assert "background-color:#2b2f38" in cell.toolTip()
     assert "#FF6699" in cell.styleSheet()
     assert not cell.isEnabled()
 
@@ -758,7 +808,12 @@ def test_emoticon_picker_keeps_one_tab_per_package():
     picker.set_packages(packages)
 
     assert picker.tabs.count() == 2
-    assert [picker.tabs.tabText(index) for index in range(picker.tabs.count())] == ["通用表情", "UP主大表情"]
+    assert [picker.tabs.tabText(index) for index in range(picker.tabs.count())] == ["", ""]
+    assert [picker.tabs.tabToolTip(index) for index in range(picker.tabs.count())] == [
+        "通用表情",
+        "UP主大表情",
+    ]
+    assert all(not picker.tabs.tabIcon(index).isNull() for index in range(picker.tabs.count()))
 
 
 def test_danmaku_widget_sends_selected_live_emoticon(monkeypatch):

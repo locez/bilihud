@@ -834,6 +834,7 @@ def test_fetch_live_emoticons_uses_v2_api_and_existing_session():
                             "pkg_name": "房间专属表情",
                             "pkg_type": 2,
                             "pkg_perm": 1,
+                            "current_cover": "http://i0.hdslb.com/bfs/live/room-cover.png",
                             "emoticons": [
                                 {
                                     "emoji": "AKIE的A",
@@ -855,6 +856,7 @@ def test_fetch_live_emoticons_uses_v2_api_and_existing_session():
         packages = await client.fetch_live_emoticons()
 
         assert packages[0].name == "房间专属表情"
+        assert packages[0].cover_url == "http://i0.hdslb.com/bfs/live/room-cover.png"
         assert session.get_url.endswith("/xlive/web-ucenter/v2/emoticon/GetEmoticons")
         assert session.get_params == {"platform": "pc", "room_id": 870691}
         assert session.get_headers is not None

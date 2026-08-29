@@ -16,6 +16,7 @@ def test_parse_live_emoticon_packages_sorts_room_packages_first_and_preserves_lo
                     "pkg_name": "通用表情",
                     "pkg_type": 1,
                     "pkg_perm": 1,
+                    "current_cover": "http://i0.hdslb.com/bfs/live/common-cover.png",
                     "emoticons": [
                         {
                             "emoji": "啊",
@@ -36,6 +37,7 @@ def test_parse_live_emoticon_packages_sorts_room_packages_first_and_preserves_lo
                     "pkg_name": "UP主大表情",
                     "pkg_type": 2,
                     "pkg_perm": 1,
+                    "current_cover": "http://i0.hdslb.com/bfs/live/up-cover.png",
                     "emoticons": [
                         {
                             "emoji": "疑惑",
@@ -58,6 +60,7 @@ def test_parse_live_emoticon_packages_sorts_room_packages_first_and_preserves_lo
                     "pkg_name": "房间专属表情",
                     "pkg_type": 2,
                     "pkg_perm": 1,
+                    "current_cover": "http://i0.hdslb.com/bfs/live/room-cover.png",
                     "emoticons": [
                         {
                             "emoji": "AKIE的A",
@@ -80,6 +83,11 @@ def test_parse_live_emoticon_packages_sorts_room_packages_first_and_preserves_lo
     packages = parse_live_emoticon_packages(payload)
 
     assert [package.name for package in packages] == ["房间专属表情", "UP主大表情", "通用表情"]
+    assert [package.cover_url for package in packages] == [
+        "http://i0.hdslb.com/bfs/live/room-cover.png",
+        "http://i0.hdslb.com/bfs/live/up-cover.png",
+        "http://i0.hdslb.com/bfs/live/common-cover.png",
+    ]
     locked = packages[1].emoticons[0]
     assert locked.is_available is False
     assert locked.unlock_label == "舰长"

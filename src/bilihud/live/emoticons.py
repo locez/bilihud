@@ -39,6 +39,7 @@ class LiveEmoticonPackage:
     package_type: int
     package_perm: int
     emoticons: tuple[LiveEmoticon, ...]
+    cover_url: str = ""
 
 
 def _as_int(value: Any, default: int = 0) -> int:
@@ -104,6 +105,7 @@ def parse_live_emoticon_packages(payload: dict[str, Any]) -> list[LiveEmoticonPa
         if not name:
             continue
         package_type = _as_int(raw_package.get("pkg_type"))
+        cover_url = str(raw_package.get("current_cover") or "").strip()
 
         raw_emoticons = raw_package.get("emoticons")
         if not isinstance(raw_emoticons, list):
@@ -124,6 +126,7 @@ def parse_live_emoticon_packages(payload: dict[str, Any]) -> list[LiveEmoticonPa
             package_type=package_type,
             package_perm=_as_int(raw_package.get("pkg_perm")),
             emoticons=emoticons,
+            cover_url=cover_url,
         )
         packages.append((index, package))
 
