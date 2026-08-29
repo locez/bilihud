@@ -2,12 +2,12 @@ Source: bilihud
 Section: utils
 Priority: optional
 Maintainer: Locez <locez@locez.com>
-Build-Depends: debhelper-compat (= 13), dh-python, pybuild-plugin-pyproject, python3-all (>= 3.13), python3-scikit-build-core, cmake, ninja-build, python3-aiohttp, python3-pyqt6, python3-pyqt6.qtmultimedia, python3-qrcode, liblayershellqtinterface-dev, qt6-base-dev, qt6-base-private-dev, libwayland-dev, pkg-config, build-essential
+Build-Depends: debhelper-compat (= 13), dh-python, pybuild-plugin-pyproject, python3-all (>= 3.13), python3-scikit-build-core, cmake, ninja-build, python3-aiohttp, python3-pyqt6, python3-pyqt6.qtmultimedia, python3-pyqt6.qtsvg, python3-qrcode, liblayershellqtinterface-dev, qt6-base-dev, qt6-base-private-dev, libwayland-dev, pkg-config, build-essential
 Standards-Version: 4.6.2
 Homepage: https://github.com/locez/bilihud
 
 Package: bilihud
 Architecture: any
-Depends: ${python3:Depends}, ${shlibs:Depends}, ${misc:Depends}, python3 (>= 3.13), python3-aiohttp, python3-brotli, python3-keyring, python3-pil, python3-pyqt6, python3-pyqt6.qtmultimedia, python3-qasync, python3-qrcode, libpulse0
+Depends: ${python3:Depends}, ${shlibs:Depends}, ${misc:Depends}, python3 (>= 3.13), python3-aiohttp, python3-brotli, python3-keyring, python3-pil, python3-pyqt6, python3-pyqt6.qtmultimedia, python3-pyqt6.qtsvg, python3-qasync, python3-qrcode, libpulse0
 Description: Bilibili Danmaku HUD for Linux
  A desktop widget that displays Bilibili live danmaku (comments) on your screen.

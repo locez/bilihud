@@ -30,7 +30,7 @@ RDEPEND="
 	dev-qt/qtbase:6[gui,wayland]
 	dev-qt/qtwayland:6
 	kde-plasma/layer-shell-qt
-	dev-python/pyqt6[gui,multimedia,network,widgets,${PYTHON_USEDEP}]
+	dev-python/pyqt6[gui,multimedia,network,svg,widgets,${PYTHON_USEDEP}]
 	dev-python/aiohttp[${PYTHON_USEDEP}]
 	dev-python/qasync[${PYTHON_USEDEP}]
 	app-arch/brotli[python,${PYTHON_USEDEP}]

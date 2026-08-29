@@ -16,10 +16,12 @@ def test_github_test_workflow_runs_pytest_separately() -> None:
     assert "libpulse0" in workflow
 
 
-def test_multimedia_dependencies_are_declared_for_debian_packaging() -> None:
+def test_qt_module_dependencies_are_declared_for_debian_packaging() -> None:
     control = Path("packaging/debian/control").read_text(encoding="utf-8")
     workflow = Path(".github/workflows/package.yml").read_text(encoding="utf-8")
 
     assert "python3-pyqt6.qtmultimedia" in control
     assert "python3-pyqt6.qtmultimedia" in workflow
+    assert "python3-pyqt6.qtsvg" in control
+    assert "python3-pyqt6.qtsvg" in workflow
     assert "libpulse0" in workflow

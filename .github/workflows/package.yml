@@ -20,7 +20,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          dnf install -y rpm-build python3-devel gcc-c++ cmake ninja-build pkgconf-pkg-config python3-scikit-build-core qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtmultimedia-devel layer-shell-qt-devel wayland-devel git tar python3-pip
+          dnf install -y rpm-build python3-devel gcc-c++ cmake ninja-build pkgconf-pkg-config python3-scikit-build-core qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtmultimedia-devel qt6-qtsvg-devel layer-shell-qt-devel wayland-devel git tar python3-pip
 
       - name: Get Version
         id: get_version
@@ -84,7 +84,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y devscripts debhelper dh-python pybuild-plugin-pyproject python3-all python3-scikit-build-core cmake ninja-build python3-aiohttp python3-brotli python3-keyring python3-pil python3-pyqt6 python3-pyqt6.qtmultimedia python3-qasync python3-qrcode liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev libpulse0 pkg-config libwayland-dev build-essential python3-pip
+          apt-get install -y devscripts debhelper dh-python pybuild-plugin-pyproject python3-all python3-scikit-build-core cmake ninja-build python3-aiohttp python3-brotli python3-keyring python3-pil python3-pyqt6 python3-pyqt6.qtmultimedia python3-pyqt6.qtsvg python3-qasync python3-qrcode liblayershellqtinterface-dev qt6-base-dev qt6-base-private-dev libpulse0 pkg-config libwayland-dev build-essential python3-pip
 
       - name: Get Version
         id: get_version

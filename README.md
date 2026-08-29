@@ -102,7 +102,7 @@ echo "app-misc/bilihud ~amd64" | sudo tee /etc/portage/package.accept_keywords/b
 sudo emerge --ask app-misc/bilihud
 ```
 
-桌面礼物特效需要 PyQt6 的 `multimedia` USE flag；上述 Gentoo ebuild 已声明该运行依赖。
+桌面礼物特效需要 PyQt6 的 `multimedia` USE flag，HUD 图标需要 `svg` USE flag；上述 Gentoo ebuild 已声明这些运行依赖。
 
 ### 源码安装
 
