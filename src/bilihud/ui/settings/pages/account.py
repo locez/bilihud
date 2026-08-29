@@ -19,6 +19,7 @@ from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkReques
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QToolButton, QVBoxLayout, QWidget
 
 from bilihud.app.menu import AccountStatus
+from bilihud.app_metadata import BILIBILI_LIVE_RECORD_URL
 from bilihud.auth.service import AccountProfile
 
 
@@ -120,6 +121,11 @@ class AccountSettingsPage(QWidget):
         self.live_room_button = QPushButton("直播间", card)
         self.live_room_button.setProperty("link", True)
         self.live_room_button.clicked.connect(self._open_live_room)
+        self.live_record_button = QPushButton("直播回放", card)
+        self.live_record_button.setProperty("link", True)
+        self.live_record_button.setToolTip(BILIBILI_LIVE_RECORD_URL)
+        self.live_record_button.setAccessibleName("直播回放")
+        self.live_record_button.clicked.connect(self._open_live_record)
         self.live_room_copy_button = CopyToolButton(card)
         self.live_room_copy_button.setObjectName("account_copy_live_room")
         self.live_room_copy_button.setToolTip("复制直播间地址")
@@ -134,6 +140,7 @@ class AccountSettingsPage(QWidget):
         live_room_actions.addWidget(self.live_room_copy_button)
         self.account_links.addWidget(self.space_button)
         self.account_links.addLayout(live_room_actions)
+        self.account_links.addWidget(self.live_record_button)
         self.account_links.addStretch(1)
         layout.addLayout(self.account_links)
 
@@ -307,6 +314,10 @@ class AccountSettingsPage(QWidget):
         """Open the account's public live-room page when one is available."""
         if self._profile is not None and self._profile.live_room_url is not None:
             QDesktopServices.openUrl(QUrl(self._profile.live_room_url))
+
+    def _open_live_record(self) -> None:
+        """Open Bilibili's live-record management page in the default browser."""
+        QDesktopServices.openUrl(QUrl(BILIBILI_LIVE_RECORD_URL))
 
     def _copy_live_room(self) -> None:
         """Copy the account's public live-room URL and show local feedback."""

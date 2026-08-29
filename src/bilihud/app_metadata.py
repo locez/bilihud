@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version
 
 GITHUB_URL = "https://github.com/locez/bilihud"
+BILIBILI_LIVE_RECORD_URL = "https://link.bilibili.com/p/center/index#/my-room/live-record"
 LICENSE_NAME = "MIT License"
 
 
@@ -16,4 +17,4 @@ def application_version() -> str:
         return "开发版本"
 
 
-__all__ = ("GITHUB_URL", "LICENSE_NAME", "application_version")
+__all__ = ("BILIBILI_LIVE_RECORD_URL", "GITHUB_URL", "LICENSE_NAME", "application_version")

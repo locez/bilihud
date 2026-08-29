@@ -2,7 +2,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt, QUrl
 from PyQt6.QtGui import QMouseEvent, QWheelEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -19,12 +19,13 @@ from PyQt6.QtWidgets import (
 )
 
 from bilihud.app.menu import AccountStatus
-from bilihud.app_metadata import GITHUB_URL, application_version
+from bilihud.app_metadata import BILIBILI_LIVE_RECORD_URL, GITHUB_URL, application_version
 from bilihud.auth.service import AccountProfile
 from bilihud.config.store import AppConfig, ThemeMode
 from bilihud.live.models import LiveVerificationKind
 from bilihud.ui.settings.dialog import SettingsDialog
 from bilihud.ui.settings.models import SettingsPage, SettingsSaveRequest
+from bilihud.ui.settings.pages import account as account_page
 from bilihud.ui.settings.pages.about import AboutSettingsPage
 from bilihud.ui.settings.pages.account import AccountSettingsPage
 from bilihud.ui.settings.pages.live.page import LiveSettingsPage
@@ -131,6 +132,8 @@ def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
     assert account_page.live_room_copy_button is not None
     assert account_page.live_room_copy_button.isHidden() is False
     assert account_page.live_room_copy_button.toolTip() == "复制直播间地址"
+    assert account_page.live_record_button.isHidden() is False
+    assert account_page.live_record_button.toolTip() == BILIBILI_LIVE_RECORD_URL
     assert account_page.login_button.isHidden() is True
     assert account_page.logout_button.isHidden() is False
 
@@ -138,8 +141,27 @@ def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
     assert account_page.account_name_label.text() == "未登录"
     assert account_page.login_button.isHidden() is False
     assert account_page.logout_button.isHidden() is True
+    assert account_page.live_record_button.isHidden() is False
 
     dialog.close()
+
+
+def test_account_page_opens_bilibili_live_record_url(monkeypatch) -> None:
+    _app()
+    page = AccountSettingsPage()
+    opened_urls: list[QUrl] = []
+
+    class DesktopServices:
+        @staticmethod
+        def openUrl(url: QUrl) -> bool:
+            opened_urls.append(url)
+            return True
+
+    monkeypatch.setattr(account_page, "QDesktopServices", DesktopServices)
+    page.live_record_button.click()
+
+    assert [url.toString() for url in opened_urls] == [BILIBILI_LIVE_RECORD_URL]
+    page.close()
 
 
 def test_account_page_copies_live_room_url_from_icon_button() -> None:
