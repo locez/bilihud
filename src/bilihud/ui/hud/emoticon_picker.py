@@ -168,9 +168,10 @@ class EmoticonPickerPopup(QDialog):
         self.tabs = QTabWidget(self.container)
         self.tabs.setObjectName("emoticon_tabs")
         tab_bar = self.tabs.tabBar()
-        tab_bar.setIconSize(QSize(26, 26))
-        tab_bar.setExpanding(False)
-        tab_bar.setDrawBase(False)
+        if tab_bar is not None:
+            tab_bar.setIconSize(QSize(26, 26))
+            tab_bar.setExpanding(False)
+            tab_bar.setDrawBase(False)
         layout.addWidget(self.tabs)
 
     def set_loading(self) -> None:
@@ -211,7 +212,9 @@ class EmoticonPickerPopup(QDialog):
             scroll.setFrameShape(QFrame.Shape.NoFrame)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            scroll.viewport().setStyleSheet("background: transparent;")
+            viewport = scroll.viewport()
+            if viewport is not None:
+                viewport.setStyleSheet("background: transparent;")
             grid_host = QWidget(scroll)
             grid_host.setObjectName("emoticon_grid")
             grid = QGridLayout(grid_host)

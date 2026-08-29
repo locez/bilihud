@@ -195,11 +195,14 @@ def test_danmaku_widget_keeps_game_mode_controls_in_sync_with_fake_platform(tmp_
         assert widget.settings_button.iconSize() == QSize(12, 12)
         header_layout = widget.header_widget.layout()
         assert isinstance(header_layout, QHBoxLayout)
-        header_controls = [
-            header_layout.itemAt(index).widget()
-            for index in range(header_layout.count())
-            if isinstance(header_layout.itemAt(index).widget(), QToolButton)
-        ]
+        header_controls: list[QToolButton] = []
+        for index in range(header_layout.count()):
+            item = header_layout.itemAt(index)
+            if item is None:
+                continue
+            button = item.widget()
+            if isinstance(button, QToolButton):
+                header_controls.append(button)
         assert header_controls == [
             widget.connect_button,
             widget.live_control_button,

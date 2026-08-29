@@ -204,7 +204,7 @@ def test_gift_effect_window_loads_gif_when_no_packed_video_is_available() -> Non
     first.save(gif_buffer, format="GIF", save_all=True, append_images=[second], duration=40, loop=0)
     network = GifNetworkManager(gif_buffer.getvalue())
     parent = QWidget()
-    window = GiftEffectWindow(parent, platform_factory=lambda _host: GifPlatform())
+    window = GiftEffectWindow(parent, platform_factory=lambda host: GifPlatform())
     window._network_manager = network
     message = GiftMessage(
         author=MessageAuthor(uid=1, name="送礼用户", color="#FFD700"),
