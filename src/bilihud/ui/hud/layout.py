@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 from bilihud.live.emoticons import LiveEmoticon
 from bilihud.ui.hud.audience import AudiencePopup, AudienceStatusWidget
 from bilihud.ui.hud.emoticon_picker import EmoticonPickerPopup
-from bilihud.ui.hud.icons import later_icon, lock_icon, settings_icon
+from bilihud.ui.hud.icons import broadcast_icon, later_icon, lock_icon, settings_icon
 from bilihud.ui.hud.input import DanmakuInputDialog, ModernInputWidget
 from bilihud.ui.hud.message_list import DanmakuDelegate
 from bilihud.ui.hud.resize import CustomSizeGrip
@@ -37,6 +37,7 @@ class HudWidgets:
     live_status_dot: QLabel
     room_id_input: QLineEdit
     connect_button: QToolButton
+    live_control_button: QToolButton
     gaming_mode_btn: QToolButton
     settings_button: QToolButton
     danmaku_list: QListWidget
@@ -55,6 +56,7 @@ def build_hud_widgets(
     room_id: int,
     save_room_id: Callable[[], object],
     toggle_connection: Callable[[], object],
+    live_control_requested: Callable[[], object],
     toggle_gaming_mode: Callable[[], object],
     send_requested: Callable[[str], object],
     emoticon_requested: Callable[[], object],
@@ -123,7 +125,7 @@ def build_hud_widgets(
             background: rgba(255, 255, 255, 28);
             color: rgba(255, 255, 255, 210);
             border: none;
-            border-radius: 15px;
+            border-radius: 13px;
             font-size: 13px;
         }
         QToolButton:hover { background: rgba(255, 255, 255, 60); }
@@ -131,11 +133,14 @@ def build_hud_widgets(
         QToolButton:checked { background: rgba(76, 175, 80, 150); }
         QToolButton:disabled { background: rgba(255, 255, 255, 12); }
         """
+    button_size = 26
+    icon_size = QSize(12, 12)
+
     connect_button = QToolButton(header_widget)
     connect_button.setObjectName("connect_button")
     connect_button.setIcon(later_icon())
-    connect_button.setIconSize(QSize(13, 13))
-    connect_button.setFixedSize(30, 30)
+    connect_button.setIconSize(icon_size)
+    connect_button.setFixedSize(button_size, button_size)
     connect_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     connect_button.setToolTip("连接直播间")
     connect_button.setAccessibleName("连接直播间")
@@ -144,11 +149,23 @@ def build_hud_widgets(
     connect_button.setStyleSheet(button_style)
     connect_button.clicked.connect(toggle_connection)
 
+    live_control_button = QToolButton(header_widget)
+    live_control_button.setObjectName("live_control_button")
+    live_control_button.setIcon(broadcast_icon())
+    live_control_button.setIconSize(icon_size)
+    live_control_button.setFixedSize(button_size, button_size)
+    live_control_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+    live_control_button.setToolTip("开播设置")
+    live_control_button.setAccessibleName("开播设置")
+    live_control_button.setCursor(Qt.CursorShape.PointingHandCursor)
+    live_control_button.setStyleSheet(button_style)
+    live_control_button.clicked.connect(live_control_requested)
+
     gaming_mode_btn = QToolButton(header_widget)
     gaming_mode_btn.setObjectName("gaming_mode_button")
     gaming_mode_btn.setIcon(lock_icon(False))
-    gaming_mode_btn.setIconSize(QSize(13, 13))
-    gaming_mode_btn.setFixedSize(30, 30)
+    gaming_mode_btn.setIconSize(icon_size)
+    gaming_mode_btn.setFixedSize(button_size, button_size)
     gaming_mode_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     gaming_mode_btn.setToolTip("开启穿透模式")
     gaming_mode_btn.setAccessibleName("锁定穿透")
@@ -160,8 +177,8 @@ def build_hud_widgets(
     settings_button = QToolButton(header_widget)
     settings_button.setObjectName("settings_button")
     settings_button.setIcon(settings_icon())
-    settings_button.setIconSize(QSize(13, 13))
-    settings_button.setFixedSize(30, 30)
+    settings_button.setIconSize(icon_size)
+    settings_button.setFixedSize(button_size, button_size)
     settings_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
     settings_button.setToolTip("打开设置")
     settings_button.setAccessibleName("打开设置")
@@ -194,10 +211,15 @@ def build_hud_widgets(
     )
     close_button.clicked.connect(close_requested)
 
-    for widget in (title_label, live_status_dot, room_id_input, connect_button, gaming_mode_btn):
+    for widget in (
+        title_label,
+        live_status_dot,
+        room_id_input,
+    ):
         header_layout.addWidget(widget)
     header_layout.addStretch()
-    header_layout.addWidget(settings_button)
+    for widget in (connect_button, live_control_button, gaming_mode_btn, settings_button):
+        header_layout.addWidget(widget)
     header_layout.addWidget(close_button)
 
     danmaku_list = QListWidget(parent)
@@ -261,6 +283,7 @@ def build_hud_widgets(
         live_status_dot=live_status_dot,
         room_id_input=room_id_input,
         connect_button=connect_button,
+        live_control_button=live_control_button,
         gaming_mode_btn=gaming_mode_btn,
         settings_button=settings_button,
         danmaku_list=danmaku_list,

@@ -33,6 +33,12 @@ _SETTINGS = _SVG_HEAD + (
     '<path d="M20 7h-9"/><path d="M14 17H5"/>'
     '<circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>'
 )
+_BROADCAST = _SVG_HEAD + (
+    '<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/>'
+    '<path d="M7.8 16.2a6 6 0 0 1 0-8.4"/><circle cx="12" cy="12" r="2"/>'
+    '<path d="M16.2 7.8a6 6 0 0 1 0 8.4"/>'
+    '<path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>'
+)
 _EARLIER = _SVG_HEAD + '<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>'
 _LATER = _SVG_HEAD + '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>'
 _SEND = _SVG_HEAD + '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>'
@@ -65,6 +71,11 @@ def settings_icon(color: str = CONTROL_ICON_COLOR) -> QIcon:
     return _render(_SETTINGS, color)
 
 
+def broadcast_icon(color: str = CONTROL_ICON_COLOR) -> QIcon:
+    """Return the broadcast icon for the live settings entry."""
+    return _render(_BROADCAST, color)
+
+
 def earlier_icon(color: str = CONTROL_ICON_COLOR) -> QIcon:
     """Return the left-facing connection/disconnect arrow."""
     return _render(_EARLIER, color)
@@ -88,6 +99,7 @@ def smile_icon(color: str = CONTROL_ICON_COLOR) -> QIcon:
 __all__ = (
     "CONTROL_ICON_COLOR",
     "ICON_SIZE",
+    "broadcast_icon",
     "earlier_icon",
     "later_icon",
     "lock_icon",

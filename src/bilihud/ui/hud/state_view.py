@@ -135,7 +135,7 @@ class HudStateRenderer:
                 background-color: rgba(244, 67, 54, 150);
                 color: white;
                 border: none;
-                border-radius: 15px;
+                border-radius: 13px;
                 padding: 0;
             }
             QToolButton:hover { background-color: rgba(244, 67, 54, 200); }
@@ -154,7 +154,7 @@ class HudStateRenderer:
                 color: white;
                 background: rgba(255, 255, 255, 28);
                 border: none;
-                border-radius: 15px;
+                border-radius: 13px;
                 padding: 0;
             }
             QToolButton:hover { background: rgba(255, 255, 255, 60); }

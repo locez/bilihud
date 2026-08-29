@@ -365,6 +365,7 @@ class DanmakuWidget(QWidget):
             room_id=self.room_id,
             save_room_id=self.save_room_id,
             toggle_connection=self.toggle_connection,
+            live_control_requested=self.open_live_control,
             toggle_gaming_mode=self.toggle_gaming_mode,
             send_requested=self.trigger_send,
             emoticon_requested=self.open_emoticon_picker,
@@ -378,6 +379,7 @@ class DanmakuWidget(QWidget):
         self.live_status_dot = widgets.live_status_dot
         self.room_id_input = widgets.room_id_input
         self.connect_button = widgets.connect_button
+        self.live_control_button = widgets.live_control_button
         self.gaming_mode_btn = widgets.gaming_mode_btn
         self.settings_button = widgets.settings_button
         self.danmaku_list = widgets.danmaku_list

@@ -7,7 +7,7 @@ from PIL import Image
 from PyQt6.QtCore import QEvent, QIODevice, QObject, QSize, Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtNetwork import QNetworkReply, QNetworkRequest
-from PyQt6.QtWidgets import QApplication, QLabel, QListWidgetItem, QToolButton
+from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QListWidgetItem, QToolButton
 
 from bilihud.app.menu import MenuCommand, TrayMenuState
 from bilihud.app.services import create_default_services
@@ -135,7 +135,7 @@ def test_hud_opacity_maps_to_the_background_alpha_layer():
     assert danmaku_widget._opacity_to_alpha(100) == 255
 
 
-def test_danmaku_widget_keeps_game_mode_controls_in_sync_with_fake_platform(tmp_path):
+def test_danmaku_widget_keeps_game_mode_controls_in_sync_with_fake_platform(tmp_path, monkeypatch):
     class FakePlatform:
         capabilities = OverlayCapabilities(
             layer_shell=False,
@@ -181,14 +181,33 @@ def test_danmaku_widget_keeps_game_mode_controls_in_sync_with_fake_platform(tmp_
         assert isinstance(widget.connect_button, QToolButton)
         assert widget.connect_button.toolTip() == "连接直播间"
         assert not widget.connect_button.icon().isNull()
-        assert widget.connect_button.iconSize() == QSize(13, 13)
+        assert widget.connect_button.iconSize() == QSize(12, 12)
+        assert isinstance(widget.live_control_button, QToolButton)
+        assert widget.live_control_button.toolTip() == "开播设置"
+        assert not widget.live_control_button.icon().isNull()
+        assert widget.live_control_button.iconSize() == QSize(12, 12)
         assert isinstance(widget.gaming_mode_btn, QToolButton)
         assert widget.gaming_mode_btn.toolTip() == "开启穿透模式"
         assert not widget.gaming_mode_btn.icon().isNull()
-        assert widget.gaming_mode_btn.iconSize() == QSize(13, 13)
+        assert widget.gaming_mode_btn.iconSize() == QSize(12, 12)
         assert widget.settings_button.toolTip() == "打开设置"
         assert not widget.settings_button.icon().isNull()
-        assert widget.settings_button.iconSize() == QSize(13, 13)
+        assert widget.settings_button.iconSize() == QSize(12, 12)
+        header_layout = widget.header_widget.layout()
+        assert isinstance(header_layout, QHBoxLayout)
+        header_controls = [
+            header_layout.itemAt(index).widget()
+            for index in range(header_layout.count())
+            if isinstance(header_layout.itemAt(index).widget(), QToolButton)
+        ]
+        assert header_controls == [
+            widget.connect_button,
+            widget.live_control_button,
+            widget.gaming_mode_btn,
+            widget.settings_button,
+        ]
+        for button in header_controls:
+            assert button.size() == QSize(26, 26)
 
         assert widget.set_gaming_mode(True).succeeded is True
         assert widget.is_gaming_mode is True
@@ -207,6 +226,18 @@ def test_danmaku_widget_keeps_game_mode_controls_in_sync_with_fake_platform(tmp_
         assert settings_dialog is not None
         assert settings_dialog.parentWidget() is None
         assert not settings_dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+
+        live_pages: list[SettingsPage] = []
+
+        def record_open_settings(
+            _widget: danmaku_widget.DanmakuWidget,
+            page: SettingsPage = SettingsPage.GENERAL,
+        ) -> None:
+            live_pages.append(page)
+
+        monkeypatch.setattr(danmaku_widget.DanmakuWidget, "open_settings", record_open_settings)
+        widget.live_control_button.click()
+        assert live_pages == [SettingsPage.LIVE]
     finally:
         asyncio.run(widget.shutdown())
 
