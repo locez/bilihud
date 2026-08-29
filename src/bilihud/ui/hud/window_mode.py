@@ -7,7 +7,7 @@ from typing import Protocol
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QMouseEvent
-from PyQt6.QtWidgets import QListWidget, QPushButton, QSystemTrayIcon, QWidget
+from PyQt6.QtWidgets import QListWidget, QSystemTrayIcon, QToolButton, QWidget
 
 from bilihud.platform.overlay_contracts import (
     DragMode,
@@ -15,6 +15,7 @@ from bilihud.platform.overlay_contracts import (
     OverlayPlatform,
     WindowPoint,
 )
+from bilihud.ui.hud.icons import lock_icon
 from bilihud.ui.hud.input import ModernInputWidget
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ class WindowModeView(Protocol):
 
     is_gaming_mode: bool
     dragging: bool
-    gaming_mode_btn: QPushButton
+    gaming_mode_btn: QToolButton
     header_widget: QWidget
     input_area: ModernInputWidget
     danmaku_list: QListWidget
@@ -65,16 +66,17 @@ class WindowModeController:
         """Bind capability state to the window and tray controls."""
         available = self.is_available()
         button = self._view.gaming_mode_btn
+        button.setIcon(lock_icon(self._view.is_gaming_mode))
+        button.setText("")
+        button.setAccessibleName("锁定穿透")
         if not available:
             button.setEnabled(False)
-            button.setText("穿透不可用")
             button.setChecked(False)
             reason = self._platform.capabilities.unavailable_reason or "当前平台不支持"
             button.setToolTip(f"游戏模式不可用: {reason}\n当前仍可使用普通窗口模式。")
         else:
             button.setEnabled(True)
-            button.setText("锁定穿透")
-            button.setToolTip("")
+            button.setToolTip("关闭穿透模式" if self._view.is_gaming_mode else "开启穿透模式")
         self._view.update_tray_menu_state()
 
     def toggle_from_tray(self, checked: bool) -> None:
@@ -111,6 +113,7 @@ class WindowModeController:
         result = self._platform.set_gaming_mode(enabled)
         if not result.succeeded:
             self._view.gaming_mode_btn.setChecked(previous_state)
+            self._view.gaming_mode_btn.setIcon(lock_icon(previous_state))
             self._view.tray_gaming_action.setChecked(previous_state)
             logger.warning("Gaming mode transition failed: %s", result.reason)
             self.show_unavailable_message(result.reason)
@@ -119,6 +122,8 @@ class WindowModeController:
         self._view.is_gaming_mode = enabled
         self._view.tray_gaming_action.setChecked(enabled)
         self._view.gaming_mode_btn.setChecked(enabled)
+        self._view.gaming_mode_btn.setIcon(lock_icon(enabled))
+        self._view.gaming_mode_btn.setToolTip("关闭穿透模式" if enabled else "开启穿透模式")
         if enabled:
             self._view.header_widget.hide()
             self._view.input_area.hide()

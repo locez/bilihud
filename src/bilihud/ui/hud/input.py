@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QKeyEvent, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -11,9 +11,11 @@ from PyQt6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLineEdit,
-    QPushButton,
+    QToolButton,
     QWidget,
 )
+
+from bilihud.ui.hud.icons import send_icon, smile_icon
 
 
 class ModernInputWidget(QWidget):
@@ -56,24 +58,26 @@ class ModernInputWidget(QWidget):
         )
         self.input_edit.returnPressed.connect(self.on_send)
 
-        self.emoticon_btn = QPushButton("☻")
+        self.emoticon_btn = QToolButton()
+        self.emoticon_btn.setIcon(smile_icon())
+        self.emoticon_btn.setIconSize(QSize(16, 16))
+        self.emoticon_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.emoticon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.emoticon_btn.setFixedSize(28, 26)
         self.emoticon_btn.setToolTip("发送表情")
+        self.emoticon_btn.setAccessibleName("发送表情")
         self.emoticon_btn.setStyleSheet(
             """
-            QPushButton {
+            QToolButton {
                 background-color: rgba(255, 255, 255, 35);
-                color: white;
                 border: 1px solid rgba(255, 255, 255, 60);
                 border-radius: 13px;
-                font-weight: bold;
-                font-size: 14px;
+                padding: 0;
             }
-            QPushButton:hover {
+            QToolButton:hover {
                 background-color: rgba(255, 255, 255, 60);
             }
-            QPushButton:pressed {
+            QToolButton:pressed {
                 background-color: rgba(255, 255, 255, 80);
             }
         """
@@ -81,24 +85,27 @@ class ModernInputWidget(QWidget):
         self.emoticon_btn.clicked.connect(self.emoticon_requested.emit)
         self.emoticon_btn.setVisible(show_emoticon_button)
 
-        self.send_btn = QPushButton("发送")
+        self.send_btn = QToolButton()
+        self.send_btn.setIcon(send_icon())
+        self.send_btn.setIconSize(QSize(16, 16))
+        self.send_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.send_btn.setFixedSize(46, 26)
+        self.send_btn.setFixedSize(34, 26)
+        self.send_btn.setToolTip("发送")
+        self.send_btn.setAccessibleName("发送")
         self.send_btn.setStyleSheet(
             """
-            QPushButton {
+            QToolButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4FacFe, stop:1 #00f2fe);
                 color: white;
                 border: none;
                 border-radius: 13px;
-                font-weight: bold;
-                font-size: 11px;
-                font-family: 'Segoe UI', 'Microsoft YaHei';
+                padding: 0;
             }
-            QPushButton:hover {
+            QToolButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #66b5ff, stop:1 #33f5ff);
             }
-            QPushButton:pressed {
+            QToolButton:pressed {
                 background: #00bcd4;
             }
         """

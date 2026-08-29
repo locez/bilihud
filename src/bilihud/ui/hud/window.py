@@ -370,6 +370,7 @@ class DanmakuWidget(QWidget):
             emoticon_requested=self.open_emoticon_picker,
             emoticon_selected=self.trigger_send_live_emoticon,
             audience_requested=self.open_audience_popup,
+            settings_requested=lambda: self.open_settings(SettingsPage.GENERAL),
             close_requested=self.hide,
         )
         self.main_layout = widgets.main_layout
@@ -378,6 +379,7 @@ class DanmakuWidget(QWidget):
         self.room_id_input = widgets.room_id_input
         self.connect_button = widgets.connect_button
         self.gaming_mode_btn = widgets.gaming_mode_btn
+        self.settings_button = widgets.settings_button
         self.danmaku_list = widgets.danmaku_list
         self._danmaku_delegate = widgets.danmaku_delegate
         self.input_area: ModernInputWidget = widgets.input_area

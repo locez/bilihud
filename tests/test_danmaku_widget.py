@@ -4,7 +4,7 @@ from dataclasses import replace
 from io import BytesIO
 
 from PIL import Image
-from PyQt6.QtCore import QEvent, QIODevice, QObject, Qt
+from PyQt6.QtCore import QEvent, QIODevice, QObject, QSize, Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtNetwork import QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QApplication, QLabel, QListWidgetItem, QToolButton
@@ -178,10 +178,23 @@ def test_danmaku_widget_keeps_game_mode_controls_in_sync_with_fake_platform(tmp_
     )
     widget = danmaku_widget.DanmakuWidget(services=services)
     try:
+        assert isinstance(widget.connect_button, QToolButton)
+        assert widget.connect_button.toolTip() == "连接直播间"
+        assert not widget.connect_button.icon().isNull()
+        assert widget.connect_button.iconSize() == QSize(13, 13)
+        assert isinstance(widget.gaming_mode_btn, QToolButton)
+        assert widget.gaming_mode_btn.toolTip() == "开启穿透模式"
+        assert not widget.gaming_mode_btn.icon().isNull()
+        assert widget.gaming_mode_btn.iconSize() == QSize(13, 13)
+        assert widget.settings_button.toolTip() == "打开设置"
+        assert not widget.settings_button.icon().isNull()
+        assert widget.settings_button.iconSize() == QSize(13, 13)
+
         assert widget.set_gaming_mode(True).succeeded is True
         assert widget.is_gaming_mode is True
         assert widget.gaming_mode_btn.isChecked() is True
         assert widget.tray_gaming_action.isChecked() is True
+        assert widget.gaming_mode_btn.toolTip() == "关闭穿透模式"
 
         assert widget.set_gaming_mode(False).succeeded is True
         assert widget.is_gaming_mode is False
@@ -189,7 +202,7 @@ def test_danmaku_widget_keeps_game_mode_controls_in_sync_with_fake_platform(tmp_
         assert widget.tray_gaming_action.isChecked() is False
         assert platform.mode_calls == [True, False]
 
-        widget.open_settings()
+        widget.settings_button.click()
         settings_dialog = widget.settings_controller.dialog
         assert settings_dialog is not None
         assert settings_dialog.parentWidget() is None
@@ -629,6 +642,14 @@ def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
 def test_modern_input_widget_exposes_emoticon_button_signal():
     _app()
     widget = hud_input.ModernInputWidget()
+
+    assert isinstance(widget.emoticon_btn, QToolButton)
+    assert widget.emoticon_btn.text() == ""
+    assert not widget.emoticon_btn.icon().isNull()
+    assert isinstance(widget.send_btn, QToolButton)
+    assert widget.send_btn.text() == ""
+    assert widget.send_btn.toolTip() == "发送"
+    assert not widget.send_btn.icon().isNull()
 
     seen = []
     widget.emoticon_requested.connect(lambda: seen.append(True))

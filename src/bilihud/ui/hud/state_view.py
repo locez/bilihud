@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from PyQt6.QtWidgets import QLineEdit, QPushButton, QWidget
+from PyQt6.QtGui import QIcon
+from PyQt6.QtWidgets import QLineEdit, QToolButton, QWidget
 
 from bilihud.app.hud import (
     HudConnectionStatus,
@@ -17,6 +18,7 @@ from bilihud.app.hud import (
 )
 from bilihud.danmaku.messages import HudMessage, SystemMessageLevel
 from bilihud.ui.hud.audience import AudiencePopup, AudienceStatusWidget
+from bilihud.ui.hud.icons import earlier_icon, later_icon
 
 
 class HudStateView(Protocol):
@@ -26,7 +28,7 @@ class HudStateView(Protocol):
     room_id: int
     is_gaming_mode: bool
     room_id_input: QLineEdit
-    connect_button: QPushButton
+    connect_button: QToolButton
     audience_status: AudienceStatusWidget
     audience_popup: AudiencePopup
     popup_parent: QWidget
@@ -113,50 +115,61 @@ class HudStateRenderer:
 
     def _set_connecting(self) -> None:
         """Render the connecting HUD state."""
-        self._view.connect_button.setText("连接中...")
+        self._set_connection_button(later_icon(), "连接中...")
         self._view.connect_button.setEnabled(False)
 
     def _set_disconnecting(self) -> None:
         """Render the disconnecting HUD state."""
-        self._view.connect_button.setText("断开中...")
+        self._set_connection_button(earlier_icon(), "断开中...")
         self._view.connect_button.setChecked(True)
         self._view.connect_button.setEnabled(False)
 
     def _set_connected(self) -> None:
         """Render the connected HUD state."""
-        self._view.connect_button.setText("断开")
+        self._set_connection_button(earlier_icon(), "断开连接")
         self._view.connect_button.setChecked(True)
         self._view.connect_button.setEnabled(True)
         self._view.connect_button.setStyleSheet(
             """
-            QPushButton {
+            QToolButton {
                 background-color: rgba(244, 67, 54, 150);
                 color: white;
-                border: 1px solid rgba(244, 67, 54, 200);
-                border-radius: 6px; padding: 4px 10px;
+                border: none;
+                border-radius: 15px;
+                padding: 0;
             }
-            QPushButton:hover { background-color: rgba(244, 67, 54, 200); }
+            QToolButton:hover { background-color: rgba(244, 67, 54, 200); }
+            QToolButton:pressed { background-color: rgba(244, 67, 54, 230); }
             """
         )
 
     def _set_disconnected(self) -> None:
         """Render the disconnected HUD state."""
-        self._view.connect_button.setText("连接")
+        self._set_connection_button(later_icon(), "连接直播间")
         self._view.connect_button.setChecked(False)
         self._view.connect_button.setEnabled(True)
         self._view.connect_button.setStyleSheet(
             """
-            QPushButton {
+            QToolButton {
                 color: white;
-                background-color: rgba(255, 255, 255, 20);
-                border: 1px solid rgba(255, 255, 255, 30);
-                border-radius: 6px;
-                padding: 4px 10px;
+                background: rgba(255, 255, 255, 28);
+                border: none;
+                border-radius: 15px;
+                padding: 0;
             }
-            QPushButton:hover { background-color: rgba(255, 255, 255, 40); }
-            QPushButton:checked { background-color: rgba(76, 175, 80, 150); }
+            QToolButton:hover { background: rgba(255, 255, 255, 60); }
+            QToolButton:pressed { background: rgba(255, 255, 255, 90); }
+            QToolButton:checked { background: rgba(76, 175, 80, 150); }
             """
         )
+
+    def _set_connection_button(self, icon: QIcon, tooltip: str) -> None:
+        """Keep the icon-only connection action understandable in every state."""
+        button = self._view.connect_button
+        button.setText("")
+        button.setIcon(icon)
+        button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
 
 
 __all__ = ("HudStateRenderer", "HudStateView")
