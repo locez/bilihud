@@ -183,6 +183,90 @@ def render_page_shell() -> str:
       font-size: 18px;
       font-weight: 500;
     }
+    .gift-user {
+      color: #FFD700;
+      font-size: 17px;
+      font-weight: 700;
+    }
+    .gift-action, .gift-name, .gift-animation-quantity {
+      color: #FF66CC;
+      font-size: 17px;
+    }
+    .gift-name {
+      font-weight: 700;
+    }
+    .gift-animation-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 44px;
+      line-height: 1.2;
+    }
+    .gift-animation-row .gift-user {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .gift-animation {
+      display: block;
+      flex: 0 0 44px;
+      width: 44px;
+      height: 44px;
+      object-fit: contain;
+    }
+    .gift-animation-quantity {
+      flex: 0 0 auto;
+      font-weight: 700;
+    }
+    .gift-value {
+      color: #FFD86E;
+      font-size: 15px;
+      font-weight: 700;
+      margin-left: 5px;
+      white-space: nowrap;
+    }
+    .gift-animation-row .gift-value {
+      margin-left: 0;
+    }
+    .super-chat {
+      box-sizing: border-box;
+      margin: 0 0 8px;
+      padding: 8px 10px 9px;
+      border-left: 4px solid #2A2038;
+      border-radius: 5px;
+      background-color: #3C2A4D;
+      color: white;
+    }
+    .super-chat-header {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      line-height: 1.2;
+    }
+    .super-chat-label {
+      color: #FFD86E;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 1px;
+    }
+    .super-chat-user {
+      color: white;
+      font-size: 16px;
+      font-weight: 800;
+    }
+    .super-chat-price {
+      color: #FFD86E;
+      font-size: 17px;
+      font-weight: 900;
+    }
+    .super-chat-message {
+      margin-top: 5px;
+      color: white;
+      font-size: 17px;
+      font-weight: 500;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
     .meta-badge {
       display: inline-block;
       margin-right: 4px;

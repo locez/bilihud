@@ -210,6 +210,82 @@ def render_page_script(events_route: str, settings_json: str) -> str:
       return {{ width: nextWidth, height: nextHeight }};
     }}
 
+    function giftQuantityText(entry) {{
+      const quantity = Number(entry.giftQuantity);
+      return Number.isFinite(quantity) ? String(quantity) : "0";
+    }}
+
+    function appendGiftValue(parent, entry) {{
+      const value = typeof entry.giftValue === "string" ? entry.giftValue.trim() : "";
+      if (!value) return;
+      const price = document.createElement("span");
+      price.className = "gift-value";
+      price.textContent = value;
+      parent.appendChild(price);
+    }}
+
+    function renderGiftText(row, entry) {{
+      row.className = "message gift";
+      row.replaceChildren();
+
+      const user = document.createElement("span");
+      user.className = "gift-user";
+      user.textContent = entry.user || "";
+      row.appendChild(user);
+
+      const action = document.createElement("span");
+      action.className = "gift-action";
+      action.textContent = " " + (entry.giftAction || "") + " ";
+      row.appendChild(action);
+
+      const gift = document.createElement("span");
+      gift.className = "gift-name";
+      gift.textContent = (entry.giftName || "礼物") + " x" + giftQuantityText(entry);
+      row.appendChild(gift);
+      appendGiftValue(row, entry);
+    }}
+
+    function renderGiftAnimation(row, entry) {{
+      row.className = "message gift gift-animation-row";
+      row.replaceChildren();
+
+      const user = document.createElement("span");
+      user.className = "gift-user";
+      user.textContent = entry.user || "";
+      row.appendChild(user);
+
+      const image = document.createElement("img");
+      image.className = "gift-animation";
+      image.width = 44;
+      image.height = 44;
+      image.src = proxyImageUrl(entry.giftAnimationUrl);
+      image.alt = entry.giftName || "礼物";
+      image.addEventListener("error", () => renderGiftText(row, entry), {{ once: true }});
+      row.appendChild(image);
+
+      const quantity = document.createElement("span");
+      quantity.className = "gift-animation-quantity";
+      quantity.textContent = " x" + giftQuantityText(entry);
+      row.appendChild(quantity);
+      appendGiftValue(row, entry);
+    }}
+
+    function renderGiftEntry(entry, playEffect = false) {{
+      const row = document.createElement("div");
+      row.dataset.seq = String(entry.seq);
+      if (entry.giftAnimationUrl) {{
+        renderGiftAnimation(row, entry);
+      }} else {{
+        renderGiftText(row, entry);
+      }}
+      panel.appendChild(row);
+      while (panel.children.length > maxMessages) {{
+        panel.removeChild(panel.firstElementChild);
+      }}
+      panel.scrollTop = panel.scrollHeight;
+      if (playEffect && giftEffectsEnabled) playGiftEffect(entry);
+    }}
+
     function trimEffectLayer() {{
       while (effectLayer.children.length > 3) {{
         effectLayer.removeChild(effectLayer.firstElementChild);
@@ -393,7 +469,57 @@ def render_page_script(events_route: str, settings_json: str) -> str:
       playGiftFallback(entry);
     }}
 
+    function safeScColor(value, fallback) {{
+      return typeof value === "string" && /^#[0-9a-f]{{6}}$/i.test(value)
+        ? value
+        : fallback;
+    }}
+
+    function renderSuperChatEntry(entry) {{
+      const row = document.createElement("div");
+      row.className = "message super-chat";
+      row.dataset.seq = String(entry.seq);
+      row.style.backgroundColor = safeScColor(entry.scBackgroundColor, "#3C2A4D");
+      row.style.borderLeftColor = safeScColor(entry.scBackgroundBottomColor, "#2A2038");
+
+      const header = document.createElement("div");
+      header.className = "super-chat-header";
+      const label = document.createElement("span");
+      label.className = "super-chat-label";
+      label.textContent = "SC";
+      header.appendChild(label);
+      const user = document.createElement("span");
+      user.className = "super-chat-user";
+      user.textContent = entry.user || "";
+      header.appendChild(user);
+      const price = document.createElement("span");
+      price.className = "super-chat-price";
+      price.style.color = safeScColor(entry.scBackgroundPriceColor, "#FFD86E");
+      price.textContent = "¥" + String(Number(entry.scPrice) || 0);
+      header.appendChild(price);
+      row.appendChild(header);
+
+      const content = document.createElement("div");
+      content.className = "super-chat-message";
+      for (const segment of entry.segments || []) appendText(content, segment.text || "");
+      row.appendChild(content);
+
+      panel.appendChild(row);
+      while (panel.children.length > maxMessages) {{
+        panel.removeChild(panel.firstElementChild);
+      }}
+      panel.scrollTop = panel.scrollHeight;
+    }}
+
     function renderEntry(entry, playEffect = false) {{
+      if (entry.kind === "gift") {{
+        renderGiftEntry(entry, playEffect);
+        return;
+      }}
+      if (entry.kind === "super_chat") {{
+        renderSuperChatEntry(entry);
+        return;
+      }}
       const row = document.createElement("div");
       row.className = "message";
       row.dataset.seq = String(entry.seq);

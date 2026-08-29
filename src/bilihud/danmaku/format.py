@@ -6,6 +6,8 @@ import html
 
 from .messages import (
     DanmakuMessage,
+    GiftCurrency,
+    GiftMessage,
     ImageSegment,
     MessageBadge,
     MessageSegment,
@@ -15,6 +17,19 @@ from .messages import (
 
 DANMAKU_EMOTICON_MAX_HEIGHT = 34
 DANMAKU_EMOTICON_MAX_WIDTH = 140
+GIFT_COINS_PER_YUAN = 1000
+
+
+def gift_value_text(message: GiftMessage) -> str:
+    """Format the total paid-gift value in yuan, or empty for non-cash currency."""
+    if message.currency is not GiftCurrency.GOLD:
+        return ""
+    yuan, remainder = divmod(message.total_price, GIFT_COINS_PER_YUAN)
+    if remainder:
+        amount = f"{yuan}.{remainder:03d}".rstrip("0")
+    else:
+        amount = str(yuan)
+    return f"¥{amount}"
 
 
 def _badge(text: str, css_class: str, *, title: str = "", style: str = "") -> str:

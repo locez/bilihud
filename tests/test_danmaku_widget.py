@@ -1,16 +1,19 @@
 import asyncio
 import os
 from dataclasses import replace
+from io import BytesIO
 
-from PyQt6.QtCore import QEvent, QObject, Qt
+from PIL import Image
+from PyQt6.QtCore import QEvent, QIODevice, QObject, Qt
 from PyQt6.QtGui import QFont
-from PyQt6.QtNetwork import QNetworkReply
+from PyQt6.QtNetwork import QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QApplication, QLabel, QListWidgetItem, QToolButton
 
 from bilihud.app.menu import MenuCommand, TrayMenuState
 from bilihud.app.services import create_default_services
 from bilihud.danmaku.messages import (
     DanmakuMessage,
+    GiftCurrency,
     GiftMessage,
     HudMessage,
     InteractionKind,
@@ -19,6 +22,7 @@ from bilihud.danmaku.messages import (
     MessageBadge,
     MessageBadgeKind,
     ReplySegment,
+    SuperChatMessage,
     TextSegment,
     make_system_message,
 )
@@ -233,6 +237,7 @@ def test_danmaku_widget_injects_fixed_mock_messages_into_hud(monkeypatch):
     danmaku_widget.DanmakuWidget.trigger_danmaku_simulation(widget)
 
     assert len(received) == len(danmaku_widget.mock_message_batch())
+    assert any(isinstance(message, SuperChatMessage) for message in received)
     assert not any(
         isinstance(message, GiftMessage) and message.gift_id == MOCK_CASTLE_GIFT_ID
         for message in received
@@ -349,6 +354,94 @@ def test_danmaku_delegate_renders_local_system_messages():
     assert html.strip()
 
 
+def test_danmaku_delegate_renders_super_chat_as_a_colored_card():
+    html = message_list.DanmakuDelegate().get_html_for_message(
+        SuperChatMessage(
+            author=MessageAuthor(uid=1, name="SC用户", color="#FFE08A"),
+            segments=(TextSegment("支持 <BiliHUD>\n继续加油"),),
+            message_id=9,
+            price=50,
+            message="支持 <BiliHUD>\n继续加油",
+            background_color="#223344",
+            background_bottom_color="#112233",
+            background_price_color="#FFE08A",
+        )
+    )
+
+    assert 'class="sc-card"' in html
+    assert "background-color: #223344" in html
+    assert "border-left: 4px solid #112233" in html
+    assert "SC" in html
+    assert "¥50" in html
+    assert "&lt;BiliHUD&gt;" in html
+    assert "继续加油" in html
+
+
+def test_danmaku_delegate_replaces_gift_text_after_gif_load():
+    app = _app()
+
+    class GifReply(QNetworkReply):
+        def __init__(self, payload: bytes, parent: QObject | None = None) -> None:
+            super().__init__(parent)
+            self._payload = payload
+            self._offset = 0
+            self.setOpenMode(QIODevice.OpenModeFlag.ReadOnly)
+            self.setHeader(QNetworkRequest.KnownHeaders.ContentLengthHeader, len(payload))
+            self.setError(QNetworkReply.NetworkError.NoError, "")
+            self.setFinished(True)
+
+        def abort(self) -> None:
+            pass
+
+        def bytesAvailable(self) -> int:
+            return len(self._payload) - self._offset + super().bytesAvailable()
+
+        def readData(self, maxlen: int) -> bytes:
+            chunk = self._payload[self._offset : self._offset + maxlen]
+            self._offset += len(chunk)
+            return chunk
+
+    class GifNetworkManager:
+        def __init__(self, payload: bytes) -> None:
+            self.payload = payload
+            self.requests: list[QNetworkRequest] = []
+            self.reply: GifReply | None = None
+
+        def get(self, request: QNetworkRequest) -> QNetworkReply:
+            self.requests.append(request)
+            self.reply = GifReply(self.payload)
+            return self.reply
+
+    gif_buffer = BytesIO()
+    Image.new("RGBA", (12, 12), (255, 0, 0, 255)).save(gif_buffer, format="GIF")
+    network = GifNetworkManager(gif_buffer.getvalue())
+    delegate = message_list.DanmakuDelegate()
+    delegate._gift_animation_cache._network_manager = network
+    gift = GiftMessage(
+        author=MessageAuthor(uid=1, name="送礼用户", color="#FFD700"),
+        segments=(TextSegment("赠送 小花花 x1"),),
+        action="赠送",
+        gift_name="小花花",
+        quantity=1,
+        unit_price=1000,
+        currency=GiftCurrency.GOLD,
+        gift_animation_url="https://i0.hdslb.com/bfs/live/flower.gif",
+    )
+
+    document = delegate._get_document(gift, 320, QFont())
+    assert "小花花" in document.toPlainText()
+    assert network.reply is not None
+    network.reply.finished.emit()
+    app.processEvents()
+
+    assert '<img src="https://i0.hdslb.com/bfs/live/flower.gif"' in document.toHtml()
+    assert "¥1" in document.toPlainText()
+    assert "小花花" not in document.toPlainText()
+    assert network.requests[0].url().toString() == gift.gift_animation_url
+    assert network.requests[0].rawHeader(b"Referer") == b"https://live.bilibili.com/"
+    assert network.requests[0].header(QNetworkRequest.KnownHeaders.UserAgentHeader) == "Mozilla/5.0 BiliHUD"
+
+
 def test_danmaku_delegate_applies_the_selected_hud_font():
     delegate = message_list.DanmakuDelegate()
     delegate.set_font_family("Noto Sans CJK SC")
@@ -365,6 +458,8 @@ def test_danmaku_delegate_renders_gift_and_interaction_variants():
         action="赠送",
         gift_name="辣条",
         quantity=2,
+        unit_price=1000,
+        currency=GiftCurrency.GOLD,
     )
     interact = InteractMessage(
         author=MessageAuthor(uid=2, name="互动用户", color="#AAAAAA"),
@@ -386,6 +481,7 @@ def test_danmaku_delegate_renders_gift_and_interaction_variants():
     assert "送礼用户" in gift_html
     assert "赠送" in gift_html
     assert "辣条 x2" in gift_html
+    assert "¥2" in gift_html
     assert "互动用户" in interact_html
     assert "关注了主播" in interact_html
     assert "点赞用户" in like_html

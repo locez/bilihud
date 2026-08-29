@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, NotRequired, TypedDict
 
-from ..danmaku.format import danmaku_emoticon_scaled_size
+from ..danmaku.format import danmaku_emoticon_scaled_size, gift_value_text
 from ..danmaku.messages import (
     DanmakuMessage,
     GiftEffectFrame,
@@ -17,6 +17,7 @@ from ..danmaku.messages import (
     MessageBadge,
     MessageSegment,
     ReplySegment,
+    SuperChatMessage,
     SystemMessage,
 )
 
@@ -100,18 +101,25 @@ class MirrorEntry(TypedDict):
     """Stable JSON-compatible representation of one HUD message."""
 
     seq: int
-    kind: Literal["danmaku", "gift", "interact", "system"]
+    kind: Literal["danmaku", "gift", "super_chat", "interact", "system"]
     user: str
     userColor: str
     segments: list[MirrorSegment]
     badges: NotRequired[list[MirrorBadge]]
     giftId: NotRequired[int]
+    giftAction: NotRequired[str]
+    giftValue: NotRequired[str]
     giftName: NotRequired[str]
     giftQuantity: NotRequired[int]
     giftImageUrl: NotRequired[str]
     giftEffectUrl: NotRequired[str]
     giftAnimationUrl: NotRequired[str]
     giftEffectLayout: NotRequired[MirrorGiftEffectLayout]
+    scId: NotRequired[int]
+    scPrice: NotRequired[int]
+    scBackgroundColor: NotRequired[str]
+    scBackgroundBottomColor: NotRequired[str]
+    scBackgroundPriceColor: NotRequired[str]
 
 
 class MirrorSettingsPayload(TypedDict):
@@ -216,6 +224,8 @@ def message_to_mirror_entry(seq: int, message: HudMessage) -> MirrorEntry:
             "userColor": user_color_for_message(message),
             "segments": _segments_for(message),
             "giftId": message.gift_id,
+            "giftAction": message.action,
+            "giftValue": gift_value_text(message),
             "giftName": message.gift_name,
             "giftQuantity": message.quantity,
             "giftImageUrl": message.gift_image_url,
@@ -225,6 +235,20 @@ def message_to_mirror_entry(seq: int, message: HudMessage) -> MirrorEntry:
         if message.gift_effect_layout is not None:
             entry["giftEffectLayout"] = _gift_effect_layout_to_mirror(message.gift_effect_layout)
         return entry
+
+    if isinstance(message, SuperChatMessage):
+        return {
+            "seq": seq,
+            "kind": "super_chat",
+            "user": message.author.name,
+            "userColor": user_color_for_message(message),
+            "segments": _segments_for(message),
+            "scId": message.message_id,
+            "scPrice": message.price,
+            "scBackgroundColor": message.background_color,
+            "scBackgroundBottomColor": message.background_bottom_color,
+            "scBackgroundPriceColor": message.background_price_color,
+        }
 
     if isinstance(message, InteractMessage):
         return {

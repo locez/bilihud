@@ -39,6 +39,7 @@ from .blivedm_adapter import (
     to_hud_guard_message,
     to_hud_like_message,
     to_hud_message_or_system,
+    to_hud_open_super_chat_message,
     to_hud_total_likes,
     to_hud_voice_report_like_messages,
 )
@@ -783,8 +784,16 @@ class DanmakuHandler(blivedm.BaseHandler):
 
     def _on_super_chat(self, client: ws_base.WebSocketClientBase, message: web_models.SuperChatMessage) -> None:
         """处理醒目留言"""
-        # 可以在这里处理醒目留言
-        pass
+        self._emit_message(message)
+
+    def _on_open_live_super_chat(
+        self,
+        client: ws_base.WebSocketClientBase,
+        message: open_models.SuperChatMessage,
+    ) -> None:
+        """处理开放平台醒目留言并转换为共享 HUD 消息。"""
+        del client
+        self._emit_normalized_message(to_hud_open_super_chat_message(message))
 
 
 def _raw_gift_animation_url(data: Mapping[str, object]) -> str:

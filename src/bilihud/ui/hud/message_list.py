@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import re
 
 from PyQt6.QtCore import QModelIndex, QSize, Qt, QUrl
 from PyQt6.QtGui import QFont, QImage, QPainter, QTextDocument
@@ -13,14 +14,21 @@ from bilihud.danmaku.format import (
     danmaku_author_badges_html,
     danmaku_message_content_html,
     danmaku_message_emoticon_urls,
+    gift_value_text,
 )
 from bilihud.danmaku.messages import (
     DanmakuMessage,
     GiftMessage,
     HudMessage,
     InteractMessage,
+    SuperChatMessage,
     SystemMessage,
 )
+from bilihud.ui.hud.gift_animation import GIFT_ANIMATION_SIZE, GiftAnimationCache
+
+SC_DEFAULT_BACKGROUND_COLOR = "#3C2A4D"
+SC_DEFAULT_BOTTOM_COLOR = "#2A2038"
+SC_DEFAULT_PRICE_COLOR = "#FFD86E"
 
 
 class DanmakuDelegate(QStyledItemDelegate):
@@ -33,7 +41,12 @@ class DanmakuDelegate(QStyledItemDelegate):
         self._font_family: str = ""
         self._emoticon_cache: dict[str, QImage | None] = {}
         self._emoticon_docs: dict[str, list[QTextDocument]] = {}
-        self._network_manager = QNetworkAccessManager(self)
+        self._network_manager: QNetworkAccessManager = QNetworkAccessManager(self)
+        self._gift_animation_cache: GiftAnimationCache = GiftAnimationCache(
+            self,
+            self._update_viewport,
+            self._gift_animation_html,
+        )
 
     def set_font_family(self, font_family: str) -> None:
         """Apply one shared HUD font and invalidate documents using the old family."""
@@ -42,6 +55,7 @@ class DanmakuDelegate(QStyledItemDelegate):
             return
         self._font_family = normalized
         self._cache.clear()
+        self._gift_animation_cache.clear_documents()
         parent = self.parent()
         if isinstance(parent, QAbstractItemView):
             parent.updateGeometry()
@@ -73,6 +87,8 @@ class DanmakuDelegate(QStyledItemDelegate):
         doc.setHtml(self.get_html_for_message(message))
         doc.setTextWidth(width)
         self._attach_emoticon_resource(doc, message)
+        if isinstance(message, GiftMessage):
+            self._gift_animation_cache.attach(doc, message)
         self._cache[msg_id] = (message, doc)
         return doc
 
@@ -82,6 +98,8 @@ class DanmakuDelegate(QStyledItemDelegate):
         cached = self._cache.get(msg_id)
         if cached is not None and cached[0] is message:
             self._cache.pop(msg_id, None)
+        if isinstance(message, GiftMessage):
+            self._gift_animation_cache.forget(message)
 
     def _attach_emoticon_resource(self, doc: QTextDocument, message: HudMessage) -> None:
         if not isinstance(message, DanmakuMessage):
@@ -121,6 +139,15 @@ class DanmakuDelegate(QStyledItemDelegate):
 
         parent = self.parent()
         if isinstance(parent, QAbstractItemView):
+            viewport = parent.viewport()
+            if viewport is not None:
+                viewport.update()
+
+    def _update_viewport(self) -> None:
+        """Request a repaint and geometry refresh after an asynchronous image update."""
+        parent = self.parent()
+        if isinstance(parent, QAbstractItemView):
+            parent.updateGeometry()
             viewport = parent.viewport()
             if viewport is not None:
                 viewport.update()
@@ -218,17 +245,79 @@ class DanmakuDelegate(QStyledItemDelegate):
             </style>
             <p>{badges_html}{author_html}<span class="colon"> : </span>{content_span}</p>
             """
+        if isinstance(message, SuperChatMessage):
+            background_color = _safe_sc_color(message.background_color, SC_DEFAULT_BACKGROUND_COLOR)
+            bottom_color = _safe_sc_color(message.background_bottom_color, SC_DEFAULT_BOTTOM_COLOR)
+            price_color = _safe_sc_color(message.background_price_color, SC_DEFAULT_PRICE_COLOR)
+            user = html.escape(message.author.name, quote=True)
+            content = html.escape(message.message, quote=True).replace("\n", "<br />")
+            return f"""
+            <style>
+                .sc-card {{
+                    background-color: {background_color};
+                    border-left: 4px solid {bottom_color};
+                    padding: 7px 10px 8px;
+                    margin: 2px 0 7px;
+                }}
+                .sc-label {{
+                    color: {price_color};
+                    font-family: {font_family};
+                    font-size: 10px;
+                    font-weight: 800;
+                    letter-spacing: 1px;
+                }}
+                .sc-user {{
+                    color: white;
+                    font-family: {font_family};
+                    font-size: 12px;
+                    font-weight: 700;
+                }}
+                .sc-price {{
+                    color: {price_color};
+                    font-family: {font_family};
+                    font-size: 14px;
+                    font-weight: 800;
+                }}
+                .sc-content {{
+                    color: white;
+                    font-family: {font_family};
+                    font-size: 13px;
+                    font-weight: 500;
+                }}
+                body, p {{ line-height: 120%; margin: 0; padding: 0; }}
+            </style>
+            <div class="sc-card">
+                <p><span class="sc-label">SC</span>&nbsp;&nbsp;
+                <span class="sc-user">{user}</span>
+                <span class="sc-price">&nbsp;¥{message.price}</span></p>
+                <p class="sc-content">{content}</p>
+            </div>
+            """
+        if isinstance(message, GiftMessage) and self._gift_animation_cache.has_movie(
+            message.gift_animation_url
+        ):
+            return self._gift_animation_html(message)
         if isinstance(message, GiftMessage):
+            gift_value = gift_value_text(message)
+            gift_value_html = (
+                f'<span class="gift-value"> {html.escape(gift_value, quote=True)}</span>'
+                if gift_value
+                else ""
+            )
+            gift_html = (
+                f'<span class="gift">{html.escape(message.gift_name, quote=True)} x{message.quantity}</span>'
+            )
             return f"""
             <style>
                 .user {{ color: #FFD700; font-weight: bold; font-family: {font_family}; font-size: 12px; }}
                 .action {{ color: #FF66CC; font-family: {font_family}; font-size: 12px; }}
                 .gift {{ color: #FF66CC; font-weight: bold; font-family: {font_family}; font-size: 12px; }}
+                .gift-value {{ color: #FFD86E; font-family: {font_family}; font-size: 12px; font-weight: 700; }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }}
             </style>
             <p><span class="user">{html.escape(message.author.name, quote=True)}</span>
             <span class="action"> {html.escape(message.action, quote=True)} </span>
-            <span class="gift">{html.escape(message.gift_name, quote=True)} x{message.quantity}</span></p>
+            {gift_html}{gift_value_html}</p>
             """
         if isinstance(message, InteractMessage):
             return f"""
@@ -264,9 +353,55 @@ class DanmakuDelegate(QStyledItemDelegate):
             """
         return ""
 
+    def _gift_animation_html(self, message: GiftMessage) -> str:
+        """Render a decoded gift GIF beside its sender and quantity."""
+        font_family = self._font_family_css()
+        gift_value = gift_value_text(message)
+        gift_value_html = (
+            f'<span class="gift-animation-value"> {html.escape(gift_value, quote=True)}</span>'
+            if gift_value
+            else ""
+        )
+        return f"""
+        <style>
+            .gift-animation-user {{
+                color: #FFD700;
+                font-weight: bold;
+                font-family: {font_family};
+                font-size: 12px;
+            }}
+            .gift-animation {{ vertical-align: middle; }}
+            .gift-animation-quantity {{
+                color: #FF66CC;
+                font-family: {font_family};
+                font-size: 12px;
+            }}
+            .gift-animation-value {{
+                color: #FFD86E;
+                font-family: {font_family};
+                font-size: 12px;
+                font-weight: 700;
+            }}
+            body, p {{ line-height: 120%; margin: 0; padding: 0; }}
+        </style>
+        <p><span class="gift-animation-user">{html.escape(message.author.name, quote=True)}</span>
+        <img class="gift-animation" src="{html.escape(message.gift_animation_url, quote=True)}"
+            width="{GIFT_ANIMATION_SIZE}" height="{GIFT_ANIMATION_SIZE}"
+            alt="{html.escape(message.gift_name, quote=True)}" />
+        <span class="gift-animation-quantity"> x{message.quantity}</span>{gift_value_html}</p>
+        """
+
     def get_user_color(self, message: HudMessage) -> str:
         """Return the normalized author color used by the message template."""
         return message.author.color
+
+
+def _safe_sc_color(value: str, fallback: str) -> str:
+    """Keep externally supplied SC theme colors inside the CSS color contract."""
+    color = value.strip()
+    if re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+        return color
+    return fallback
 
 
 __all__ = ("DanmakuDelegate",)

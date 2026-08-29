@@ -4,9 +4,12 @@ from bilihud.danmaku.format import (
     danmaku_emoticon_url,
     danmaku_message_content_html,
     danmaku_message_emoticon_urls,
+    gift_value_text,
 )
 from bilihud.danmaku.messages import (
     DanmakuMessage,
+    GiftCurrency,
+    GiftMessage,
     ImageSegment,
     MessageAuthor,
     MessageBadge,
@@ -21,6 +24,28 @@ def _message(*segments, badges=()):
         author=MessageAuthor(uid=1, name="Locez", color="#66CCFF", badges=badges),
         segments=tuple(segments),
     )
+
+
+def _gift(*, quantity: int, unit_price: int, currency: GiftCurrency) -> GiftMessage:
+    return GiftMessage(
+        author=MessageAuthor(uid=2, name="送礼用户", color="#FFD700"),
+        segments=(TextSegment("赠送 礼物"),),
+        action="赠送",
+        gift_name="礼物",
+        quantity=quantity,
+        unit_price=unit_price,
+        currency=currency,
+    )
+
+
+def test_gift_value_text_formats_total_gold_coins_as_yuan():
+    assert gift_value_text(_gift(quantity=2, unit_price=750, currency=GiftCurrency.GOLD)) == "¥1.5"
+    assert gift_value_text(_gift(quantity=3, unit_price=1000, currency=GiftCurrency.GOLD)) == "¥3"
+
+
+def test_gift_value_text_omits_non_gold_currency():
+    assert gift_value_text(_gift(quantity=1, unit_price=1000, currency=GiftCurrency.SILVER)) == ""
+    assert gift_value_text(_gift(quantity=1, unit_price=1000, currency=GiftCurrency.UNKNOWN)) == ""
 
 
 def test_danmaku_emoticon_url_only_uses_pure_emoticon_messages():

@@ -9,7 +9,14 @@ import pytest
 
 from bilihud.danmaku import client as danmaku_client
 from bilihud.danmaku.client import DanmakuClient, DanmakuHandler, DanmakuShutdownError
-from bilihud.danmaku.messages import DanmakuMessage, GiftMessage, HudMessage, InteractionKind, InteractMessage
+from bilihud.danmaku.messages import (
+    DanmakuMessage,
+    GiftMessage,
+    HudMessage,
+    InteractionKind,
+    InteractMessage,
+    SuperChatMessage,
+)
 from bilihud.http_contracts import HttpResponse, QueryParams
 from bilihud.live.emoticons import LiveEmoticon
 from bilihud.live.gift_effects import FULL_SCREEN_EFFECT_CONFIG_URL, GiftEffectCatalog
@@ -87,6 +94,72 @@ def test_handler_emits_normalized_domain_messages():
     assert isinstance(received[1], GiftMessage)
     assert isinstance(received[2], InteractMessage)
     assert [message.author.name for message in received] == ["弹幕用户", "礼物用户", "互动用户"]
+
+
+def test_handler_emits_web_super_chat_as_a_normalized_message():
+    client = DanmakuClient(7450109)
+    received: list[HudMessage] = []
+    websocket = FakeWebSocketClient()
+    client.set_message_callback(received.append)
+    handler = DanmakuHandler()
+    handler.set_danmaku_client(client)
+
+    handler._on_super_chat(
+        websocket,
+        danmaku_client.web_models.SuperChatMessage(
+            id=19,
+            uid=8,
+            uname="醒目用户",
+            price=50,
+            message="感谢支持",
+            background_color="#223344",
+            background_bottom_color="#112233",
+            background_price_color="#FFE08A",
+        ),
+    )
+
+    assert len(received) == 1
+    assert isinstance(received[0], SuperChatMessage)
+    assert received[0].price == 50
+    assert received[0].message == "感谢支持"
+
+
+def test_handler_emits_open_platform_super_chat_as_a_normalized_message():
+    client = DanmakuClient(7450109)
+    received: list[HudMessage] = []
+    websocket = FakeWebSocketClient()
+    client.set_message_callback(received.append)
+    handler = DanmakuHandler()
+    handler.set_danmaku_client(client)
+
+    handler.handle(
+        websocket,
+        {
+            "cmd": "LIVE_OPEN_PLATFORM_SUPER_CHAT",
+            "data": {
+                "room_id": 7450109,
+                "open_id": "open-user-1",
+                "uname": "开放平台用户",
+                "uface": "",
+                "message_id": 21,
+                "message": "开放平台支持",
+                "rmb": 30,
+                "timestamp": 1700000000,
+                "start_time": 1700000000,
+                "end_time": 1700000060,
+                "guard_level": 0,
+                "fans_medal_level": 0,
+                "fans_medal_name": "",
+                "fans_medal_wearing_status": False,
+                "msg_id": "open-sc-1",
+            },
+        },
+    )
+
+    assert len(received) == 1
+    assert isinstance(received[0], SuperChatMessage)
+    assert received[0].message_id == 21
+    assert received[0].price == 30
 
 
 def test_handler_emits_web_like_click_as_normalized_interaction():

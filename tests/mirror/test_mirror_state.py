@@ -2,6 +2,7 @@ import pytest
 
 from bilihud.danmaku.messages import (
     DanmakuMessage,
+    GiftCurrency,
     GiftEffectFrame,
     GiftEffectLayout,
     GiftMessage,
@@ -12,6 +13,7 @@ from bilihud.danmaku.messages import (
     MessageBadge,
     MessageBadgeKind,
     ReplySegment,
+    SuperChatMessage,
     SystemMessageLevel,
     TextSegment,
     make_system_message,
@@ -195,6 +197,8 @@ def test_message_to_mirror_entry_converts_gift_message():
         "userColor": "#FFD700",
         "segments": [{"type": "text", "text": "赠送 辣条 x3"}],
         "giftId": 0,
+        "giftAction": "赠送",
+        "giftValue": "",
         "giftName": "辣条",
         "giftQuantity": 3,
         "giftImageUrl": "",
@@ -223,6 +227,38 @@ def test_message_to_mirror_entry_preserves_packed_gift_effect_layout():
         "rgbFrame": {"x": 0, "y": 0, "width": 720, "height": 1280},
         "alphaFrame": {"x": 724, "y": 0, "width": 360, "height": 640},
     }
+
+
+def test_message_to_mirror_entry_preserves_gift_animation_url():
+    message = GiftMessage(
+        author=_author(color="#FFD700"),
+        segments=(TextSegment("赠送 小花花 x1"),),
+        action="赠送",
+        gift_name="小花花",
+        quantity=1,
+        gift_animation_url="https://i0.hdslb.com/bfs/live/flower.gif",
+    )
+
+    entry = message_to_mirror_entry(6, message)
+
+    assert entry["giftAction"] == "赠送"
+    assert entry["giftAnimationUrl"] == "https://i0.hdslb.com/bfs/live/flower.gif"
+
+
+def test_message_to_mirror_entry_serializes_total_gift_value_in_yuan():
+    message = GiftMessage(
+        author=_author(color="#FFD700"),
+        segments=(TextSegment("赠送 辣条 x2"),),
+        action="赠送",
+        gift_name="辣条",
+        quantity=2,
+        unit_price=1000,
+        currency=GiftCurrency.GOLD,
+    )
+
+    entry = message_to_mirror_entry(7, message)
+
+    assert entry["giftValue"] == "¥2"
 
 
 def test_message_to_mirror_entry_converts_interact_message():
@@ -265,6 +301,34 @@ def test_message_to_mirror_entry_converts_system_message():
         "user": " [系统]",
         "userColor": "#FF5555",
         "segments": [{"type": "text", "text": "连接失败"}],
+    }
+
+
+def test_message_to_mirror_entry_converts_super_chat_theme_metadata():
+    message = SuperChatMessage(
+        author=_author(name="SC用户", color="#FFE08A"),
+        segments=(TextSegment("支持主播"),),
+        message_id=12,
+        price=30,
+        message="支持主播",
+        background_color="#223344",
+        background_bottom_color="#112233",
+        background_price_color="#FFE08A",
+    )
+
+    entry = message_to_mirror_entry(7, message)
+
+    assert entry == {
+        "seq": 7,
+        "kind": "super_chat",
+        "user": "SC用户",
+        "userColor": "#FFE08A",
+        "segments": [{"type": "text", "text": "支持主播"}],
+        "scId": 12,
+        "scPrice": 30,
+        "scBackgroundColor": "#223344",
+        "scBackgroundBottomColor": "#112233",
+        "scBackgroundPriceColor": "#FFE08A",
     }
 
 

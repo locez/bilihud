@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import blivedm.models.open_live as open_models
 import blivedm.models.web as web_models
 
+from ..live.gift_effects import normalize_official_resource_url
 from .messages import (
     DanmakuMessage,
     GiftCurrency,
@@ -26,6 +27,7 @@ from .messages import (
     MessageBadgeKind,
     MessageSegment,
     ReplySegment,
+    SuperChatMessage,
     SystemMessageLevel,
     TextSegment,
     make_system_message,
@@ -40,6 +42,9 @@ VIP_COLOR = "#FF69B4"
 ADMIN_COLOR = "#FF4500"
 MEDAL_BADGE_COLOR = "#FF79C6"
 WEALTH_BADGE_COLOR = "#C9B6FF"
+SC_DEFAULT_BACKGROUND_COLOR = "#3C2A4D"
+SC_DEFAULT_BOTTOM_COLOR = "#2A2038"
+SC_DEFAULT_PRICE_COLOR = "#FFD86E"
 GUARD_NAMES = {1: "总督", 2: "提督", 3: "舰长"}
 GUARD_GIFT_IDS = {1: 10001, 2: 10002, 3: 10003}
 # ``effect_id`` is the buyer-side animation; these are the room-side fallbacks
@@ -71,6 +76,8 @@ def to_hud_message(message: object) -> HudMessage:
     try:
         if isinstance(message, web_models.DanmakuMessage):
             return _danmaku_message(message)
+        if isinstance(message, web_models.SuperChatMessage):
+            return _super_chat_message(message)
         if isinstance(message, web_models.GiftMessage):
             return _gift_message(message)
         if isinstance(message, web_models.GuardBuyMessage):
@@ -110,6 +117,55 @@ def _gift_message(message: web_models.GiftMessage) -> GiftMessage:
     return to_hud_gift_message(message)
 
 
+def _super_chat_message(message: web_models.SuperChatMessage) -> SuperChatMessage:
+    """Normalize a web Super Chat event into the shared HUD contract."""
+    return to_hud_super_chat_message(message)
+
+
+def to_hud_super_chat_message(message: web_models.SuperChatMessage) -> SuperChatMessage:
+    """Convert a web Super Chat event and preserve its official card colors and assets."""
+    content = _string(message.message).strip()
+    price_color = _sc_color(message.background_price_color, SC_DEFAULT_PRICE_COLOR)
+    author = MessageAuthor(
+        uid=max(0, _integer(message.uid)),
+        name=_string(message.uname),
+        color=price_color,
+    )
+    return SuperChatMessage(
+        author=author,
+        segments=(TextSegment(content),),
+        message_id=max(0, _integer(message.id)),
+        price=max(0, _integer(message.price)),
+        message=content,
+        start_time=max(0, _integer(message.start_time)),
+        end_time=max(0, _integer(message.end_time)),
+        background_color=_sc_color(message.background_color, SC_DEFAULT_BACKGROUND_COLOR),
+        background_bottom_color=_sc_color(message.background_bottom_color, SC_DEFAULT_BOTTOM_COLOR),
+        background_icon=normalize_official_resource_url(message.background_icon),
+        background_image=normalize_official_resource_url(message.background_image),
+        background_price_color=price_color,
+    )
+
+
+def to_hud_open_super_chat_message(message: open_models.SuperChatMessage) -> SuperChatMessage:
+    """Convert an open-platform Super Chat event using the shared fallback theme."""
+    content = _string(message.message).strip()
+    author = MessageAuthor(
+        uid=0,
+        name=_string(message.uname),
+        color=SC_DEFAULT_PRICE_COLOR,
+    )
+    return SuperChatMessage(
+        author=author,
+        segments=(TextSegment(content),),
+        message_id=max(0, _integer(message.message_id)),
+        price=max(0, _integer(message.rmb)),
+        message=content,
+        start_time=max(0, _integer(message.start_time)),
+        end_time=max(0, _integer(message.end_time)),
+    )
+
+
 def to_hud_gift_message(
     message: web_models.GiftMessage,
     *,
@@ -136,7 +192,7 @@ def to_hud_gift_message(
         gift_id=gift_id,
         gift_image_url=gift_image_url,
         gift_effect_url=_http_url(gift_effect_url),
-        gift_animation_url=_http_url(gift_animation_url),
+        gift_animation_url=normalize_official_resource_url(gift_animation_url),
         gift_effect_layout=gift_effect_layout,
     )
 
@@ -171,7 +227,7 @@ def to_hud_guard_message(
         currency=GiftCurrency.GOLD,
         gift_id=gift_id,
         gift_effect_url=_http_url(gift_effect_url),
-        gift_animation_url=_http_url(gift_animation_url),
+        gift_animation_url=normalize_official_resource_url(gift_animation_url),
         gift_effect_layout=gift_effect_layout,
     )
 
@@ -336,6 +392,14 @@ def _gift_currency(value: object) -> GiftCurrency:
         "gold": GiftCurrency.GOLD,
         "silver": GiftCurrency.SILVER,
     }.get(coin_type, GiftCurrency.UNKNOWN)
+
+
+def _sc_color(value: object, fallback: str) -> str:
+    """Accept only six-digit hex colors before they reach Qt rich-text CSS."""
+    color = _string(value).strip()
+    if re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+        return color
+    return fallback
 
 
 def _interact_message(message: web_models.InteractWordV2Message) -> InteractMessage:

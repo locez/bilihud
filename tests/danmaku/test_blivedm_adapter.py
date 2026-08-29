@@ -3,7 +3,6 @@ import importlib
 import pytest
 
 from bilihud.danmaku.blivedm_adapter import (
-    MessageConversionError,
     parse_guard_purchase,
     to_hud_gift_message,
     to_hud_guard_message,
@@ -19,6 +18,7 @@ from bilihud.danmaku.messages import (
     InteractMessage,
     MessageBadgeKind,
     ReplySegment,
+    SuperChatMessage,
     SystemMessage,
     SystemMessageLevel,
     TextSegment,
@@ -111,6 +111,11 @@ def test_to_hud_gift_message_keeps_normalized_official_effect_urls():
 
     assert gift.gift_effect_url == "https://i0.hdslb.com/bfs/live/castle.mp4"
     assert gift.gift_animation_url == "https://i0.hdslb.com/bfs/live/castle.gif"
+    untrusted = to_hud_gift_message(
+        raw_message,
+        gift_animation_url="https://example.com/castle.gif",
+    )
+    assert untrusted.gift_animation_url == ""
 
 
 def test_guard_purchase_uses_the_anchor_effect_instead_of_the_buyer_effect():
@@ -194,9 +199,34 @@ def test_to_hud_message_degrades_malformed_optional_emoticon_metadata_to_text():
     assert message.segments == (TextSegment("[坏表情]"),)
 
 
-def test_to_hud_message_rejects_unsupported_third_party_models():
-    with pytest.raises(MessageConversionError, match="unsupported blivedm message type"):
-        to_hud_message(web_models.SuperChatMessage(message="不支持"))
+def test_to_hud_message_converts_super_chat_with_official_theme_metadata():
+    message = to_hud_message(
+        web_models.SuperChatMessage(
+            id=42,
+            uid=7,
+            uname="SC用户",
+            price=30,
+            message="支持换行\n也要转义 <内容>",
+            start_time=100,
+            end_time=160,
+            background_color="#123456",
+            background_bottom_color="#654321",
+            background_price_color="#ABCDEF",
+            background_image="https://i0.hdslb.com/bfs/live/sc.png",
+            background_icon="https://example.com/untrusted.png",
+        )
+    )
+
+    assert isinstance(message, SuperChatMessage)
+    assert message.message_id == 42
+    assert message.price == 30
+    assert message.author.name == "SC用户"
+    assert message.author.color == "#ABCDEF"
+    assert message.background_color == "#123456"
+    assert message.background_bottom_color == "#654321"
+    assert message.background_image.endswith("sc.png")
+    assert message.background_icon == ""
+    assert message.segments == (TextSegment("支持换行\n也要转义 <内容>"),)
 
 
 def test_to_hud_message_or_system_exposes_conversion_failure_as_domain_message():

@@ -173,6 +173,31 @@ class GiftMessage(HudMessage):
 
 
 @dataclass(frozen=True, slots=True)
+class SuperChatMessage(HudMessage):
+    """A paid Super Chat message with the official visual theme metadata."""
+
+    message_id: int
+    price: int
+    message: str
+    start_time: int = 0
+    end_time: int = 0
+    background_color: str = "#3C2A4D"
+    background_bottom_color: str = "#2A2038"
+    background_icon: str = ""
+    background_image: str = ""
+    background_price_color: str = "#FFD86E"
+
+    def __post_init__(self) -> None:
+        """Reject negative identifiers, prices, and timestamps from the wire."""
+        if self.message_id < 0:
+            raise ValueError("Super Chat message id must not be negative")
+        if self.price < 0:
+            raise ValueError("Super Chat price must not be negative")
+        if self.start_time < 0 or self.end_time < 0:
+            raise ValueError("Super Chat timestamps must not be negative")
+
+
+@dataclass(frozen=True, slots=True)
 class InteractMessage(HudMessage):
     """An audience interaction with an optional count for batched likes."""
 

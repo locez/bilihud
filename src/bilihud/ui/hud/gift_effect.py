@@ -4,19 +4,22 @@ from __future__ import annotations
 
 import logging
 import math
+from typing import Protocol
 
-from PyQt6.QtCore import QElapsedTimer, QRect, QSize, Qt, QTimer, QUrl
+from PyQt6.QtCore import QBuffer, QElapsedTimer, QIODevice, QRect, QSize, Qt, QTimer, QUrl
 from PyQt6.QtGui import (
     QCloseEvent,
     QColor,
     QFont,
     QFontMetrics,
     QImage,
+    QMovie,
     QPainter,
     QPaintEvent,
     QPen,
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QVideoFrame, QVideoSink
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from bilihud.danmaku.messages import GiftEffectLayout, GiftMessage
@@ -29,6 +32,14 @@ from bilihud.platform.overlay_contracts import (
 from bilihud.ui.window_host import QtWindowHost
 
 logger = logging.getLogger(__name__)
+
+
+class GiftAnimationNetworkManager(Protocol):
+    """Network capability used to download one official GIF for the overlay."""
+
+    def get(self, request: QNetworkRequest) -> QNetworkReply | None:
+        """Start one bounded official GIF request and return its reply handle."""
+        ...
 
 
 def compose_gift_video_frame(frame: QImage, layout: GiftEffectLayout) -> QImage | None:
@@ -69,6 +80,7 @@ class GiftEffectWindow(QWidget):
 
     _DURATION_MS = 3000
     _VIDEO_DURATION_MS = 15000
+    _GIF_MAX_BYTES = 5 * 1024 * 1024
     _FRAME_INTERVAL_MS = 16
     _VIDEO_MAX_SIZE_RATIO = 0.80
     _VIDEO_VERTICAL_OFFSET_RATIO = 0.10
@@ -95,6 +107,11 @@ class GiftEffectWindow(QWidget):
         self._video_sink.videoFrameChanged.connect(self._on_video_frame_changed)
         self._video_player.mediaStatusChanged.connect(self._on_media_status_changed)
         self._video_player.errorOccurred.connect(self._on_media_error)
+        self._network_manager: GiftAnimationNetworkManager = QNetworkAccessManager(self)
+        self._gif_generation: int = 0
+        self._gif_reply: QNetworkReply | None = None
+        self._gif_buffer: QBuffer | None = None
+        self._gif_movie: QMovie | None = None
         self._animation_timer: QTimer = QTimer(self)
         self._animation_timer.setInterval(self._FRAME_INTERVAL_MS)
         self._animation_timer.timeout.connect(self._advance_animation)
@@ -156,6 +173,8 @@ class GiftEffectWindow(QWidget):
         if has_video:
             self._video_player.setSource(QUrl(message.gift_effect_url))
             self._video_player.play()
+        elif message.gift_animation_url:
+            self._load_gif_animation(message.gift_animation_url)
         self._animation_timer.start()
         self.update()
 
@@ -201,17 +220,104 @@ class GiftEffectWindow(QWidget):
         self._video_player.stop()
         self._video_frame = None
         self._active_duration_ms = self._DURATION_MS
+        message = self._message
+        if message is not None and message.gift_animation_url:
+            self._load_gif_animation(message.gift_animation_url)
         self.update()
 
     def _clear_gift_animation(self) -> None:
-        """Stop the current official video before reusing or closing the surface."""
+        """Stop current media and cancel stale GIF downloads before reuse or close."""
+        self._gif_generation += 1
+        reply = self._gif_reply
+        self._gif_reply = None
+        if reply is not None:
+            reply.abort()
+            reply.deleteLater()
+
+        movie = self._gif_movie
+        self._gif_movie = None
+        if movie is not None:
+            movie.stop()
+            movie.deleteLater()
+
+        buffer = self._gif_buffer
+        self._gif_buffer = None
+        if buffer is not None:
+            buffer.close()
+            buffer.deleteLater()
+
         self._video_player.stop()
         self._video_frame = None
+
+    def _load_gif_animation(self, url: str) -> None:
+        """Fetch one validated official GIF and attach it to the overlay movie."""
+        self._gif_generation += 1
+        generation = self._gif_generation
+        request = QNetworkRequest(QUrl(url))
+        request.setRawHeader(b"Referer", b"https://live.bilibili.com/")
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 BiliHUD")
+        reply = self._network_manager.get(request)
+        if reply is None:
+            return
+        self._gif_reply = reply
+        reply.setReadBufferSize(self._GIF_MAX_BYTES + 1)
+        reply.downloadProgress.connect(
+            lambda received, _total, reply=reply: self._abort_oversized_gif(reply, received)
+        )
+        reply.finished.connect(
+            lambda reply=reply, generation=generation: self._on_gif_loaded(reply, generation)
+        )
+
+    def _abort_oversized_gif(self, reply: QNetworkReply, received: int) -> None:
+        """Stop an official GIF download before it exceeds the bounded overlay cache."""
+        if self._gif_reply is reply and received > self._GIF_MAX_BYTES:
+            reply.abort()
+
+    def _on_gif_loaded(self, reply: QNetworkReply, generation: int) -> None:
+        """Install a valid GIF only when it belongs to the currently visible gift."""
+        if self._gif_reply is reply:
+            self._gif_reply = None
+        error = reply.error()
+        if generation != self._gif_generation or error is not QNetworkReply.NetworkError.NoError:
+            reply.deleteLater()
+            return
+        if reply.size() > self._GIF_MAX_BYTES:
+            reply.deleteLater()
+            return
+
+        payload = reply.readAll()
+        reply.deleteLater()
+        if not payload or payload.size() > self._GIF_MAX_BYTES:
+            return
+
+        buffer = QBuffer(self)
+        buffer.setData(payload)
+        if not buffer.open(QIODevice.OpenModeFlag.ReadOnly):
+            buffer.deleteLater()
+            return
+        movie = QMovie(buffer, b"gif", self)
+        movie.setCacheMode(QMovie.CacheMode.CacheAll)
+        if not movie.isValid():
+            movie.deleteLater()
+            buffer.close()
+            buffer.deleteLater()
+            return
+
+        self._gif_buffer = buffer
+        self._gif_movie = movie
+        movie.frameChanged.connect(self._on_gif_frame_changed)
+        movie.start()
+        self.update()
+
+    def _on_gif_frame_changed(self, _frame_number: int) -> None:
+        """Repaint the transparent surface when the downloaded GIF advances."""
+        self.update()
 
     def _advance_animation(self) -> None:
         """Advance the owned timer and close the surface after its animation window."""
         if not self._clock.isValid() or self._clock.elapsed() >= self._active_duration_ms:
             self._animation_timer.stop()
+            self._clear_gift_animation()
             self.hide()
             return
         self.update()
@@ -249,6 +355,28 @@ class GiftEffectWindow(QWidget):
             )
             painter.end()
             return
+
+        gif_movie = self._gif_movie
+        if gif_movie is not None:
+            gif_pixmap = gif_movie.currentPixmap()
+            if not gif_pixmap.isNull():
+                max_gif_size = QSize(
+                    max(1, round(self.width() * self._VIDEO_MAX_SIZE_RATIO)),
+                    max(1, round(self.height() * self._VIDEO_MAX_SIZE_RATIO)),
+                )
+                scaled = gif_pixmap.scaled(
+                    max_gif_size,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                vertical_offset = round(scaled.height() * self._VIDEO_VERTICAL_OFFSET_RATIO)
+                painter.drawPixmap(
+                    self.rect().center().x() - scaled.width() // 2,
+                    self.rect().center().y() - scaled.height() // 2 - vertical_offset,
+                    scaled,
+                )
+                painter.end()
+                return
 
         center = self.rect().center()
         base_radius = max(120, min(self.width(), self.height()) // 7)

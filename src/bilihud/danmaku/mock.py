@@ -18,13 +18,19 @@ from .messages import (
     MessageBadge,
     MessageBadgeKind,
     ReplySegment,
+    SuperChatMessage,
     SystemMessageLevel,
     TextSegment,
     make_system_message,
 )
 
 # Hashed Bilibili CDN paths make the developer fixture independent of a live room.
+MOCK_FLOWER_GIFT_ID = 31036
+MOCK_FLOWER_UNIT_PRICE = 100
+MOCK_FLOWER_IMAGE_URL = "https://s1.hdslb.com/bfs/live/5126973892625f3a43a8290be6b625b5e54261a5.png"
+MOCK_FLOWER_ANIMATION_URL = "https://i0.hdslb.com/bfs/live/c806ee29394aab4877fa3d535daca5c66c631306.gif"
 MOCK_LITTLE_TV_GIFT_ID = 31115
+MOCK_LITTLE_TV_UNIT_PRICE = 1_000_000
 MOCK_LITTLE_TV_IMAGE_URL = "https://s1.hdslb.com/bfs/live/037ff1f5dbf1cb996a39cedc8b67fcdb04b00cdc.png"
 MOCK_LITTLE_TV_EFFECT_URL = "https://i0.hdslb.com/bfs/live/2324bda944b2aaaafbc54f30d506b39aa63b53af.mp4"
 MOCK_LITTLE_TV_ANIMATION_URL = "https://i0.hdslb.com/bfs/live/2b6e17d10c09072c2007ed462e4d3257e99481cc.gif"
@@ -60,6 +66,7 @@ class MockScenarioId(StrEnum):
     BASIC = "basic"
     BADGES = "badges"
     PAID_GIFTS = "paid-gifts"
+    SUPER_CHAT = "super-chat"
     ADVANCED_GIFT_EFFECTS = "advanced-gift-effects"
     INTERACTIONS = "interactions"
     SYSTEM = "system"
@@ -123,12 +130,22 @@ def mock_message_scenarios() -> tuple[MockMessageScenario, ...]:
             MockScenarioId.PAID_GIFTS,
             "付费礼物",
             (
-                _gift("辣条", "赠送", 3, 1000, "小额礼物用户", 301),
+                _gift(
+                    "小花花",
+                    "赠送",
+                    3,
+                    MOCK_FLOWER_UNIT_PRICE,
+                    "小额礼物用户",
+                    301,
+                    gift_id=MOCK_FLOWER_GIFT_ID,
+                    gift_image_url=MOCK_FLOWER_IMAGE_URL,
+                    gift_animation_url=MOCK_FLOWER_ANIMATION_URL,
+                ),
                 _gift(
                     "鸿运小电视",
                     "送出",
                     1,
-                    1000000,
+                    MOCK_LITTLE_TV_UNIT_PRICE,
                     "大额礼物用户",
                     302,
                     gift_id=MOCK_LITTLE_TV_GIFT_ID,
@@ -136,6 +153,24 @@ def mock_message_scenarios() -> tuple[MockMessageScenario, ...]:
                     gift_effect_url=MOCK_LITTLE_TV_EFFECT_URL,
                     gift_animation_url=MOCK_LITTLE_TV_ANIMATION_URL,
                     gift_effect_layout=MOCK_LITTLE_TV_EFFECT_LAYOUT,
+                ),
+            ),
+        ),
+        MockMessageScenario(
+            MockScenarioId.SUPER_CHAT,
+            "醒目留言",
+            (
+                SuperChatMessage(
+                    author=_author(350, "醒目留言用户", color="#FFE08A"),
+                    segments=(TextSegment("这是一条 SC 测试消息"),),
+                    message_id=3501,
+                    price=30,
+                    message="这是一条 SC 测试消息",
+                    start_time=1700000000,
+                    end_time=1700000060,
+                    background_color="#3C2A4D",
+                    background_bottom_color="#2A2038",
+                    background_price_color="#FFD86E",
                 ),
             ),
         ),

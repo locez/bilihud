@@ -74,6 +74,14 @@ def test_mirror_html_uses_transparent_page_and_event_source():
     assert "persistPanelLayout" in page
     assert "setPanelSize" in page
     assert "is-resizing" in page
+    assert "renderGiftEntry" in page
+    assert "proxyImageUrl(entry.giftAnimationUrl)" in page
+    assert "gift-animation-row" in page
+    assert "appendGiftValue" in page
+    assert "entry.giftValue" in page
+    assert "renderGiftText(row, entry)" in page
+    assert "super-chat" in page
+    assert "renderSuperChatEntry" in page
 
 
 def test_mirror_html_defaults_to_2k_stream_readable_styles():

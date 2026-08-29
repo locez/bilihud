@@ -1,8 +1,10 @@
+from bilihud.danmaku.format import gift_value_text
 from bilihud.danmaku.messages import (
     DanmakuMessage,
     GiftCurrency,
     GiftMessage,
     MessageBadgeKind,
+    SuperChatMessage,
     SystemMessage,
     SystemMessageLevel,
 )
@@ -14,12 +16,17 @@ from bilihud.danmaku.mock import (
     MOCK_CASTLE_EFFECT_LAYOUT,
     MOCK_CASTLE_EFFECT_URL,
     MOCK_CASTLE_GIFT_ID,
+    MOCK_FLOWER_ANIMATION_URL,
+    MOCK_FLOWER_GIFT_ID,
+    MOCK_FLOWER_IMAGE_URL,
+    MOCK_FLOWER_UNIT_PRICE,
     MOCK_GOVERNOR_EFFECT_URL,
     MOCK_GOVERNOR_GIFT_ID,
     MOCK_GUARD_EFFECT_LAYOUT,
     MOCK_LITTLE_TV_EFFECT_LAYOUT,
     MOCK_LITTLE_TV_EFFECT_URL,
     MOCK_LITTLE_TV_GIFT_ID,
+    MOCK_LITTLE_TV_UNIT_PRICE,
     MockGiftEffectId,
     MockScenarioId,
     mock_gift_effect_message,
@@ -36,6 +43,7 @@ def test_mock_message_batch_is_deterministic_and_covers_domain_variants():
     assert first == second
     assert any(isinstance(message, DanmakuMessage) for message in first)
     assert any(isinstance(message, GiftMessage) for message in first)
+    assert any(isinstance(message, SuperChatMessage) for message in first)
     assert any(isinstance(message, SystemMessage) for message in first)
 
 
@@ -45,12 +53,16 @@ def test_mock_message_batch_keeps_advanced_effects_out_of_standard_simulation():
     guard_messages = [message for message in messages if isinstance(message, DanmakuMessage)]
 
     assert [(gift.gift_name, gift.unit_price, gift.currency, gift.total_price) for gift in gifts] == [
-        ("辣条", 1000, GiftCurrency.GOLD, 3000),
-        ("鸿运小电视", 1000000, GiftCurrency.GOLD, 1000000),
+        ("小花花", MOCK_FLOWER_UNIT_PRICE, GiftCurrency.GOLD, 300),
+        ("鸿运小电视", MOCK_LITTLE_TV_UNIT_PRICE, GiftCurrency.GOLD, 1000000),
     ]
+    flower = next(gift for gift in gifts if gift.gift_id == MOCK_FLOWER_GIFT_ID)
+    assert flower.gift_image_url == MOCK_FLOWER_IMAGE_URL
+    assert flower.gift_animation_url == MOCK_FLOWER_ANIMATION_URL
     little_tv = next(gift for gift in gifts if gift.gift_id == MOCK_LITTLE_TV_GIFT_ID)
     assert little_tv.gift_effect_url == MOCK_LITTLE_TV_EFFECT_URL
     assert little_tv.gift_effect_layout == MOCK_LITTLE_TV_EFFECT_LAYOUT
+    assert [gift_value_text(gift) for gift in gifts] == ["¥0.3", "¥1000"]
     assert [
         message.author.badges[0].text
         for message in guard_messages
@@ -103,6 +115,7 @@ def test_mock_message_scenarios_include_system_info_and_error_messages():
         MockScenarioId.BASIC,
         MockScenarioId.BADGES,
         MockScenarioId.PAID_GIFTS,
+        MockScenarioId.SUPER_CHAT,
         MockScenarioId.ADVANCED_GIFT_EFFECTS,
         MockScenarioId.INTERACTIONS,
         MockScenarioId.SYSTEM,
