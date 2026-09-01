@@ -67,7 +67,11 @@ python313Packages.buildPythonApplication {
   ];
 
   dontUseCmakeConfigure = true;
-  pypaBuildFlags = [ "--config-setting=cmake.define.BILIHUD_LAYER_SHELL=ON" ];
+  # Qt's setup hook supplies cmake.args on the CLI, overriding pyproject.toml.
+  pypaBuildFlags = [
+    "--config-setting=cmake.define.BILIHUD_INSTALL_DIR=bilihud"
+    "--config-setting=cmake.define.BILIHUD_LAYER_SHELL=ON"
+  ];
 
   # Let the Python application wrapper carry Qt's plugin and platform paths.
   dontWrapQtApps = true;
