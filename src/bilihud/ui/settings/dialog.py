@@ -49,6 +49,7 @@ from bilihud.ui.settings.style import ModernComboBox, ModernSpinBox, settings_st
 class SettingsDialog(QDialog):
     """Render one frameless settings surface with embedded feature pages."""
 
+    _WINDOW_RADIUS = 16
     _DRAG_REGION_HEIGHT = 92
     _CLOSE_REGION_WIDTH = 48
     _CLOSE_BUTTON_SIZE = 32
@@ -96,9 +97,12 @@ class SettingsDialog(QDialog):
         icon_path = Path(__file__).resolve().parents[2] / "assets" / "icon.png"
         self.setWindowIcon(QIcon(str(icon_path)))
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        self.setObjectName("settings_dialog")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMinimumSize(760, 540)
         self.resize(900, 620)
         self._init_ui()
+        self._update_window_mask()
         self.set_config(config)
 
     def _init_ui(self) -> None:
@@ -426,7 +430,33 @@ class SettingsDialog(QDialog):
     def resizeEvent(self, a0: QResizeEvent | None) -> None:
         """Keep the top drag region aligned with the frameless window bounds."""
         super().resizeEvent(a0)
+        self._update_window_mask()
         self._update_drag_region()
+
+    def _update_window_mask(self) -> None:
+        """Clip the translucent settings window to a subtle rounded rectangle."""
+        rect = self.rect()
+        radius = min(self._WINDOW_RADIUS, rect.width() // 2, rect.height() // 2)
+        if radius <= 0:
+            self.clearMask()
+            return
+        diameter = radius * 2
+        mask = QRegion(QRect(radius, 0, rect.width() - diameter, rect.height()))
+        mask |= QRegion(QRect(0, radius, rect.width(), rect.height() - diameter))
+        mask |= QRegion(QRect(0, 0, diameter, diameter), QRegion.RegionType.Ellipse)
+        mask |= QRegion(
+            QRect(rect.width() - diameter, 0, diameter, diameter),
+            QRegion.RegionType.Ellipse,
+        )
+        mask |= QRegion(
+            QRect(0, rect.height() - diameter, diameter, diameter),
+            QRegion.RegionType.Ellipse,
+        )
+        mask |= QRegion(
+            QRect(rect.width() - diameter, rect.height() - diameter, diameter, diameter),
+            QRegion.RegionType.Ellipse,
+        )
+        self.setMask(mask)
 
     def _update_drag_region(self) -> None:
         """Cover the full top chrome while leaving the close-button column interactive."""

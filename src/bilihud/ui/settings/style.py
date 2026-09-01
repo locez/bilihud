@@ -108,8 +108,18 @@ def settings_stylesheet(appearance: Appearance) -> str:
     """Return the palette stylesheet shared by every embedded settings page."""
     return f"""
         QDialog {{ background: {appearance.window}; color: {appearance.text}; }}
-        QFrame#sidebar {{ background: {appearance.surface}; border-right: 1px solid {appearance.border}; }}
-        QFrame#content {{ background: {appearance.window}; }}
+        QDialog#settings_dialog {{ background: transparent; border-radius: 16px; }}
+        QFrame#sidebar {{
+            background: {appearance.surface};
+            border-right: 1px solid {appearance.border};
+            border-top-left-radius: 16px;
+            border-bottom-left-radius: 16px;
+        }}
+        QFrame#content {{
+            background: {appearance.window};
+            border-top-right-radius: 16px;
+            border-bottom-right-radius: 16px;
+        }}
         QFrame#settings_header {{ background: transparent; }}
         QFrame#action_bar {{ border-top: 1px solid {appearance.border}; }}
         QFrame#live_actions {{ border-top: 1px solid {appearance.border}; }}

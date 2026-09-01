@@ -147,6 +147,24 @@ def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
     dialog.close()
 
 
+def test_settings_dialog_uses_a_rounded_translucent_surface() -> None:
+    app = _app()
+    dialog = SettingsDialog(None, AppConfig())
+    dialog.show()
+    app.processEvents()
+
+    mask = dialog.mask()
+    assert dialog.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    assert not mask.isEmpty()
+    assert not mask.contains(QPoint(0, 0))
+    assert not mask.contains(QPoint(dialog.width() - 1, 0))
+    assert not mask.contains(QPoint(0, dialog.height() - 1))
+    assert not mask.contains(QPoint(dialog.width() - 1, dialog.height() - 1))
+    assert mask.contains(QPoint(dialog.width() // 2, dialog.height() // 2))
+
+    dialog.close()
+
+
 def test_account_page_opens_bilibili_live_record_url(monkeypatch) -> None:
     _app()
     page = AccountSettingsPage()
