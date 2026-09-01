@@ -104,6 +104,27 @@ sudo emerge --ask app-misc/bilihud
 
 桌面礼物特效需要 PyQt6 的 `multimedia` USE flag，HUD 图标需要 `svg` USE flag；上述 Gentoo ebuild 已声明这些运行依赖。
 
+#### NixOS / Nix
+
+在 NixOS Flake 中添加输入：
+
+```nix
+inputs.bilihud.url = "github:locez/bilihud";
+```
+
+然后将其加入系统包：
+
+```nix
+{ inputs, pkgs, ... }:
+{
+  environment.systemPackages = [
+    inputs.bilihud.packages.${pkgs.stdenv.hostPlatform.system}.default
+  ];
+}
+```
+
+如果桌面会话没有提供 Secret Service，可启用 `services.gnome.gnome-keyring.enable = true;`，用于安全保存登录会话。
+
 ### 源码安装
 
 #### 系统依赖
