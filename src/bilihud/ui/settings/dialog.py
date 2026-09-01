@@ -546,9 +546,10 @@ class SettingsDialog(QDialog):
         theme = value if isinstance(value, ThemeMode) else ThemeMode.SYSTEM
         mirror_page = self._mirror_page
         if mirror_page is None:
-            mirror_gift_effects, overlay_gift_effects, hud_font_family = (
+            mirror_gift_effects, overlay_gift_effects, show_user_avatars, hud_font_family = (
                 self._config_snapshot.mirror_gift_effects_enabled,
                 self._config_snapshot.overlay_gift_effects_enabled,
+                self._config_snapshot.show_user_avatars,
                 self._config_snapshot.hud_font_family,
             )
             danmaku_x = self._config_snapshot.mirror_danmaku_x
@@ -557,6 +558,7 @@ class SettingsDialog(QDialog):
             (
                 mirror_gift_effects,
                 overlay_gift_effects,
+                show_user_avatars,
                 hud_font_family,
                 danmaku_x,
                 danmaku_y,
@@ -567,6 +569,7 @@ class SettingsDialog(QDialog):
             window_opacity=self.opacity_spinbox.value(),
             mirror_gift_effects_enabled=mirror_gift_effects,
             overlay_gift_effects_enabled=overlay_gift_effects,
+            show_user_avatars=show_user_avatars,
             hud_font_family=hud_font_family,
             mirror_danmaku_x=danmaku_x,
             mirror_danmaku_y=danmaku_y,

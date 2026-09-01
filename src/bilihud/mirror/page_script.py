@@ -15,6 +15,7 @@ def render_page_script(events_route: str, settings_json: str) -> str:
     const PANEL_MIN_HEIGHT = 96;
     const PANEL_RESIZE_HANDLE_SIZE = 24;
     let giftEffectsEnabled = false;
+    let userAvatarsEnabled = false;
     let panelLayout = null;
     let interactionState = null;
     let panelInitialized = false;
@@ -64,6 +65,9 @@ def render_page_script(events_route: str, settings_json: str) -> str:
 
     function applySettings(settings) {{
       giftEffectsEnabled = settings.giftEffects === true;
+      const nextUserAvatarsEnabled = settings.userAvatars === true;
+      const avatarsChanged = nextUserAvatarsEnabled !== userAvatarsEnabled;
+      userAvatarsEnabled = nextUserAvatarsEnabled;
       const fontFamily = typeof settings.fontFamily === "string"
         ? settings.fontFamily.trim()
         : "";
@@ -83,6 +87,7 @@ def render_page_script(events_route: str, settings_json: str) -> str:
         restorePanelLayout();
         persistPanelLayout();
       }}
+      if (avatarsChanged) syncUserAvatars();
     }}
 
     applySettings({settings_json});
@@ -185,6 +190,41 @@ def render_page_script(events_route: str, settings_json: str) -> str:
       parent.appendChild(document.createTextNode(text));
     }}
 
+    function appendUserAvatar(parent, entry) {{
+      const avatarUrl = typeof entry.userAvatarUrl === "string" ? entry.userAvatarUrl.trim() : "";
+      if (!avatarUrl) return;
+      const slot = document.createElement("span");
+      slot.className = "user-avatar-slot";
+      slot.dataset.avatarUrl = avatarUrl;
+      slot.dataset.avatarAlt = entry.user ? entry.user + "的头像" : "用户头像";
+      parent.appendChild(slot);
+      syncUserAvatar(slot);
+    }}
+
+    function syncUserAvatar(slot) {{
+      if (!userAvatarsEnabled) {{
+        slot.replaceChildren();
+        return;
+      }}
+      if (slot.firstElementChild !== null) return;
+      const avatarUrl = slot.dataset.avatarUrl || "";
+      if (!avatarUrl) return;
+      const avatar = document.createElement("img");
+      avatar.className = "user-avatar";
+      avatar.width = 28;
+      avatar.height = 28;
+      avatar.alt = slot.dataset.avatarAlt || "用户头像";
+      avatar.addEventListener("error", () => avatar.remove(), {{ once: true }});
+      slot.appendChild(avatar);
+      avatar.src = proxyImageUrl(avatarUrl);
+    }}
+
+    function syncUserAvatars() {{
+      for (const slot of document.querySelectorAll(".user-avatar-slot")) {{
+        syncUserAvatar(slot);
+      }}
+    }}
+
     function proxyImageUrl(url) {{
       return "{MIRROR_IMAGE_ROUTE}?url=" + encodeURIComponent(url || "");
     }}
@@ -227,6 +267,7 @@ def render_page_script(events_route: str, settings_json: str) -> str:
     function renderGiftText(row, entry) {{
       row.className = "message gift";
       row.replaceChildren();
+      appendUserAvatar(row, entry);
 
       const user = document.createElement("span");
       user.className = "gift-user";
@@ -248,6 +289,7 @@ def render_page_script(events_route: str, settings_json: str) -> str:
     function renderGiftAnimation(row, entry) {{
       row.className = "message gift gift-animation-row";
       row.replaceChildren();
+      appendUserAvatar(row, entry);
 
       const user = document.createElement("span");
       user.className = "gift-user";
@@ -488,6 +530,7 @@ def render_page_script(events_route: str, settings_json: str) -> str:
       label.className = "super-chat-label";
       label.textContent = "SC";
       header.appendChild(label);
+      appendUserAvatar(header, entry);
       const user = document.createElement("span");
       user.className = "super-chat-user";
       user.textContent = entry.user || "";
@@ -523,6 +566,7 @@ def render_page_script(events_route: str, settings_json: str) -> str:
       const row = document.createElement("div");
       row.className = "message";
       row.dataset.seq = String(entry.seq);
+      appendUserAvatar(row, entry);
 
       for (const badgeData of entry.badges || []) {{
         const badge = document.createElement("span");

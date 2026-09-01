@@ -31,6 +31,7 @@ def test_to_hud_message_converts_danmaku_into_typed_fragments_and_badges():
     raw_message = web_models.DanmakuMessage(
         uid=7,
         uname="Locez",
+        face="https://i0.hdslb.com/bfs/face/danmaku.png",
         msg="[汤圆] ok",
         mode_info={
             "extra": {
@@ -56,6 +57,7 @@ def test_to_hud_message_converts_danmaku_into_typed_fragments_and_badges():
     assert isinstance(message, DanmakuMessage)
     assert message.author.uid == 7
     assert message.author.name == "Locez"
+    assert message.author.avatar_url == "https://i0.hdslb.com/bfs/face/danmaku.png"
     assert message.author.color == "#FFD700"
     assert [badge.kind for badge in message.author.badges] == [
         MessageBadgeKind.MEDAL,
@@ -69,11 +71,25 @@ def test_to_hud_message_converts_danmaku_into_typed_fragments_and_badges():
     )
 
 
+def test_to_hud_message_discards_non_http_avatar_urls():
+    message = to_hud_message(
+        web_models.DanmakuMessage(
+            uname="不可信用户",
+            face="file:///tmp/avatar.png",
+            msg="测试",
+        )
+    )
+
+    assert isinstance(message, DanmakuMessage)
+    assert message.author.avatar_url == ""
+
+
 def test_to_hud_message_converts_gift_and_interaction_variants():
     gift = to_hud_message(
         web_models.GiftMessage(
             uid=3,
             uname="观众",
+            face="https://i0.hdslb.com/bfs/face/gift.png",
             action="赠送",
             gift_name="辣条",
             num=2,
@@ -83,10 +99,18 @@ def test_to_hud_message_converts_gift_and_interaction_variants():
             gift_img_basic="https://i0.hdslb.com/bfs/live/laitiao.png",
         )
     )
-    interact = to_hud_message(web_models.InteractWordV2Message(uid=4, username="新观众", msg_type=2))
+    interact = to_hud_message(
+        web_models.InteractWordV2Message(
+            uid=4,
+            username="新观众",
+            face="https://i0.hdslb.com/bfs/face/interact.png",
+            msg_type=2,
+        )
+    )
 
     assert isinstance(gift, GiftMessage)
     assert gift.author.name == "观众"
+    assert gift.author.avatar_url == "https://i0.hdslb.com/bfs/face/gift.png"
     assert gift.quantity == 2
     assert gift.unit_price == 1000
     assert gift.currency is GiftCurrency.GOLD
@@ -96,6 +120,7 @@ def test_to_hud_message_converts_gift_and_interaction_variants():
     assert gift.segments == (TextSegment("赠送 辣条 x2"),)
     assert isinstance(interact, InteractMessage)
     assert interact.author.name == "新观众"
+    assert interact.author.avatar_url == "https://i0.hdslb.com/bfs/face/interact.png"
     assert interact.interaction is InteractionKind.FOLLOW
     assert interact.segments == (TextSegment("关注了主播"),)
 
@@ -149,7 +174,13 @@ def test_guard_purchase_uses_the_anchor_effect_instead_of_the_buyer_effect():
 
 def test_guard_toast_parser_uses_room_effect_and_filters_gifted_duplicate():
     raw_toast = {
-        "sender_uinfo": {"uid": 8, "base": {"name": "提督用户"}},
+        "sender_uinfo": {
+            "uid": 8,
+            "base": {
+                "name": "提督用户",
+                "face": "https://i0.hdslb.com/bfs/face/guard.png",
+            },
+        },
         "guard_info": {"guard_level": 2, "start_time": 456},
         "pay_info": {"num": 1, "price": 1998000},
         "gift_info": {"gift_id": 10002, "gift_name": "提督"},
@@ -168,6 +199,7 @@ def test_guard_toast_parser_uses_room_effect_and_filters_gifted_duplicate():
     assert purchase is not None
     assert purchase.effect_id == 591
     assert purchase.event_id == "456"
+    assert purchase.avatar_url == "https://i0.hdslb.com/bfs/face/guard.png"
     assert duplicate is None
 
 
@@ -205,6 +237,7 @@ def test_to_hud_message_converts_super_chat_with_official_theme_metadata():
             id=42,
             uid=7,
             uname="SC用户",
+            face="https://i0.hdslb.com/bfs/face/super-chat.png",
             price=30,
             message="支持换行\n也要转义 <内容>",
             start_time=100,
@@ -221,6 +254,7 @@ def test_to_hud_message_converts_super_chat_with_official_theme_metadata():
     assert message.message_id == 42
     assert message.price == 30
     assert message.author.name == "SC用户"
+    assert message.author.avatar_url == "https://i0.hdslb.com/bfs/face/super-chat.png"
     assert message.author.color == "#ABCDEF"
     assert message.background_color == "#123456"
     assert message.background_bottom_color == "#654321"

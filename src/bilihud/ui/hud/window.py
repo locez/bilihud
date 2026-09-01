@@ -78,10 +78,14 @@ class DanmakuListPort(Protocol):
 
 
 class DanmakuDelegatePort(Protocol):
-    """Delegate operation needed when an old history item is removed."""
+    """Delegate operations needed by the HUD message list lifecycle."""
 
     def set_font_family(self, font_family: str) -> None:
         """Apply the selected HUD font to rendered documents."""
+        ...
+
+    def set_show_user_avatars(self, enabled: bool) -> None:
+        """Apply the shared avatar preference to rendered documents."""
         ...
 
     def forget_message(self, message: HudMessage) -> None:
@@ -215,6 +219,7 @@ class DanmakuWidget(QWidget):
             on_gift_effect_simulation=self.trigger_gift_effect_simulation,
             on_opacity_changed=self._apply_hud_opacity,
             on_hud_font_changed=self._apply_hud_font,
+            on_user_avatars_changed=self._apply_user_avatars,
         )
         self.mirror_controller = MirrorController(
             self,
@@ -237,6 +242,7 @@ class DanmakuWidget(QWidget):
             logger.warning("Platform window preparation failed: %s", prepare_result.reason)
         self.init_ui()
         self._apply_hud_font(config.hud_font_family)
+        self._apply_user_avatars(config.show_user_avatars)
         self.setup_tray_icon()
         self.window_mode_controller = WindowModeController(self, self.overlay_platform)
         self.update_gaming_mode_availability()
@@ -346,6 +352,10 @@ class DanmakuWidget(QWidget):
         """Apply the configured font to desktop HUD text and fallback effects."""
         self._danmaku_delegate.set_font_family(font_family)
         self.gift_effect_window.set_font_family(font_family)
+
+    def _apply_user_avatars(self, enabled: bool) -> None:
+        """Apply the shared avatar preference to the desktop message renderer."""
+        self._danmaku_delegate.set_show_user_avatars(enabled)
 
     def paintEvent(self, a0: QPaintEvent | None) -> None:
         """自定义绘制背景，实现轻微的渐变面板效果 (非穿透模式下)"""

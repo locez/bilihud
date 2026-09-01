@@ -69,6 +69,7 @@ class GuardPurchase:
     gift_name: str
     effect_id: int
     event_id: str = ""
+    avatar_url: str = ""
 
 
 def to_hud_message(message: object) -> HudMessage:
@@ -130,6 +131,7 @@ def to_hud_super_chat_message(message: web_models.SuperChatMessage) -> SuperChat
         uid=max(0, _integer(message.uid)),
         name=_string(message.uname),
         color=price_color,
+        avatar_url=_http_url(message.face),
     )
     return SuperChatMessage(
         author=author,
@@ -154,6 +156,7 @@ def to_hud_open_super_chat_message(message: open_models.SuperChatMessage) -> Sup
         uid=0,
         name=_string(message.uname),
         color=SC_DEFAULT_PRICE_COLOR,
+        avatar_url=_http_url(message.uface),
     )
     return SuperChatMessage(
         author=author,
@@ -180,7 +183,12 @@ def to_hud_gift_message(
     unit_price = max(0, _integer(message.price))
     gift_id = max(0, _integer(message.gift_id))
     gift_image_url = _http_url(message.gift_img_basic)
-    author = MessageAuthor(uid=max(0, _integer(message.uid)), name=_string(message.uname), color=GIFT_COLOR)
+    author = MessageAuthor(
+        uid=max(0, _integer(message.uid)),
+        name=_string(message.uname),
+        color=GIFT_COLOR,
+        avatar_url=_http_url(message.face),
+    )
     return GiftMessage(
         author=author,
         segments=(TextSegment(f"{action} {gift_name} x{quantity}"),),
@@ -216,6 +224,7 @@ def to_hud_guard_message(
         name=purchase.username,
         color=GIFT_COLOR,
         badges=_guard_badges(purchase.guard_level),
+        avatar_url=purchase.avatar_url,
     )
     return GiftMessage(
         author=author,
@@ -247,6 +256,12 @@ def parse_guard_purchase(data: Mapping[str, object]) -> GuardPurchase | None:
         _preferred(
             sender_base.get("name"),
             _preferred(sender_info.get("username"), data.get("username")),
+        )
+    )
+    avatar_url = _http_url(
+        _preferred(
+            sender_base.get("face"),
+            _preferred(sender_info.get("face"), data.get("face")),
         )
     )
     guard_level = _integer(_preferred(guard_info.get("guard_level"), data.get("guard_level")))
@@ -295,6 +310,7 @@ def parse_guard_purchase(data: Mapping[str, object]) -> GuardPurchase | None:
         gift_name=gift_name,
         effect_id=max(0, effect_id),
         event_id=event_id,
+        avatar_url=avatar_url,
     )
 
 
@@ -367,6 +383,7 @@ def parse_open_guard_purchase(data: Mapping[str, object]) -> GuardPurchase | Non
         gift_name=GUARD_NAMES[guard_level],
         effect_id=GUARD_DEFAULT_EFFECT_IDS[guard_level],
         event_id=_string(data.get("msg_id")),
+        avatar_url=_http_url(user_info.get("uface")),
     )
 
 
@@ -382,6 +399,7 @@ def guard_purchase_from_open_guard(message: open_models.GuardBuyMessage) -> Guar
         gift_name=GUARD_NAMES.get(message.guard_level, "大航海"),
         effect_id=GUARD_DEFAULT_EFFECT_IDS.get(message.guard_level, 0),
         event_id=_string(message.msg_id),
+        avatar_url=_http_url(message.user_info.uface),
     )
 
 
@@ -409,6 +427,7 @@ def _interact_message(message: web_models.InteractWordV2Message) -> InteractMess
         uid=max(0, _integer(message.uid)),
         name=_string(message.username),
         color=INTERACT_COLOR,
+        avatar_url=_http_url(message.face),
     )
     return InteractMessage(
         author=author,
@@ -429,6 +448,7 @@ def to_hud_like_message(
         uid=max(0, _integer(data.get("uid"))),
         name=_string(data.get("uname")),
         color=INTERACT_COLOR,
+        avatar_url=_http_url(_preferred(data.get("face"), data.get("uface"))),
     )
     return InteractMessage(
         author=author,
@@ -480,6 +500,7 @@ def _danmaku_author(message: web_models.DanmakuMessage) -> MessageAuthor:
         name=_string(message.uname),
         color=color,
         badges=_danmaku_badges(message, privilege_type),
+        avatar_url=_http_url(message.face),
     )
 
 

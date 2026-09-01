@@ -140,7 +140,7 @@ def test_handler_emits_open_platform_super_chat_as_a_normalized_message():
                 "room_id": 7450109,
                 "open_id": "open-user-1",
                 "uname": "开放平台用户",
-                "uface": "",
+                "uface": "https://i0.hdslb.com/bfs/face/open-sc.png",
                 "message_id": 21,
                 "message": "开放平台支持",
                 "rmb": 30,
@@ -160,6 +160,7 @@ def test_handler_emits_open_platform_super_chat_as_a_normalized_message():
     assert isinstance(received[0], SuperChatMessage)
     assert received[0].message_id == 21
     assert received[0].price == 30
+    assert received[0].author.avatar_url == "https://i0.hdslb.com/bfs/face/open-sc.png"
 
 
 def test_handler_emits_web_like_click_as_normalized_interaction():
@@ -441,7 +442,10 @@ def test_handler_emits_open_platform_guard_without_the_optional_catalog():
         {
             "cmd": "LIVE_OPEN_PLATFORM_GUARD",
             "data": {
-                "user_info": {"uname": "提督用户"},
+                "user_info": {
+                    "uname": "提督用户",
+                    "uface": "https://i0.hdslb.com/bfs/face/open-guard.png",
+                },
                 "guard_level": 2,
                 "guard_num": 1,
                 "price": 1998000,
@@ -454,6 +458,7 @@ def test_handler_emits_open_platform_guard_without_the_optional_catalog():
     assert isinstance(received[0], GiftMessage)
     assert received[0].gift_name == "提督"
     assert received[0].gift_id == 10002
+    assert received[0].author.avatar_url == "https://i0.hdslb.com/bfs/face/open-guard.png"
 
 
 def test_start_reports_expired_keyring_login(monkeypatch):

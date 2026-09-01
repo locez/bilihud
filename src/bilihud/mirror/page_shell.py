@@ -183,6 +183,17 @@ def render_page_shell() -> str:
       font-size: 18px;
       font-weight: 500;
     }
+    .user-avatar {
+      display: inline-block;
+      flex: 0 0 28px;
+      width: 28px;
+      height: 28px;
+      margin-right: 8px;
+      border-radius: 50%;
+      object-fit: cover;
+      vertical-align: middle;
+      background: rgba(255, 255, 255, 0.12);
+    }
     .gift-user {
       color: #FFD700;
       font-size: 17px;

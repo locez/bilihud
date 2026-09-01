@@ -65,6 +65,7 @@ class AppConfig:
     obs_port: int = DEFAULT_OBS_PORT  # OBS WebSocket port.
     theme: ThemeMode = ThemeMode.SYSTEM  # Appearance preference for the settings window.
     window_opacity: int = DEFAULT_WINDOW_OPACITY  # HUD background opacity as a percentage.
+    show_user_avatars: bool = False  # Whether desktop HUD and Mirror message rows load avatars.
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, object]) -> AppConfig:
@@ -78,6 +79,7 @@ class AppConfig:
             mirror_port=_port_value(values.get("mirror_port"), DEFAULT_MIRROR_PORT),
             mirror_gift_effects_enabled=_bool_value(values.get("mirror_gift_effects_enabled"), False),
             overlay_gift_effects_enabled=_bool_value(values.get("overlay_gift_effects_enabled"), False),
+            show_user_avatars=_bool_value(values.get("show_user_avatars"), False),
             hud_font_family=_font_family_value(values.get("hud_font_family"), DEFAULT_HUD_FONT_FAMILY),
             mirror_danmaku_x=_percentage_value(values.get("mirror_danmaku_x"), DEFAULT_MIRROR_DANMAKU_X),
             mirror_danmaku_y=_percentage_value(values.get("mirror_danmaku_y"), DEFAULT_MIRROR_DANMAKU_Y),
@@ -104,6 +106,7 @@ class AppConfig:
             "mirror_port": self.mirror_port,
             "mirror_gift_effects_enabled": self.mirror_gift_effects_enabled,
             "overlay_gift_effects_enabled": self.overlay_gift_effects_enabled,
+            "show_user_avatars": self.show_user_avatars,
             "hud_font_family": self.hud_font_family,
             "mirror_danmaku_x": self.mirror_danmaku_x,
             "mirror_danmaku_y": self.mirror_danmaku_y,

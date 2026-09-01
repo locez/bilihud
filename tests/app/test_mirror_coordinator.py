@@ -53,7 +53,12 @@ class FakeServer:
 
 def test_mirror_coordinator_owns_start_stop_and_message_publication():
     config_store = FakeConfigStore(
-        AppConfig(mirror_enabled=True, mirror_port=9876, hud_font_family="Noto Sans CJK SC")
+        AppConfig(
+            mirror_enabled=True,
+            mirror_port=9876,
+            show_user_avatars=True,
+            hud_font_family="Noto Sans CJK SC",
+        )
     )
     server = FakeServer(9876)
 
@@ -71,6 +76,7 @@ def test_mirror_coordinator_owns_start_stop_and_message_publication():
         assert started.state.running is True
         assert started.notices[0].text.startswith("BiliHUD Mirror 已启动")
         assert server.display_settings.font_family == "Noto Sans CJK SC"
+        assert server.display_settings.user_avatars_enabled is True
 
         coordinator.apply_display_settings(
             MirrorDisplaySettings(

@@ -122,7 +122,7 @@ class MirrorSettingsPage(QWidget):
         font_layout.setContentsMargins(18, 16, 18, 18)
         font_layout.setSpacing(12)
 
-        font_title = QLabel("HUD 字体", font_card)
+        font_title = QLabel("消息外观", font_card)
         font_title.setObjectName("card_title")
         font_layout.addWidget(font_title)
 
@@ -137,9 +137,16 @@ class MirrorSettingsPage(QWidget):
             if family:
                 self.font_family_combo.addItem(family, family)
         font_form.addRow("消息字体", self.font_family_combo)
+        self.show_user_avatars_checkbox = QCheckBox("显示用户头像", font_card)
+        self.show_user_avatars_checkbox.setObjectName("show_user_avatars")
+        font_form.addRow("头像", self.show_user_avatars_checkbox)
         font_layout.addLayout(font_form)
 
-        font_hint = QLabel("同时应用于桌面 HUD 和 Mirror 浏览器源中的消息文字。", font_card)
+        font_hint = QLabel(
+            "消息字体和头像显示同时应用于桌面 HUD 与 Mirror 浏览器源。"
+            "关闭头像后不会加载头像图片。",
+            font_card,
+        )
         font_hint.setObjectName("muted_label")
         font_hint.setWordWrap(True)
         font_layout.addWidget(font_hint)
@@ -163,18 +170,20 @@ class MirrorSettingsPage(QWidget):
         """Render the persisted Mirror display and effect preferences."""
         self.mirror_gift_effects_checkbox.setChecked(config.mirror_gift_effects_enabled)
         self.overlay_gift_effects_checkbox.setChecked(config.overlay_gift_effects_enabled)
+        self.show_user_avatars_checkbox.setChecked(config.show_user_avatars)
         font_index = self.font_family_combo.findData(config.hud_font_family)
         self.font_family_combo.setCurrentIndex(font_index if font_index >= 0 else 0)
         self.danmaku_x_spinbox.setValue(config.mirror_danmaku_x)
         self.danmaku_y_spinbox.setValue(config.mirror_danmaku_y)
 
-    def config_values(self) -> tuple[bool, bool, str, int, int]:
+    def config_values(self) -> tuple[bool, bool, bool, str, int, int]:
         """Return the editable display values for the settings save contract."""
         font_value = self.font_family_combo.currentData()
         font_family = font_value if isinstance(font_value, str) else DEFAULT_HUD_FONT_FAMILY
         return (
             self.mirror_gift_effects_checkbox.isChecked(),
             self.overlay_gift_effects_checkbox.isChecked(),
+            self.show_user_avatars_checkbox.isChecked(),
             font_family,
             self.danmaku_x_spinbox.value(),
             self.danmaku_y_spinbox.value(),
@@ -184,6 +193,7 @@ class MirrorSettingsPage(QWidget):
         """Restore display switches, the system font, and the default browser position."""
         self.mirror_gift_effects_checkbox.setChecked(False)
         self.overlay_gift_effects_checkbox.setChecked(False)
+        self.show_user_avatars_checkbox.setChecked(False)
         self.font_family_combo.setCurrentIndex(0)
         self.danmaku_x_spinbox.setValue(DEFAULT_MIRROR_DANMAKU_X)
         self.danmaku_y_spinbox.setValue(DEFAULT_MIRROR_DANMAKU_Y)

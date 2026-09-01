@@ -105,6 +105,7 @@ def test_app_config_persists_optional_gift_effects_and_mirror_position() -> None
         {
             "mirror_gift_effects_enabled": True,
             "overlay_gift_effects_enabled": True,
+            "show_user_avatars": True,
             "hud_font_family": "Noto Sans CJK SC",
             "mirror_danmaku_x": 22,
             "mirror_danmaku_y": 76,
@@ -113,6 +114,7 @@ def test_app_config_persists_optional_gift_effects_and_mirror_position() -> None
 
     assert config.mirror_gift_effects_enabled is True
     assert config.overlay_gift_effects_enabled is True
+    assert config.show_user_avatars is True
     assert config.hud_font_family == "Noto Sans CJK SC"
     assert config.mirror_danmaku_x == 22
     assert config.mirror_danmaku_y == 76

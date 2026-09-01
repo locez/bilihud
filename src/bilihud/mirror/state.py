@@ -38,6 +38,7 @@ class MirrorDisplaySettings:
     danmaku_x: int = 4
     danmaku_y: int = 4
     font_family: str = ""
+    user_avatars_enabled: bool = False
 
     def __post_init__(self) -> None:
         """Reject positions outside the viewport percentage range."""
@@ -104,6 +105,7 @@ class MirrorEntry(TypedDict):
     kind: Literal["danmaku", "gift", "super_chat", "interact", "system"]
     user: str
     userColor: str
+    userAvatarUrl: NotRequired[str]
     segments: list[MirrorSegment]
     badges: NotRequired[list[MirrorBadge]]
     giftId: NotRequired[int]
@@ -126,6 +128,7 @@ class MirrorSettingsPayload(TypedDict):
     """Serialized display settings sent to already-connected Mirror clients."""
 
     giftEffects: bool
+    userAvatars: bool
     fontFamily: str
     danmakuX: int
     danmakuY: int
@@ -135,6 +138,7 @@ def mirror_settings_payload(settings: MirrorDisplaySettings) -> MirrorSettingsPa
     """Serialize validated display settings for the browser event protocol."""
     return {
         "giftEffects": settings.gift_effects_enabled,
+        "userAvatars": settings.user_avatars_enabled,
         "fontFamily": settings.font_family,
         "danmakuX": settings.danmaku_x,
         "danmakuY": settings.danmaku_y,
@@ -212,6 +216,7 @@ def message_to_mirror_entry(seq: int, message: HudMessage) -> MirrorEntry:
             "userColor": user_color_for_message(message),
             "segments": danmaku_segments(message),
         }
+        _add_author_avatar(entry, message)
         if message.author.badges:
             entry["badges"] = [_badge_to_mirror(badge) for badge in message.author.badges]
         return entry
@@ -232,12 +237,13 @@ def message_to_mirror_entry(seq: int, message: HudMessage) -> MirrorEntry:
             "giftEffectUrl": message.gift_effect_url,
             "giftAnimationUrl": message.gift_animation_url,
         }
+        _add_author_avatar(entry, message)
         if message.gift_effect_layout is not None:
             entry["giftEffectLayout"] = _gift_effect_layout_to_mirror(message.gift_effect_layout)
         return entry
 
     if isinstance(message, SuperChatMessage):
-        return {
+        entry: MirrorEntry = {
             "seq": seq,
             "kind": "super_chat",
             "user": message.author.name,
@@ -249,26 +255,39 @@ def message_to_mirror_entry(seq: int, message: HudMessage) -> MirrorEntry:
             "scBackgroundBottomColor": message.background_bottom_color,
             "scBackgroundPriceColor": message.background_price_color,
         }
+        _add_author_avatar(entry, message)
+        return entry
 
     if isinstance(message, InteractMessage):
-        return {
+        entry: MirrorEntry = {
             "seq": seq,
             "kind": "interact",
             "user": message.author.name,
             "userColor": user_color_for_message(message),
             "segments": [{"type": "text", "text": message.text}],
         }
+        _add_author_avatar(entry, message)
+        return entry
 
     if isinstance(message, SystemMessage):
-        return {
+        entry: MirrorEntry = {
             "seq": seq,
             "kind": "system",
             "user": message.author.name,
             "userColor": user_color_for_message(message),
             "segments": _segments_for(message),
         }
+        _add_author_avatar(entry, message)
+        return entry
 
     raise TypeError(f"unsupported HUD message type: {type(message).__name__}")
+
+
+def _add_author_avatar(entry: MirrorEntry, message: HudMessage) -> None:
+    """Attach a normalized avatar URL when the message author provides one."""
+    avatar_url = message.author.avatar_url
+    if avatar_url:
+        entry["userAvatarUrl"] = avatar_url
 
 
 class MirrorState:

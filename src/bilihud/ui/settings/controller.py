@@ -32,6 +32,7 @@ class SettingsController:
         on_gift_effect_simulation: Callable[[str], None],
         on_opacity_changed: Callable[[int], None],
         on_hud_font_changed: Callable[[str], None],
+        on_user_avatars_changed: Callable[[bool], None],
         on_live_started: LiveStartedHandler | None = None,
     ) -> None:
         """Create a lazy settings owner with explicit application and UI callbacks."""
@@ -40,6 +41,7 @@ class SettingsController:
         self._on_mirror_toggle = on_mirror_toggle
         self._on_opacity_changed = on_opacity_changed
         self._on_hud_font_changed = on_hud_font_changed
+        self._on_user_avatars_changed = on_user_avatars_changed
         self._dialog: SettingsDialog | None = None
         self._live_status_callback = on_live_status
         self._login_callback = on_login
@@ -134,6 +136,7 @@ class SettingsController:
             return
         self._on_opacity_changed(result.config.window_opacity)
         self._on_hud_font_changed(result.config.hud_font_family)
+        self._on_user_avatars_changed(result.config.show_user_avatars)
         dialog.report_save_result(effective_request, True)
 
 

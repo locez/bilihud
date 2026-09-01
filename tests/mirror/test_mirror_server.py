@@ -80,6 +80,12 @@ def test_mirror_html_uses_transparent_page_and_event_source():
     assert "appendGiftValue" in page
     assert "entry.giftValue" in page
     assert "renderGiftText(row, entry)" in page
+    assert "appendUserAvatar(row, entry)" in page
+    assert "user-avatar-slot" in page
+    assert "margin-right: 8px;" in page
+    assert "slot.replaceChildren()" in page
+    assert "syncUserAvatars" in page
+    assert "userAvatars" in page
     assert "super-chat" in page
     assert "renderSuperChatEntry" in page
 
@@ -126,8 +132,8 @@ def test_mirror_html_embeds_opt_in_effect_and_position_settings():
     )
 
     assert (
-        'applySettings({"giftEffects":true,"fontFamily":"Noto Sans CJK SC",'
-        '"danmakuX":23,"danmakuY":71});'
+        'applySettings({"giftEffects":true,"userAvatars":false,'
+        '"fontFamily":"Noto Sans CJK SC","danmakuX":23,"danmakuY":71});'
     ) in page
     assert "--hud-font-family" in page
     assert "left: var(--danmaku-x);" in page

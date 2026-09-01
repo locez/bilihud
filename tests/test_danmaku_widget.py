@@ -4,8 +4,8 @@ from dataclasses import replace
 from io import BytesIO
 
 from PIL import Image
-from PyQt6.QtCore import QEvent, QIODevice, QObject, QSize, Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import QEvent, QIODevice, QObject, QSize, Qt, QUrl
+from PyQt6.QtGui import QFont, QImage, QTextDocument
 from PyQt6.QtNetwork import QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QListWidgetItem, QToolButton
 
@@ -470,6 +470,109 @@ def test_danmaku_delegate_renders_super_chat_as_a_colored_card():
     assert "¥50" in html
     assert "&lt;BiliHUD&gt;" in html
     assert "继续加油" in html
+
+
+def test_danmaku_delegate_controls_author_avatar_markup():
+    message = DanmakuMessage(
+        author=MessageAuthor(
+            uid=1,
+            name="头像用户",
+            color="#66CCFF",
+            avatar_url="https://i0.hdslb.com/bfs/face/avatar.png",
+        ),
+        segments=(TextSegment("显示头像"),),
+    )
+    delegate = message_list.DanmakuDelegate()
+
+    assert 'class="user-avatar"' not in delegate.get_html_for_message(message)
+
+    delegate.set_show_user_avatars(True)
+    html = delegate.get_html_for_message(message)
+
+    assert 'class="user-avatar"' in html
+    assert 'src="https://i0.hdslb.com/bfs/face/avatar.png"' in html
+
+
+def test_danmaku_delegate_spaces_avatar_before_author_badges():
+    message = DanmakuMessage(
+        author=MessageAuthor(
+            uid=1,
+            name="头像用户",
+            color="#66CCFF",
+            avatar_url="https://i0.hdslb.com/bfs/face/avatar.png",
+            badges=(MessageBadge(MessageBadgeKind.MEDAL, "小狐 26", "粉丝牌", "#FF79C6"),),
+        ),
+        segments=(TextSegment("显示头像"),),
+    )
+    delegate = message_list.DanmakuDelegate()
+    delegate.set_show_user_avatars(True)
+
+    html = delegate.get_html_for_message(message)
+
+    assert 'alt="用户头像" />&nbsp;&nbsp;<span class="meta-badge medal-badge"' in html
+
+
+def test_danmaku_delegate_loads_avatar_as_a_circular_resource():
+    app = _app()
+
+    class AvatarReply(QNetworkReply):
+        def __init__(self, payload: bytes, parent: QObject | None = None) -> None:
+            super().__init__(parent)
+            self._payload = payload
+            self._offset = 0
+            self.setOpenMode(QIODevice.OpenModeFlag.ReadOnly)
+            self.setHeader(QNetworkRequest.KnownHeaders.ContentLengthHeader, len(payload))
+            self.setError(QNetworkReply.NetworkError.NoError, "")
+            self.setFinished(True)
+
+        def abort(self) -> None:
+            pass
+
+        def bytesAvailable(self) -> int:
+            return len(self._payload) - self._offset + super().bytesAvailable()
+
+        def readData(self, maxlen: int) -> bytes:
+            chunk = self._payload[self._offset : self._offset + maxlen]
+            self._offset += len(chunk)
+            return chunk
+
+    class AvatarNetworkManager:
+        def __init__(self, payload: bytes) -> None:
+            self.payload = payload
+            self.requests: list[QNetworkRequest] = []
+            self.reply: AvatarReply | None = None
+
+        def get(self, request: QNetworkRequest) -> QNetworkReply:
+            self.requests.append(request)
+            self.reply = AvatarReply(self.payload)
+            return self.reply
+
+    image_buffer = BytesIO()
+    Image.new("RGBA", (32, 16), (255, 0, 0, 255)).save(image_buffer, format="PNG")
+    avatar_url = "https://i0.hdslb.com/bfs/face/avatar.png"
+    network = AvatarNetworkManager(image_buffer.getvalue())
+    delegate = message_list.DanmakuDelegate()
+    delegate._network_manager = network
+    delegate.set_show_user_avatars(True)
+    message = DanmakuMessage(
+        author=MessageAuthor(uid=1, name="头像用户", color="#66CCFF", avatar_url=avatar_url),
+        segments=(TextSegment("显示头像"),),
+    )
+
+    document = delegate._get_document(message, 320, QFont())
+    assert network.requests[0].url().toString() == avatar_url
+    assert network.requests[0].rawHeader(b"Referer") == b"https://live.bilibili.com/"
+    assert network.requests[0].header(QNetworkRequest.KnownHeaders.UserAgentHeader) == "Mozilla/5.0 BiliHUD"
+    assert network.reply is not None
+
+    network.reply.finished.emit()
+    app.processEvents()
+
+    resource = document.resource(QTextDocument.ResourceType.ImageResource, QUrl(avatar_url))
+    assert isinstance(resource, QImage)
+    assert resource.size() == QSize(24, 24)
+    assert resource.pixelColor(0, 0).alpha() == 0
+    assert resource.pixelColor(12, 12).alpha() > 0
 
 
 def test_danmaku_delegate_replaces_gift_text_after_gif_load():

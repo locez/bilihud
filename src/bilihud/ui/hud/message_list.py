@@ -5,8 +5,8 @@ from __future__ import annotations
 import html
 import re
 
-from PyQt6.QtCore import QModelIndex, QSize, Qt, QUrl
-from PyQt6.QtGui import QFont, QImage, QPainter, QTextDocument
+from PyQt6.QtCore import QModelIndex, QRectF, QSize, Qt, QUrl
+from PyQt6.QtGui import QFont, QImage, QPainter, QPainterPath, QTextDocument
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QAbstractItemView, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
@@ -29,6 +29,8 @@ from bilihud.ui.hud.gift_animation import GIFT_ANIMATION_SIZE, GiftAnimationCach
 SC_DEFAULT_BACKGROUND_COLOR = "#3C2A4D"
 SC_DEFAULT_BOTTOM_COLOR = "#2A2038"
 SC_DEFAULT_PRICE_COLOR = "#FFD86E"
+HUD_AVATAR_SIZE = 24
+MAX_AVATAR_BYTES = 2 * 1024 * 1024
 
 
 class DanmakuDelegate(QStyledItemDelegate):
@@ -39,8 +41,11 @@ class DanmakuDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self._cache: dict[int, tuple[HudMessage, QTextDocument]] = {}
         self._font_family: str = ""
+        self._show_user_avatars: bool = False
         self._emoticon_cache: dict[str, QImage | None] = {}
         self._emoticon_docs: dict[str, list[QTextDocument]] = {}
+        self._avatar_cache: dict[str, QImage | None] = {}
+        self._avatar_docs: dict[str, list[QTextDocument]] = {}
         self._network_manager: QNetworkAccessManager = QNetworkAccessManager(self)
         self._gift_animation_cache: GiftAnimationCache = GiftAnimationCache(
             self,
@@ -54,6 +59,20 @@ class DanmakuDelegate(QStyledItemDelegate):
         if normalized == self._font_family:
             return
         self._font_family = normalized
+        self._cache.clear()
+        self._gift_animation_cache.clear_documents()
+        parent = self.parent()
+        if isinstance(parent, QAbstractItemView):
+            parent.updateGeometry()
+            viewport = parent.viewport()
+            if viewport is not None:
+                viewport.update()
+
+    def set_show_user_avatars(self, enabled: bool) -> None:
+        """Apply the avatar preference and invalidate documents using the old layout."""
+        if enabled == self._show_user_avatars:
+            return
+        self._show_user_avatars = enabled
         self._cache.clear()
         self._gift_animation_cache.clear_documents()
         parent = self.parent()
@@ -87,6 +106,7 @@ class DanmakuDelegate(QStyledItemDelegate):
         doc.setHtml(self.get_html_for_message(message))
         doc.setTextWidth(width)
         self._attach_emoticon_resource(doc, message)
+        self._attach_avatar_resource(doc, message)
         if isinstance(message, GiftMessage):
             self._gift_animation_cache.attach(doc, message)
         self._cache[msg_id] = (message, doc)
@@ -143,6 +163,69 @@ class DanmakuDelegate(QStyledItemDelegate):
             if viewport is not None:
                 viewport.update()
 
+    def _attach_avatar_resource(self, doc: QTextDocument, message: HudMessage) -> None:
+        """Load one author avatar once and attach it to every waiting message document."""
+        if not self._show_user_avatars:
+            return
+        url = message.author.avatar_url
+        if not url:
+            return
+
+        qurl = QUrl(url)
+        cached = self._avatar_cache.get(url)
+        if cached is not None:
+            doc.addResource(QTextDocument.ResourceType.ImageResource, qurl, cached)
+            return
+        if url not in self._avatar_cache:
+            self._avatar_cache[url] = None
+            request = QNetworkRequest(qurl)
+            request.setRawHeader(b"Referer", b"https://live.bilibili.com/")
+            request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 BiliHUD")
+            reply = self._network_manager.get(request)
+            if reply is None:
+                self._avatar_cache.pop(url, None)
+                return
+            reply.setReadBufferSize(MAX_AVATAR_BYTES + 1)
+            reply.downloadProgress.connect(
+                lambda received, _total: self._abort_oversized_avatar(reply, received)
+            )
+            reply.finished.connect(lambda reply=reply, url=url: self._on_avatar_loaded(reply, url))
+
+        self._avatar_docs.setdefault(url, []).append(doc)
+
+    def _on_avatar_loaded(self, reply: QNetworkReply, url: str) -> None:
+        """Publish one bounded, circular avatar image to all documents waiting for it."""
+        error = reply.error()
+        if error is not QNetworkReply.NetworkError.NoError or reply.size() > MAX_AVATAR_BYTES:
+            self._avatar_cache.pop(url, None)
+            self._avatar_docs.pop(url, None)
+            reply.deleteLater()
+            return
+
+        payload = reply.readAll().data()
+        reply.deleteLater()
+        docs = self._avatar_docs.pop(url, [])
+        if not payload or len(payload) > MAX_AVATAR_BYTES:
+            self._avatar_cache.pop(url, None)
+            return
+        image = QImage.fromData(payload)
+        if image.isNull():
+            self._avatar_cache.pop(url, None)
+            return
+
+        avatar = _round_avatar_image(image)
+        self._avatar_cache[url] = avatar
+        qurl = QUrl(url)
+        for doc in docs:
+            doc.addResource(QTextDocument.ResourceType.ImageResource, qurl, avatar)
+        self._update_viewport()
+
+    @staticmethod
+    def _abort_oversized_avatar(reply: QNetworkReply, received: int) -> None:
+        """Stop an avatar response before an unknown-size download exceeds its limit."""
+        if received > MAX_AVATAR_BYTES:
+            reply.abort()
+
     def _update_viewport(self) -> None:
         """Request a repaint and geometry refresh after an asynchronous image update."""
         parent = self.parent()
@@ -192,6 +275,7 @@ class DanmakuDelegate(QStyledItemDelegate):
             user_color = self.get_user_color(message)
             badges_html = danmaku_author_badges_html(message)
             content_html = danmaku_message_content_html(message)
+            avatar_html = self._author_avatar_html(message)
             author_html = f'<span class="user">{html.escape(message.author.name, quote=True)}</span>'
             content_span = f'<span class="content">{content_html}</span>'
             user_style = (
@@ -241,15 +325,21 @@ class DanmakuDelegate(QStyledItemDelegate):
                 {content_style}
                 {reply_style}
                 .emoticon {{ vertical-align: middle; }}
+                .user-avatar {{
+                    width: {HUD_AVATAR_SIZE}px;
+                    height: {HUD_AVATAR_SIZE}px;
+                    vertical-align: middle;
+                }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }}
             </style>
-            <p>{badges_html}{author_html}<span class="colon"> : </span>{content_span}</p>
+            <p>{avatar_html}{badges_html}{author_html}<span class="colon"> : </span>{content_span}</p>
             """
         if isinstance(message, SuperChatMessage):
             background_color = _safe_sc_color(message.background_color, SC_DEFAULT_BACKGROUND_COLOR)
             bottom_color = _safe_sc_color(message.background_bottom_color, SC_DEFAULT_BOTTOM_COLOR)
             price_color = _safe_sc_color(message.background_price_color, SC_DEFAULT_PRICE_COLOR)
             user = html.escape(message.author.name, quote=True)
+            avatar_html = self._author_avatar_html(message)
             content = html.escape(message.message, quote=True).replace("\n", "<br />")
             return f"""
             <style>
@@ -272,6 +362,11 @@ class DanmakuDelegate(QStyledItemDelegate):
                     font-size: 12px;
                     font-weight: 700;
                 }}
+                .user-avatar {{
+                    width: {HUD_AVATAR_SIZE}px;
+                    height: {HUD_AVATAR_SIZE}px;
+                    vertical-align: middle;
+                }}
                 .sc-price {{
                     color: {price_color};
                     font-family: {font_family};
@@ -288,7 +383,7 @@ class DanmakuDelegate(QStyledItemDelegate):
             </style>
             <div class="sc-card">
                 <p><span class="sc-label">SC</span>&nbsp;&nbsp;
-                <span class="sc-user">{user}</span>
+                {avatar_html}<span class="sc-user">{user}</span>
                 <span class="sc-price">&nbsp;¥{message.price}</span></p>
                 <p class="sc-content">{content}</p>
             </div>
@@ -307,26 +402,30 @@ class DanmakuDelegate(QStyledItemDelegate):
             gift_html = (
                 f'<span class="gift">{html.escape(message.gift_name, quote=True)} x{message.quantity}</span>'
             )
+            avatar_html = self._author_avatar_html(message)
             return f"""
             <style>
                 .user {{ color: #FFD700; font-weight: bold; font-family: {font_family}; font-size: 12px; }}
+                .user-avatar {{ width: {HUD_AVATAR_SIZE}px; height: {HUD_AVATAR_SIZE}px; vertical-align: middle; }}
                 .action {{ color: #FF66CC; font-family: {font_family}; font-size: 12px; }}
                 .gift {{ color: #FF66CC; font-weight: bold; font-family: {font_family}; font-size: 12px; }}
                 .gift-value {{ color: #FFD86E; font-family: {font_family}; font-size: 12px; font-weight: 700; }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }}
             </style>
-            <p><span class="user">{html.escape(message.author.name, quote=True)}</span>
+            <p>{avatar_html}<span class="user">{html.escape(message.author.name, quote=True)}</span>
             <span class="action"> {html.escape(message.action, quote=True)} </span>
             {gift_html}{gift_value_html}</p>
             """
         if isinstance(message, InteractMessage):
+            avatar_html = self._author_avatar_html(message)
             return f"""
             <style>
                 .user {{ color: #AAAAAA; font-weight: bold; font-family: {font_family}; font-size: 11px; }}
+                .user-avatar {{ width: {HUD_AVATAR_SIZE}px; height: {HUD_AVATAR_SIZE}px; vertical-align: middle; }}
                 .info {{ color: #AAAAAA; font-family: {font_family}; font-size: 11px; }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }}
             </style>
-            <p><span class="user">{html.escape(message.author.name, quote=True)}</span>
+            <p>{avatar_html}<span class="user">{html.escape(message.author.name, quote=True)}</span>
             <span class="info"> {html.escape(message.text, quote=True)}</span></p>
             """
         if isinstance(message, SystemMessage):
@@ -362,6 +461,7 @@ class DanmakuDelegate(QStyledItemDelegate):
             if gift_value
             else ""
         )
+        avatar_html = self._author_avatar_html(message)
         return f"""
         <style>
             .gift-animation-user {{
@@ -371,6 +471,7 @@ class DanmakuDelegate(QStyledItemDelegate):
                 font-size: 12px;
             }}
             .gift-animation {{ vertical-align: middle; }}
+            .user-avatar {{ width: {HUD_AVATAR_SIZE}px; height: {HUD_AVATAR_SIZE}px; vertical-align: middle; }}
             .gift-animation-quantity {{
                 color: #FF66CC;
                 font-family: {font_family};
@@ -384,7 +485,7 @@ class DanmakuDelegate(QStyledItemDelegate):
             }}
             body, p {{ line-height: 120%; margin: 0; padding: 0; }}
         </style>
-        <p><span class="gift-animation-user">{html.escape(message.author.name, quote=True)}</span>
+        <p>{avatar_html}<span class="gift-animation-user">{html.escape(message.author.name, quote=True)}</span>
         <img class="gift-animation" src="{html.escape(message.gift_animation_url, quote=True)}"
             width="{GIFT_ANIMATION_SIZE}" height="{GIFT_ANIMATION_SIZE}"
             alt="{html.escape(message.gift_name, quote=True)}" />
@@ -395,6 +496,16 @@ class DanmakuDelegate(QStyledItemDelegate):
         """Return the normalized author color used by the message template."""
         return message.author.color
 
+    def _author_avatar_html(self, message: HudMessage) -> str:
+        """Render the optional avatar image placeholder for one normalized author."""
+        if not self._show_user_avatars or not message.author.avatar_url:
+            return ""
+        url = html.escape(message.author.avatar_url, quote=True)
+        return (
+            f'<img class="user-avatar" src="{url}" width="{HUD_AVATAR_SIZE}" '
+            f'height="{HUD_AVATAR_SIZE}" alt="用户头像" />&nbsp;&nbsp;'
+        )
+
 
 def _safe_sc_color(value: str, fallback: str) -> str:
     """Keep externally supplied SC theme colors inside the CSS color contract."""
@@ -402,6 +513,38 @@ def _safe_sc_color(value: str, fallback: str) -> str:
     if re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
         return color
     return fallback
+
+
+def _round_avatar_image(image: QImage) -> QImage:
+    """Crop and mask a downloaded avatar into a fixed-size circular resource."""
+    source = image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+    side = min(source.width(), source.height())
+    square = source.copy(
+        (source.width() - side) // 2,
+        (source.height() - side) // 2,
+        side,
+        side,
+    )
+    scaled = square.scaled(
+        HUD_AVATAR_SIZE,
+        HUD_AVATAR_SIZE,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    result = QImage(
+        HUD_AVATAR_SIZE,
+        HUD_AVATAR_SIZE,
+        QImage.Format.Format_ARGB32_Premultiplied,
+    )
+    result.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(result)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    path = QPainterPath()
+    path.addEllipse(QRectF(result.rect()))
+    painter.setClipPath(path)
+    painter.drawImage(0, 0, scaled)
+    painter.end()
+    return result
 
 
 __all__ = ("DanmakuDelegate",)

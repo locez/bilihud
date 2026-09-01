@@ -25,6 +25,7 @@ def test_mirror_settings_page_exposes_url_and_persistent_enable_controls():
         AppConfig(
             mirror_gift_effects_enabled=True,
             overlay_gift_effects_enabled=True,
+            show_user_avatars=True,
             hud_font_family="Noto Sans CJK SC",
             mirror_danmaku_x=18,
             mirror_danmaku_y=72,
@@ -39,6 +40,7 @@ def test_mirror_settings_page_exposes_url_and_persistent_enable_controls():
     assert page.status_label.text() == "已启动"
     assert page.mirror_gift_effects_checkbox.isChecked() is True
     assert page.overlay_gift_effects_checkbox.isChecked() is True
+    assert page.show_user_avatars_checkbox.isChecked() is True
     assert page.font_family_combo.currentData() in {"", "Noto Sans CJK SC"}
     assert page.danmaku_x_spinbox.value() == 18
     assert page.danmaku_y_spinbox.value() == 72

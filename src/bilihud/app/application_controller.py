@@ -84,6 +84,7 @@ class ApplicationController:
             self.mirror_coordinator.apply_display_settings(
                 MirrorDisplaySettings(
                     gift_effects_enabled=config.mirror_gift_effects_enabled,
+                    user_avatars_enabled=config.show_user_avatars,
                     font_family=config.hud_font_family,
                     danmaku_x=config.mirror_danmaku_x,
                     danmaku_y=config.mirror_danmaku_y,

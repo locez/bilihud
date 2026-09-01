@@ -21,20 +21,27 @@ from bilihud.danmaku.messages import (
 from bilihud.mirror.state import MirrorDisplaySettings, MirrorState, message_to_mirror_entry, mirror_settings_payload
 
 
-def _author(name="Locez", color="#66CCFF", badges=()):
-    return MessageAuthor(uid=1, name=name, color=color, badges=badges)
+def _author(
+    name: str = "Locez",
+    color: str = "#66CCFF",
+    badges: tuple[MessageBadge, ...] = (),
+    avatar_url: str = "",
+) -> MessageAuthor:
+    return MessageAuthor(uid=1, name=name, color=color, badges=badges, avatar_url=avatar_url)
 
 
 def test_mirror_settings_payload_includes_the_shared_hud_font() -> None:
     assert mirror_settings_payload(
         MirrorDisplaySettings(
             gift_effects_enabled=True,
+            user_avatars_enabled=True,
             font_family="Noto Sans CJK SC",
             danmaku_x=12,
             danmaku_y=34,
         )
     ) == {
         "giftEffects": True,
+        "userAvatars": True,
         "fontFamily": "Noto Sans CJK SC",
         "danmakuX": 12,
         "danmakuY": 34,
@@ -53,6 +60,17 @@ def test_message_to_mirror_entry_converts_text_danmaku():
         "userColor": "#66CCFF",
         "segments": [{"type": "text", "text": "<hello>"}],
     }
+
+
+def test_message_to_mirror_entry_includes_normalized_author_avatar_url():
+    message = DanmakuMessage(
+        author=_author(avatar_url="https://i0.hdslb.com/bfs/face/avatar.png"),
+        segments=(TextSegment("头像测试"),),
+    )
+
+    entry = message_to_mirror_entry(1, message)
+
+    assert entry["userAvatarUrl"] == "https://i0.hdslb.com/bfs/face/avatar.png"
 
 
 def test_message_to_mirror_entry_converts_pure_emoticon_danmaku():

@@ -90,6 +90,7 @@ def test_settings_dialog_exposes_sidebar_pages_and_theme_choices() -> None:
     assert isinstance(mirror_page, MirrorSettingsPage)
     assert mirror_page.findChild(QCheckBox, "mirror_enabled") is not None
     assert mirror_page.findChild(QLineEdit, "mirror_url") is not None
+    assert mirror_page.findChild(QCheckBox, "show_user_avatars") is not None
 
     dialog.select_page(SettingsPage.DEVELOPER)
     assert dialog.navigation.currentRow() == 6
@@ -228,6 +229,7 @@ def test_settings_dialog_saves_both_gift_effect_switches_and_mirror_position() -
     assert isinstance(mirror_page, MirrorSettingsPage)
     mirror_page.mirror_gift_effects_checkbox.setChecked(True)
     mirror_page.overlay_gift_effects_checkbox.setChecked(True)
+    mirror_page.show_user_avatars_checkbox.setChecked(True)
     font_index = 1 if mirror_page.font_family_combo.count() > 1 else 0
     mirror_page.font_family_combo.setCurrentIndex(font_index)
     expected_font = mirror_page.font_family_combo.currentData()
@@ -239,6 +241,7 @@ def test_settings_dialog_saves_both_gift_effect_switches_and_mirror_position() -
     assert len(requests) == 1
     assert requests[0].config.mirror_gift_effects_enabled is True
     assert requests[0].config.overlay_gift_effects_enabled is True
+    assert requests[0].config.show_user_avatars is True
     assert requests[0].config.hud_font_family == expected_font
     assert requests[0].config.mirror_danmaku_x == 28
     assert requests[0].config.mirror_danmaku_y == 74

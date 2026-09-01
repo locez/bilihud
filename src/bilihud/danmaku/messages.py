@@ -64,12 +64,13 @@ class MessageBadge:
 
 @dataclass(frozen=True, slots=True)
 class MessageAuthor:
-    """Identify an author and carry the shared color and badge semantics."""
+    """Identify an author and carry shared color, badge, and avatar metadata."""
 
     uid: int
     name: str
     color: str
     badges: tuple[MessageBadge, ...] = ()
+    avatar_url: str = ""  # Validated remote avatar URL, when the upstream event provides one.
 
 
 @dataclass(frozen=True, slots=True)
