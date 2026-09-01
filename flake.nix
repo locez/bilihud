@@ -7,7 +7,7 @@
     # Keep this revision aligned with the vendor/blivedm gitlink. GitHub source
     # archives do not contain submodule contents, so the package copies it in.
     blivedm = {
-      url = "github:xfgryujk/blivedm/8727ca9f8340e9c1e20e473eb1757bffb56c66f6";
+      url = "github:xfgryujk/blivedm/93530bcc20de8a67f8d0ee4788096da2480b8a10";
       flake = false;
     };
   };

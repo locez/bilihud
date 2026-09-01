@@ -3,17 +3,17 @@
     "blivedm": {
       "flake": false,
       "locked": {
-        "lastModified": 1778249310,
-        "narHash": "sha256-zKsjq6wI1fhINIqQhn+K4AF35p4ksVZe4+ZVh52EQKw=",
+        "lastModified": 1786465492,
+        "narHash": "sha256-um10IZQ4/1hCKRW7G3NXCxf1VQmWtM4vUadU8EHtjWo=",
         "owner": "xfgryujk",
         "repo": "blivedm",
-        "rev": "8727ca9f8340e9c1e20e473eb1757bffb56c66f6",
+        "rev": "93530bcc20de8a67f8d0ee4788096da2480b8a10",
         "type": "github"
       },
       "original": {
         "owner": "xfgryujk",
         "repo": "blivedm",
-        "rev": "8727ca9f8340e9c1e20e473eb1757bffb56c66f6",
+        "rev": "93530bcc20de8a67f8d0ee4788096da2480b8a10",
         "type": "github"
       }
     },

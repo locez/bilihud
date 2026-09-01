@@ -4,7 +4,7 @@ import logging
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
-from typing import Protocol
+from typing import ClassVar, Protocol
 from urllib.parse import urlencode, urlparse
 
 import aiohttp
@@ -398,6 +398,19 @@ class DanmakuClient:
         self._gift_effect_tasks.add(task)
         task.add_done_callback(self._gift_effect_task_done)
 
+    def schedule_gift_model(self, message: web_models.GiftMessage) -> None:
+        """Resolve an optional official effect before delivering one parsed gift."""
+        catalog = self._gift_effect_catalog
+        if catalog is None:
+            self._deliver_gift(message)
+            return
+        task = asyncio.create_task(
+            self._resolve_and_emit_gift_model(message, catalog),
+            name=f"bilihud-gift-effect-{self.room_id}",
+        )
+        self._gift_effect_tasks.add(task)
+        task.add_done_callback(self._gift_effect_task_done)
+
     def schedule_guard_purchase(self, purchase: GuardPurchase) -> None:
         """Resolve and publish one guard purchase while suppressing duplicate wire events."""
         if not self._claim_guard_event(purchase):
@@ -426,6 +439,20 @@ class DanmakuClient:
             self._deliver_message(to_hud_message_or_system(dict(data)))
             return
 
+        await self._resolve_and_emit_gift_model(
+            raw_message,
+            catalog,
+            fallback_animation_url=_raw_gift_animation_url(data),
+        )
+
+    async def _resolve_and_emit_gift_model(
+        self,
+        raw_message: web_models.GiftMessage,
+        catalog: GiftEffectCatalog,
+        *,
+        fallback_animation_url: str = "",
+    ) -> None:
+        """Resolve one parsed gift's official resources and publish its HUD message."""
         effect_asset = None
         try:
             effect_asset = await catalog.resolve(raw_message.gift_id)
@@ -436,7 +463,7 @@ class DanmakuClient:
             raw_message,
             gift_effect_url="" if effect_asset is None else effect_asset.full_screen_url,
             gift_animation_url=(
-                _raw_gift_animation_url(data)
+                fallback_animation_url
                 if effect_asset is None or not effect_asset.animation_url
                 else effect_asset.animation_url
             ),
@@ -669,6 +696,11 @@ def _text_escape_message(text: str) -> str:
 class DanmakuHandler(blivedm.BaseHandler):
     """弹幕处理器"""
 
+    _NON_DISPLAY_COMMANDS: ClassVar[frozenset[str]] = frozenset(
+        {"COMBO_END", "ONLINE_RANK_V3", "WATCHED_CHANGE"}
+    )
+    """Room metadata events that are intentionally outside the HUD contract."""
+
     def __init__(self) -> None:
         super().__init__()
         self.danmaku_client: DanmakuClient | None = None
@@ -681,6 +713,8 @@ class DanmakuHandler(blivedm.BaseHandler):
         command_name = command.get("cmd", "")
         if isinstance(command_name, str):
             command_name = command_name.split(":", 1)[0]
+        if command_name in self._NON_DISPLAY_COMMANDS:
+            return None
         if command_name == "SEND_GIFT":
             raw_data = command.get("data")
             danmaku_client = self.danmaku_client
@@ -741,7 +775,10 @@ class DanmakuHandler(blivedm.BaseHandler):
 
     def _on_gift(self, client: ws_base.WebSocketClientBase, message: web_models.GiftMessage) -> None:
         """处理礼物消息"""
-        self._emit_message(message)
+        del client
+        danmaku_client = self.danmaku_client
+        if danmaku_client is not None:
+            danmaku_client.schedule_gift_model(message)
 
     def _on_buy_guard(
         self,

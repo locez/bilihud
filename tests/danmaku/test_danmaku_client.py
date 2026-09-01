@@ -1,4 +1,7 @@
 import asyncio
+import base64
+import importlib
+import logging
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from types import TracebackType
@@ -21,12 +24,49 @@ from bilihud.http_contracts import HttpResponse, QueryParams
 from bilihud.live.emoticons import LiveEmoticon
 from bilihud.live.gift_effects import FULL_SCREEN_EFFECT_CONFIG_URL, GiftEffectCatalog
 
+pb_models = importlib.import_module("blivedm.models.pb")
+
 
 class FakeWebSocketClient(danmaku_client.ws_base.WebSocketClientBase):
     """Type marker for handler callbacks that do not inspect websocket state."""
 
     def __init__(self) -> None:
         pass
+
+
+def _send_gift_v2_data(
+    *,
+    uid: int = 9_000_000_001,
+    uname: str = "测试用户",
+    face: str = "https://example.com/test-user.jpg",
+    gift_id: int = 30869,
+    gift_name: str = "心动卡",
+    num: int = 1,
+    price: int = 100,
+    action: str = "投喂",
+    gift_image_url: str = "https://s1.hdslb.com/bfs/live/card.png",
+) -> dict[str, object]:
+    """Build a representative protobuf gift command from the wire contract."""
+    gift = pb_models.SendGiftV2GiftItem(
+        gift_id=gift_id,
+        gift_name=gift_name,
+        num=num,
+        price=price,
+        total_coin=price * num,
+        coin_type="gold",
+        tid="gift-tid",
+        timestamp=1,
+        rnd="gift-rnd",
+        action=action,
+        gift_info=pb_models.SendGiftV2GiftMaterialSnapShot(img_basic=gift_image_url),
+    )
+    payload = pb_models.SendGiftBroadcast(
+        uid=uid,
+        uname=uname,
+        face=face,
+        gift_list=[gift],
+    )
+    return {"pb": base64.b64encode(payload.dumps()).decode("ascii")}
 
 
 def test_start_starts_blivedm_client_and_reports_missing_login(monkeypatch):
@@ -272,8 +312,52 @@ def test_handler_preserves_voice_report_like_count_for_one_user():
     assert message.text == "为主播点赞了 x3"
 
 
-def test_handler_resolves_official_gift_resources_before_delivery():
-    async def run_test():
+def test_handler_emits_send_gift_v2_as_a_normalized_gift() -> None:
+    client = DanmakuClient(7450109)
+    received: list[HudMessage] = []
+    client.set_message_callback(received.append)
+    handler = DanmakuHandler()
+    handler.set_danmaku_client(client)
+
+    assert handler.handle(
+        FakeWebSocketClient(),
+        {"cmd": "SEND_GIFT_V2", "data": _send_gift_v2_data()},
+    ) is None
+
+    assert len(received) == 1
+    message = received[0]
+    assert isinstance(message, GiftMessage)
+    assert message.author.uid == 9_000_000_001
+    assert message.author.name == "测试用户"
+    assert message.gift_id == 30869
+    assert message.gift_name == "心动卡"
+    assert message.quantity == 1
+    assert message.unit_price == 100
+    assert message.gift_image_url.endswith("card.png")
+
+
+@pytest.mark.parametrize("command_name", ["COMBO_END", "ONLINE_RANK_V3", "WATCHED_CHANGE"])
+def test_handler_ignores_non_display_room_events(
+    command_name: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Known room metadata events must not create HUD messages or warnings."""
+    client = DanmakuClient(7450109)
+    received: list[HudMessage] = []
+    client.set_message_callback(received.append)
+    handler = DanmakuHandler()
+    handler.set_danmaku_client(client)
+
+    with caplog.at_level(logging.WARNING, logger="blivedm"):
+        assert handler.handle(FakeWebSocketClient(), {"cmd": command_name, "data": {}}) is None
+
+    assert received == []
+    assert not any(record.name == "blivedm" and record.levelno >= logging.WARNING for record in caplog.records)
+
+
+@pytest.mark.parametrize("command_name", ["SEND_GIFT", "SEND_GIFT_V2"])
+def test_handler_resolves_official_gift_resources_before_delivery(command_name: str) -> None:
+    async def run_test() -> None:
         raw_gift = {
             "giftName": "浪漫城堡",
             "num": 1,
@@ -340,7 +424,21 @@ def test_handler_resolves_official_gift_resources_before_delivery():
         handler = DanmakuHandler()
         handler.set_danmaku_client(client)
         websocket = FakeWebSocketClient()
-        handler.handle(websocket, {"cmd": "SEND_GIFT", "data": raw_gift})
+        command_data: Mapping[str, object]
+        if command_name == "SEND_GIFT":
+            command_data = raw_gift
+        else:
+            command_data = _send_gift_v2_data(
+                uid=3,
+                uname="礼物用户",
+                face="",
+                gift_id=32132,
+                gift_name="浪漫城堡",
+                price=2233000,
+                action="赠送",
+                gift_image_url="https://i0.hdslb.com/bfs/live/castle.png",
+            )
+        handler.handle(websocket, {"cmd": command_name, "data": command_data})
 
         await asyncio.wait_for(delivered.wait(), timeout=1)
         assert len(received) == 1
