@@ -104,6 +104,49 @@ sudo emerge --ask app-misc/bilihud
 
 桌面礼物特效需要 PyQt6 的 `multimedia` USE flag，HUD 图标需要 `svg` USE flag；上述 Gentoo ebuild 已声明这些运行依赖。
 
+#### NixOS / Nix
+
+仓库提供支持 `x86_64-linux` 和 `aarch64-linux` 的 Flake 包。可以直接临时运行，或安装到当前用户的 profile：
+
+```bash
+nix run github:locez/bilihud
+nix profile install github:locez/bilihud
+```
+
+在 NixOS Flake 配置中，先添加输入：
+
+```nix
+inputs.bilihud.url = "github:locez/bilihud";
+```
+
+然后将 BiliHUD 加入系统包；这里假定模块参数中已经传入 `inputs`：
+
+```nix
+{ inputs, pkgs, ... }:
+{
+  environment.systemPackages = [
+    inputs.bilihud.packages.${pkgs.stdenv.hostPlatform.system}.default
+  ];
+}
+```
+
+也可以通过仓库提供的 overlay 使用 `pkgs.bilihud`：
+
+```nix
+{
+  nixpkgs.overlays = [ inputs.bilihud.overlays.default ];
+  environment.systemPackages = [ pkgs.bilihud ];
+}
+```
+
+源码检出目录中可使用 `nix build` 构建，或使用 `nix run` 启动。Nix 包会强制构建 Layer Shell bridge，并包含 Qt Multimedia、QtSvg、Qt Wayland 和 keyring 客户端所需的运行时依赖；缺少 native 依赖时构建会直接失败。
+
+如果当前桌面会话没有提供 Secret Service，扫码登录后将无法安全保存会话。遇到 keyring 无可用后端的提示时，可以在 NixOS 配置中启用：
+
+```nix
+services.gnome.gnome-keyring.enable = true;
+```
+
 ### 源码安装
 
 #### 系统依赖
