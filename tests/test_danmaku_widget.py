@@ -754,6 +754,9 @@ def test_danmaku_widget_prunes_history_before_scrolling_to_bottom():
         def set_font_family(self, font_family: str) -> None:
             del font_family
 
+        def set_show_user_avatars(self, enabled: bool) -> None:
+            del enabled
+
         def forget_message(self, message: HudMessage) -> None:
             del message
             calls.append("forget")

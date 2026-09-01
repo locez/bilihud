@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import re
+from typing import Protocol
 
 from PyQt6.QtCore import QModelIndex, QRectF, QSize, Qt, QUrl
 from PyQt6.QtGui import QFont, QImage, QPainter, QPainterPath, QTextDocument
@@ -33,6 +34,14 @@ HUD_AVATAR_SIZE = 24
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
 
 
+class MessageImageNetworkManager(Protocol):
+    """Network capability used to fetch message-related images."""
+
+    def get(self, request: QNetworkRequest) -> QNetworkReply | None:
+        """Start an image request and return its reply handle, when available."""
+        ...
+
+
 class DanmakuDelegate(QStyledItemDelegate):
     """Render normalized HUD messages with document and image caching."""
 
@@ -46,7 +55,7 @@ class DanmakuDelegate(QStyledItemDelegate):
         self._emoticon_docs: dict[str, list[QTextDocument]] = {}
         self._avatar_cache: dict[str, QImage | None] = {}
         self._avatar_docs: dict[str, list[QTextDocument]] = {}
-        self._network_manager: QNetworkAccessManager = QNetworkAccessManager(self)
+        self._network_manager: MessageImageNetworkManager = QNetworkAccessManager(self)
         self._gift_animation_cache: GiftAnimationCache = GiftAnimationCache(
             self,
             self._update_viewport,
