@@ -50,6 +50,7 @@
           bilihudApp = {
             type = "app";
             program = nixpkgs.lib.getExe self.packages.${system}.bilihud;
+            meta.description = "Launch BiliHUD, a Bilibili danmaku overlay";
           };
         in
         {
