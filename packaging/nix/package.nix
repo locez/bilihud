@@ -12,7 +12,7 @@
 }:
 
 let
-  project = (builtins.fromTOML (builtins.readFile ../pyproject.toml)).project;
+  project = (builtins.fromTOML (builtins.readFile ../../pyproject.toml)).project;
 in
 python313Packages.buildPythonApplication {
   pname = project.name;
@@ -20,14 +20,14 @@ python313Packages.buildPythonApplication {
   pyproject = true;
 
   src = lib.fileset.toSource {
-    root = ../.;
+    root = ../..;
     fileset = lib.fileset.unions [
-      ../CMakeLists.txt
-      ../LICENSE
-      ../README.md
-      ../bilihud.desktop
-      ../pyproject.toml
-      ../src
+      ../../CMakeLists.txt
+      ../../LICENSE
+      ../../README.md
+      ../../bilihud.desktop
+      ../../pyproject.toml
+      ../../src
     ];
   };
 

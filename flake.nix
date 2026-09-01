@@ -30,7 +30,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
         in
-        pkgs.callPackage ./nix/package.nix { blivedmSrc = blivedm; };
+        pkgs.callPackage ./packaging/nix/package.nix { blivedmSrc = blivedm; };
     in
     {
       packages = forAllSystems (
@@ -59,7 +59,7 @@
       );
 
       overlays.default = final: _previous: {
-        bilihud = final.callPackage ./nix/package.nix { blivedmSrc = blivedm; };
+        bilihud = final.callPackage ./packaging/nix/package.nix { blivedmSrc = blivedm; };
       };
     };
 }
