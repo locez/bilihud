@@ -1,12 +1,14 @@
 {
   autoPatchelfHook,
   cmake,
+  desktop-file-utils,
   kdePackages,
   lib,
   ninja,
   pkg-config,
   python313Packages,
   qt6,
+  revision,
   wayland,
   blivedmSrc,
 }:
@@ -16,7 +18,7 @@ let
 in
 python313Packages.buildPythonApplication {
   pname = project.name;
-  inherit (project) version;
+  version = revision;
   pyproject = true;
 
   src = lib.fileset.toSource {
@@ -31,6 +33,8 @@ python313Packages.buildPythonApplication {
     ];
   };
 
+  # GitHub Flake sources do not include submodule contents, so the locked
+  # blivedm input is copied into the release source before building.
   postPatch = ''
     mkdir -p vendor/blivedm
     cp -R --no-preserve=mode ${blivedmSrc}/blivedm vendor/blivedm/
@@ -66,8 +70,8 @@ python313Packages.buildPythonApplication {
     qrcode
   ];
 
-  dontUseCmakeConfigure = true;
   # Qt's setup hook supplies cmake.args on the CLI, overriding pyproject.toml.
+  dontUseCmakeConfigure = true;
   pypaBuildFlags = [
     "--config-setting=cmake.define.BILIHUD_INSTALL_DIR=bilihud"
     "--config-setting=cmake.define.BILIHUD_LAYER_SHELL=ON"
@@ -93,6 +97,19 @@ python313Packages.buildPythonApplication {
   ];
 
   strictDeps = true;
+
+  doCheck = true;
+  nativeCheckInputs = [ desktop-file-utils ];
+  installCheckPhase = ''
+    runHook preInstallCheck
+
+    test -x "$out/bin/bilihud"
+    test -f "$out/${python313Packages.python.sitePackages}/bilihud/libbili-layer.so"
+    desktop-file-validate "$out/share/applications/bilihud.desktop"
+    "$out/bin/bilihud" --help >/dev/null
+
+    runHook postInstallCheck
+  '';
 
   meta = {
     inherit (project) description;

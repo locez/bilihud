@@ -109,7 +109,10 @@ sudo emerge --ask app-misc/bilihud
 在 NixOS Flake 中添加输入：
 
 ```nix
-inputs.bilihud.url = "github:locez/bilihud";
+inputs.bilihud = {
+  url = "github:locez/bilihud";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
 ```
 
 然后将其加入系统包：
