@@ -3,11 +3,8 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
-    # Keep this revision aligned with the vendor/blivedm gitlink. GitHub source
-    # archives do not contain submodule contents, so the package copies it in.
     blivedm = {
-      url = "github:xfgryujk/blivedm/93530bcc20de8a67f8d0ee4788096da2480b8a10";
+      url = "github:xfgryujk/blivedm";
       flake = false;
     };
   };
@@ -20,23 +17,32 @@
       ...
     }:
     let
+      # Nix packages follow the revision selected by the flake input instead
+      # of maintaining a second release-version source of truth.
+      revision = self.shortRev or self.dirtyShortRev or "unknown";
       supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
       mkBilihud =
-        system:
-        let
-          pkgs = import nixpkgs { inherit system; };
-        in
-        pkgs.callPackage ./packaging/nix/package.nix { blivedmSrc = blivedm; };
+        pkgs:
+        pkgs.callPackage ./packaging/nix/package.nix {
+          inherit revision;
+          blivedmSrc = blivedm;
+        };
+      overlay = final: _previous: {
+        bilihud = mkBilihud final;
+      };
     in
     {
+      overlays.default = overlay;
+
       packages = forAllSystems (
         system:
         let
-          bilihud = mkBilihud system;
+          pkgs = import nixpkgs { inherit system; };
+          bilihud = mkBilihud pkgs;
         in
         {
           inherit bilihud;
@@ -44,23 +50,21 @@
         }
       );
 
-      apps = forAllSystems (
-        system:
-        let
-          bilihudApp = {
-            type = "app";
-            program = nixpkgs.lib.getExe self.packages.${system}.bilihud;
-            meta.description = "Launch BiliHUD, a Bilibili danmaku overlay";
+      apps = forAllSystems (system: {
+        bilihud = {
+          type = "app";
+          program = nixpkgs.lib.getExe self.packages.${system}.bilihud;
+          meta = {
+            description = self.packages.${system}.bilihud.meta.description;
           };
-        in
-        {
-          bilihud = bilihudApp;
-          default = bilihudApp;
-        }
-      );
+        };
+        default = self.apps.${system}.bilihud;
+      });
 
-      overlays.default = final: _previous: {
-        bilihud = final.callPackage ./packaging/nix/package.nix { blivedmSrc = blivedm; };
-      };
+      checks = forAllSystems (system: {
+        package = self.packages.${system}.bilihud;
+      });
+
+      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.alejandra);
     };
 }
