@@ -114,3 +114,9 @@ jobs:
         tests/platform/test_paths.py
         tests/platform/test_obs_process.py
         tests/test_architecture.py
+
+    - name: Verify Windows HTTPS clients
+      if: runner.os == 'Windows'
+      run: |
+        openssl version
+        python -m pytest -q tests/platform/test_qt_tls.py

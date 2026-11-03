@@ -69,6 +69,26 @@ Wayland compositor with a loadable bridge. Linux X11, macOS, and Windows use the
 generic Qt window adapter; a failed Layer Shell activation falls back to the
 ordinary Wayland adapter without changing the UI contract.
 
+## Qt TLS Boundary
+
+`main.create_qt_application` selects the process-wide Qt TLS backend through
+`platform.qt_tls` before creating widgets or network managers. Windows uses
+Schannel, keeping Qt image downloads independent of the OpenSSL DLLs used by
+Python's `ssl` and `aiohttp`. Linux and macOS retain Qt's default backend.
+
+Qt normally prefers OpenSSL even when Schannel is available. Backend selection
+must precede any use of `QSslSocket`, `QSslCertificate`, or related classes;
+widgets must not change it later. A Windows runtime without usable Schannel
+fails at startup rather than returning to the OpenSSL path implicated in
+[#67](https://github.com/locez/bilihud/issues/67). Certificate and hostname
+validation remain enabled; this policy does not install additional trusted CAs.
+
+Windows packaging checks the actual PyInstaller archive for the Schannel
+plugin. CI also exercises Python HTTPS followed by repeated Qt image downloads
+and rejection of an untrusted certificate against a local HTTPS server. The
+test creates ephemeral certificates with the `openssl` command; it never uses
+a Bilibili session or modifies the system certificate store.
+
 ## Ownership Rules
 
 - `danmaku.messages` owns HUD message variants, author metadata, badges, and

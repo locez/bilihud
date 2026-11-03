@@ -165,6 +165,16 @@ def _require_file(path: Path, description: str) -> None:
         raise RuntimeError(f"PyInstaller did not create the {description}: {path}")
 
 
+def _require_windows_tls_backend(executable: Path) -> None:
+    """Reject a frozen Windows artifact that cannot provide the required native TLS."""
+    from PyInstaller.archive.readers import CArchiveReader
+
+    archive = CArchiveReader(str(executable))
+    members = {name.replace("\\", "/") for name in archive.toc}
+    if "PyQt6/Qt6/plugins/tls/qschannelbackend.dll" not in members:
+        raise RuntimeError("Windows executable is missing the required Qt Schannel TLS plugin")
+
+
 def _create_windows_artifact(target: _BuildTarget, version: str, executable: Path) -> Path:
     """Copy the single-file Windows executable to the upload directory."""
     artifact = PACKAGE_DIST / target.artifact_filename(version)
@@ -206,6 +216,7 @@ def build() -> Path:
     _require_file(generated_executable, "application executable")
 
     if target.one_file:
+        _require_windows_tls_backend(generated_executable)
         artifact = _create_windows_artifact(target, version, generated_executable)
     else:
         artifact = _create_macos_artifact(target, version, generated_root)

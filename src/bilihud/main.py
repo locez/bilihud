@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import QApplication
 from .app.application_controller import ApplicationController
 from .app.lifecycle import TaskSupervisor
 from .app.services import ApplicationServices, create_default_services
+from .platform.qt_tls import configure_qt_tls
 from .ui.hud.window import DanmakuWidget
 
 
@@ -148,7 +149,16 @@ async def cancel_pending_tasks(
 
     await asyncio.gather(*pending, return_exceptions=True)
 
-def entry_point():
+
+def create_qt_application(argv: list[str]) -> QApplication:
+    """Create the process-owned Qt application with TLS ready before any UI work."""
+    app = QApplication(argv)
+    app.setApplicationName("bilihud")
+    configure_qt_tls()
+    return app
+
+
+def entry_point() -> None:
     """Parse CLI options, start the Qt/asyncio event loop, and shut it down cleanly."""
     configure_logging()
     import argparse
@@ -169,8 +179,7 @@ def entry_point():
     # Handle SIGINT
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    app = QApplication(sys.argv)
-    app.setApplicationName("bilihud")
+    app = create_qt_application(sys.argv)
 
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)

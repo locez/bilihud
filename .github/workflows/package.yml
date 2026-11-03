@@ -155,8 +155,13 @@ jobs:
       - name: Install packaging dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "pyinstaller>=6.18"
+          python -m pip install "pyinstaller>=6.18" pytest
           python -m pip install . --config-settings=cmake.define.BILIHUD_LAYER_SHELL=OFF
+
+      - name: Verify Windows HTTPS clients
+        run: |
+          openssl version
+          python -m pytest -q tests/platform/test_qt_tls.py
 
       - name: Build Windows executable
         run: python packaging/pyinstaller/build.py
