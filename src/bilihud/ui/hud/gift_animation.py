@@ -18,7 +18,7 @@ _GIFT_ANIMATION_MAX_BYTES = 5 * 1024 * 1024
 class GiftAnimationNetworkManager(Protocol):
     """Network capability used to fetch one gift GIF for the message list."""
 
-    def get(self, request: QNetworkRequest) -> QNetworkReply | None:
+    def get(self, request: QNetworkRequest, /) -> QNetworkReply | None:
         """Start a bounded official GIF request and return its reply handle."""
         ...
 

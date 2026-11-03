@@ -37,7 +37,7 @@ MAX_AVATAR_BYTES = 2 * 1024 * 1024
 class MessageImageNetworkManager(Protocol):
     """Network capability used to fetch message-related images."""
 
-    def get(self, request: QNetworkRequest) -> QNetworkReply | None:
+    def get(self, request: QNetworkRequest, /) -> QNetworkReply | None:
         """Start an image request and return its reply handle, when available."""
         ...
 

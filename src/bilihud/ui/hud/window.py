@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 class DanmakuListPort(Protocol):
     """List operations needed by the message history update."""
 
-    def addItem(self, item: QListWidgetItem | None) -> None:
+    def addItem(self, item: QListWidgetItem | None, /) -> None:
         """Append one prepared Qt list item."""
         ...
 
@@ -64,7 +64,7 @@ class DanmakuListPort(Protocol):
         """Return the current history size."""
         ...
 
-    def takeItem(self, row: int) -> QListWidgetItem | None:
+    def takeItem(self, row: int, /) -> QListWidgetItem | None:
         """Remove and return one history item."""
         ...
 

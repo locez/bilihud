@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 class GiftAnimationNetworkManager(Protocol):
     """Network capability used to download one official GIF for the overlay."""
 
-    def get(self, request: QNetworkRequest) -> QNetworkReply | None:
+    def get(self, request: QNetworkRequest, /) -> QNetworkReply | None:
         """Start one bounded official GIF request and return its reply handle."""
         ...
 

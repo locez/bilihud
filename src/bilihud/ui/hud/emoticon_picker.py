@@ -28,7 +28,7 @@ from bilihud.ui.hud.icons import smile_icon
 class IconNetworkManager(Protocol):
     """Small network capability used to fetch one emoticon image."""
 
-    def get(self, request: QNetworkRequest) -> QNetworkReply | None:
+    def get(self, request: QNetworkRequest, /) -> QNetworkReply | None:
         """Start one image request and return its reply handle."""
         ...
 
