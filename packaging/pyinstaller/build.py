@@ -143,7 +143,9 @@ def _pyinstaller_arguments(target: _BuildTarget) -> list[str]:
             str(PROJECT_ROOT / "vendor" / "blivedm"),
         ]
     )
-    for package_name in ("bilihud", "blivedm", "PyQt6", "keyring"):
+    # PyInstaller's Qt hooks collect imported modules and their plugins. Collecting
+    # all of PyQt6 also copies framework data and conflicts with macOS symlinks.
+    for package_name in ("bilihud", "blivedm", "keyring"):
         arguments.extend(("--collect-all", package_name))
     if target.platform_name == "macos":
         arguments.extend(("--collect-all", "certifi"))

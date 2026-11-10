@@ -123,12 +123,12 @@ class QtWindowHost(WindowHost):
         self._widget.activateWindow()
 
     def start_system_move(self) -> bool:
-        """Ask Qt/Wayland to run the compositor-owned move gesture."""
+        """Ask Qt to let the native window manager own movement and DPI changes."""
         handle = self._widget.windowHandle()
         if handle is None:
             return False
         try:
-            # Qt versions without this Wayland capability raise AttributeError here.
+            # A missing or unavailable Qt native move capability keeps manual dragging usable.
             return bool(handle.startSystemMove())
         except (AttributeError, RuntimeError):
             return False

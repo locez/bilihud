@@ -37,6 +37,8 @@ class _ManualWindowDragStrategy:
     ) -> DragStartResult:
         """Prefer compositor-owned movement, then retain a manual fallback."""
         del global_position
+        # A native gesture can consume the release event; never reuse an old anchor.
+        self._drag_local_position = None
         if self._prefer_system_move and self._host.start_system_move():
             return DragStartResult(DragMode.SYSTEM)
         self._drag_local_position = local_position

@@ -31,6 +31,7 @@ class FakeWindowHost:
 
     def __init__(self) -> None:
         self.system_move_available = True
+        self.system_move_calls: int = 0
         self.native_pointer: int | None = None
         self.full_screen_overlay_enabled = False
         self.policies: list[WindowPolicy] = []
@@ -78,6 +79,8 @@ class FakeWindowHost:
         self.actions.append("activate")
 
     def start_system_move(self) -> bool:
+        """Record native move requests and report whether the backend accepts them."""
+        self.system_move_calls += 1
         return self.system_move_available
 
     def refresh(self) -> None:
@@ -156,6 +159,64 @@ def test_wayland_manual_drag_is_the_fallback_when_system_move_is_rejected(monkey
     assert drag.mode is DragMode.MANUAL
     assert platform.update_drag(WindowPoint(30, 30), WindowPoint(130, 140)) == OverlayOperationResult.success()
     assert host.moved_positions == [WindowPoint(110, 120)]
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "expected_mode", "system_move_calls"),
+    [("windows", DragMode.SYSTEM, 1), ("cocoa", DragMode.MANUAL, 0)],
+)
+def test_generic_window_drag_uses_the_platform_move_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    platform_name: str,
+    expected_mode: DragMode,
+    system_move_calls: int,
+) -> None:
+    """Windows delegates DPI transitions to native movement; macOS keeps its strategy."""
+    monkeypatch.setattr(window_platform.QGuiApplication, "platformName", lambda: platform_name)
+    host = FakeWindowHost()
+    platform = window_platform.DefaultOverlayPlatformFactory()(host)
+
+    assert platform.begin_drag(WindowPoint(20, 20), WindowPoint(100, 100)).mode is expected_mode
+    assert host.system_move_calls == system_move_calls
+    assert host.moved_positions == []
+    assert host.set_geometry_calls == []
+
+
+def test_windows_drag_falls_back_when_native_move_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rejected native move remains draggable, and release clears the manual anchor."""
+    monkeypatch.setattr(window_platform.QGuiApplication, "platformName", lambda: "windows")
+    host = FakeWindowHost()
+    host.system_move_available = False
+    platform = window_platform.DefaultOverlayPlatformFactory()(host)
+
+    assert platform.begin_drag(WindowPoint(20, 20), WindowPoint(100, 100)).mode is DragMode.MANUAL
+    assert host.system_move_calls == 1
+    assert platform.update_drag(WindowPoint(30, 30), WindowPoint(130, 140)).succeeded
+    platform.end_drag()
+    platform.end_drag()
+    assert not platform.update_drag(WindowPoint(40, 40), WindowPoint(200, 200)).succeeded
+    assert host.moved_positions == [WindowPoint(110, 120)]
+    assert host.set_geometry_calls == []
+
+
+def test_native_drag_discards_an_interrupted_manual_anchor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A new native gesture must not reuse a manual anchor after a missed mouse release."""
+    monkeypatch.setattr(window_platform.QGuiApplication, "platformName", lambda: "windows")
+    host = FakeWindowHost()
+    host.system_move_available = False
+    platform = window_platform.DefaultOverlayPlatformFactory()(host)
+    assert platform.begin_drag(WindowPoint(20, 20), WindowPoint(100, 100)).mode is DragMode.MANUAL
+
+    host.system_move_available = True
+    assert platform.begin_drag(WindowPoint(30, 30), WindowPoint(200, 200)).mode is DragMode.SYSTEM
+    assert not platform.update_drag(WindowPoint(40, 40), WindowPoint(300, 300)).succeeded
+    assert host.moved_positions == []
+    assert host.system_move_calls == 2
+
+    platform.end_drag()
+    assert platform.set_gaming_mode(True).succeeded
+    assert platform.begin_drag(WindowPoint(30, 30), WindowPoint(200, 200)).mode is DragMode.UNAVAILABLE
+    assert host.system_move_calls == 2
 
 
 def test_layer_shell_activation_falls_back_to_an_ordinary_window(monkeypatch) -> None:

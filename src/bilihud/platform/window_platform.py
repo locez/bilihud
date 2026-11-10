@@ -213,7 +213,6 @@ class _GenericFallbackProvider:
         host: WindowHost,
     ) -> tuple[OverlayPlatform | None, str | None]:
         """Claim any backend not requiring a specialized native integration."""
-        del context
         logger.info("Generic Qt provider selected")
         return (
             QtWindowPlatform(
@@ -223,7 +222,9 @@ class _GenericFallbackProvider:
                 bypass_window_manager=False,
                 click_through=None,
                 click_through_supported=True,
-                prefer_system_move=False,
+                # Let Windows own monitor/DPI transitions during a drag. Repeated
+                # QWidget.move() calls can compete with its DPI geometry changes.
+                prefer_system_move=context.platform_name == "windows",
             ),
             None,
         )
